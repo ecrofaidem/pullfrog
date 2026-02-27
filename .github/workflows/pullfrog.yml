@@ -10,6 +10,10 @@ on:
       name:
         type: string
         description: Run name
+      token:
+        type: string
+        description: A token
+        required: false
 
 permissions:
   id-token: write
@@ -31,6 +35,7 @@ jobs:
         uses: pullfrog/pullfrog@main
         with:
           prompt: ${{ inputs.prompt }}
+          token: ${{ inputs.token }}
         env:
           API_URL: ${{ secrets.API_URL }}
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
