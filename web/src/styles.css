@@ -9,7 +9,6 @@
   --color-ink-3: light-dark(#666d79, #8b929c);
   --color-hair: light-dark(#d9dce2, #2a2e35);
   --color-rail: light-dark(#5b5bd6, #8b8bff);
-  --color-rail-soft: light-dark(#e4e4f9, #26264a);
 
   --font-sans:
     system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
