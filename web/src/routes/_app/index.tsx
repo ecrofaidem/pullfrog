@@ -34,7 +34,7 @@ function RunsPage() {
 // ── the rail ─────────────────────────────────────────────────────────────────
 
 const GLYPH_COL = 28; // px: glyph column width; the rail line sits at its centre
-const LANE_OFFSET = 10; // px: the incremental-review lane runs this far right of the rail
+const LANE_OFFSET = 12; // px: the incremental-review lane runs this far right of the rail
 
 interface Lane {
   fromY: number;
@@ -89,10 +89,19 @@ function Rail({ runs, health, handle }: { runs: Doc<"runs">[]; health: Health; h
       );
     };
     measure();
-    // rows re-wrap on resize and after late layout; the lanes follow the glyphs.
+    // rows re-wrap on resize, after late stylesheets and after fonts; the
+    // lanes follow the glyphs through all of it.
     const observer = new ResizeObserver(measure);
     observer.observe(list);
-    return () => observer.disconnect();
+    for (const li of list.children) observer.observe(li);
+    const raf = requestAnimationFrame(() => requestAnimationFrame(measure));
+    window.addEventListener("load", measure);
+    document.fonts?.ready.then(measure).catch(() => undefined);
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(raf);
+      window.removeEventListener("load", measure);
+    };
   }, [runs]);
 
   const x = GLYPH_COL / 2;
@@ -108,13 +117,13 @@ function Rail({ runs, health, handle }: { runs: Doc<"runs">[]; health: Health; h
     <div className="relative">
       {/* the rail: one hairline from HEAD through every node, dashed when HEAD is cut */}
       <div aria-hidden className="absolute bottom-3 top-3 w-px" style={railStyle} />
-      {/* a new run arrived: the rail draws down from HEAD over itself */}
-      {arrived.key > 0 && !cut && (
+      {/* a new run arrived: a heavier stroke draws down from HEAD and fades */}
+      {arrived.key > 0 && (
         <div
           key={arrived.key}
           aria-hidden
-          className="rail-draw absolute bottom-3 top-3 w-px"
-          style={{ left: x, background: "var(--color-rail)" }}
+          className="rail-draw absolute bottom-3 top-3 w-[3px]"
+          style={{ left: x - 1, background: "var(--color-rail)" }}
         />
       )}
       <Head health={health} />
@@ -122,15 +131,16 @@ function Rail({ runs, health, handle }: { runs: Doc<"runs">[]; health: Health; h
         {lanes.length > 0 && (
           <svg
             aria-hidden
-            className="pointer-events-none absolute left-0 top-0 h-full w-16 text-rail"
+            className="pointer-events-none absolute left-0 top-0 z-20 h-full w-16 text-rail"
             fill="none"
           >
             {lanes.map((l, i) => (
               <path
                 key={i}
-                d={`M ${x} ${l.fromY} C ${x + LANE_OFFSET} ${l.fromY}, ${x + LANE_OFFSET} ${l.fromY + 8}, ${x + LANE_OFFSET} ${l.fromY + 12} L ${x + LANE_OFFSET} ${l.toY - 12} C ${x + LANE_OFFSET} ${l.toY - 8}, ${x + LANE_OFFSET} ${l.toY}, ${x} ${l.toY}`}
+                d={`M ${x + 5} ${l.fromY} C ${x + LANE_OFFSET} ${l.fromY}, ${x + LANE_OFFSET} ${l.fromY + 6}, ${x + LANE_OFFSET} ${l.fromY + 10} L ${x + LANE_OFFSET} ${l.toY - 10} C ${x + LANE_OFFSET} ${l.toY - 6}, ${x + LANE_OFFSET} ${l.toY}, ${x + 5} ${l.toY}`}
                 stroke="currentColor"
                 strokeWidth="1"
+                strokeOpacity="0.7"
               />
             ))}
           </svg>
@@ -139,8 +149,14 @@ function Rail({ runs, health, handle }: { runs: Doc<"runs">[]; health: Health; h
           <EmptyRail handle={handle} />
         ) : (
           <ol ref={listRef} className="relative">
-            {runs.map((run) => (
-              <RunRow key={run._id} run={run} arrived={arrived.ids.has(run._id)} />
+            {runs.map((run, i) => (
+              <RunRow
+                key={run._id}
+                run={run}
+                arrived={arrived.ids.has(run._id)}
+                // the PR title leads its group; later runs of the same PR show what they are
+                leadsGroup={i === 0 || runs[i - 1]!.prNumber !== run.prNumber}
+              />
             ))}
           </ol>
         )}
@@ -182,7 +198,15 @@ function Head({ health }: { health: Health }) {
   );
 }
 
-function RunRow({ run, arrived }: { run: Doc<"runs">; arrived: boolean }) {
+function RunRow({
+  run,
+  arrived,
+  leadsGroup,
+}: {
+  run: Doc<"runs">;
+  arrived: boolean;
+  leadsGroup: boolean;
+}) {
   const active = run.status === "in_progress";
   const open = active || run.status === "queued" || run.status === "dispatched";
   const elapsed = duration(run.createdAt, open ? Date.now() : (run.completedAt ?? run.updatedAt));
@@ -190,7 +214,8 @@ function RunRow({ run, arrived }: { run: Doc<"runs">; arrived: boolean }) {
     run.prNumber !== undefined
       ? `https://github.com/${run.owner}/${run.repo}/pull/${run.prNumber}`
       : undefined;
-  const title = run.prTitle ?? kindLabel(run);
+  const showPrTitle = leadsGroup && run.prTitle !== undefined;
+  const title = showPrTitle ? run.prTitle : kindLabel(run);
 
   return (
     <li
@@ -219,7 +244,7 @@ function RunRow({ run, arrived }: { run: Doc<"runs">; arrived: boolean }) {
           </span>
         </div>
         <div className="mt-0.5 flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-sm text-ink-2">
-          {run.prTitle && <span>{kindLabel(run)}</span>}
+          {showPrTitle && <span>{kindLabel(run)}</span>}
           {run.triggerer && <span className="mono">{run.triggerer}</span>}
           <time
             className="mono"

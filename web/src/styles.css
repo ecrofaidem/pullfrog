@@ -160,8 +160,15 @@ pre,
     clip-path: inset(0 0 0 0);
   }
 }
+@keyframes rail-fade {
+  to {
+    opacity: 0;
+  }
+}
 .rail-draw {
-  animation: rail-draw 420ms var(--ease-out-expo);
+  animation:
+    rail-draw 420ms var(--ease-out-expo),
+    rail-fade 600ms 420ms var(--ease-out-expo) forwards;
 }
 @media (prefers-reduced-motion: reduce) {
   .glyph-active {
