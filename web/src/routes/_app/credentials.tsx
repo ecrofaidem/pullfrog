@@ -66,7 +66,7 @@ function ChainSection({ chain }: { chain: SecretStatus | undefined }) {
 
       <div className="mt-5 grid grid-cols-[28px_1fr] gap-x-2">
         <span className={`flex h-6 items-center justify-center ${state === "ok" ? "text-rail" : "text-ink"}`}>
-          <HeadGlyph cut={state !== "ok"} />
+          <HeadGlyph state={state === "ok" ? "ok" : "cut"} />
         </span>
         <div className="min-w-0">
           {state === "missing" && (
@@ -107,7 +107,7 @@ function ChainSection({ chain }: { chain: SecretStatus | undefined }) {
             <p className="text-sm text-ink-2">
               {state === "ok" ? "To switch ChatGPT accounts, reseed from a checkout of the repo:" : "Reseed from a checkout of the repo:"}
             </p>
-            <pre className="mt-1.5 overflow-x-auto rounded-sm bg-sheet-2 px-3 py-2 text-xs text-ink">
+            <pre className="mt-1.5 whitespace-pre-wrap break-all rounded-sm bg-sheet-2 px-3 py-2 text-xs text-ink">
               <code className="select-all">{command}</code>
             </pre>
             <p className="mt-1.5 text-sm text-ink-3">

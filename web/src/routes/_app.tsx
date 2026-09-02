@@ -3,8 +3,9 @@
 
 import { convexQuery } from "@convex-dev/react-query";
 import { useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute, Link, Outlet, redirect, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, Outlet, redirect, useLocation, useNavigate } from "@tanstack/react-router";
 import { api } from "@server/_generated/api";
+import { HealthLine } from "~/components/health-line";
 import { authClient } from "~/lib/auth-client";
 import { fullName, reposQuery, useCurrentRepo, useRepos } from "~/lib/repo";
 
@@ -33,6 +34,7 @@ function AppShell() {
   const repos = useRepos();
   const repo = useCurrentRepo();
   const navigate = useNavigate();
+  const onRuns = useLocation({ select: (l) => l.pathname }) === "/";
   const { data: me } = useSuspenseQuery(convexQuery(api.me.get, {}));
 
   async function signOut() {
@@ -82,6 +84,8 @@ function AppShell() {
           </button>
         </span>
       </header>
+
+      {repo && !onRuns && <HealthLine repo={repo} />}
 
       <main className="mt-8">
         {repo ? (

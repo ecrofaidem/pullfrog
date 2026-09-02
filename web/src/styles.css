@@ -102,10 +102,10 @@ pre,
     color 150ms var(--ease-out-expo);
 }
 .btn-primary {
-  @apply border-rail bg-rail text-white;
+  @apply border-ink bg-ink text-sheet;
 }
 .btn-primary:hover {
-  filter: brightness(1.08);
+  opacity: 0.88;
 }
 .btn-primary:disabled {
   @apply border-hair bg-sheet-2 text-ink-3;
@@ -149,13 +149,26 @@ pre,
   }
 }
 .row-in {
-  animation: row-in 220ms var(--ease-out-expo);
+  animation: row-in 260ms var(--ease-out-expo);
+}
+/* a new run arrives: the rail draws down from HEAD to it */
+@keyframes rail-draw {
+  from {
+    clip-path: inset(0 0 100% 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+.rail-draw {
+  animation: rail-draw 420ms var(--ease-out-expo);
 }
 @media (prefers-reduced-motion: reduce) {
   .glyph-active {
     animation-duration: 6s;
   }
-  .row-in {
+  .row-in,
+  .rail-draw {
     animation: none;
   }
 }

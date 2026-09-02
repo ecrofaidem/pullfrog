@@ -298,6 +298,7 @@ async function dispatchReview(ctx: ActionCtx, params: DispatchReviewParams) {
     kind: params.kind,
     trigger: params.trigger,
     prNumber: pr.number,
+    prTitle: pr.title,
     triggerer: params.triggerer,
     title,
     ...(checkRunId !== undefined ? { checkRunId } : {}),

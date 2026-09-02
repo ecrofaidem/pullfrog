@@ -72,11 +72,14 @@ export const STATE_LABEL: Record<RunState, string> = {
   cancelled: "cancelled",
 };
 
-/** HEAD marker: a wider node that reads as the rail's origin. */
-export function HeadGlyph({ cut }: { cut: boolean }) {
+export type HeadState = "ok" | "warn" | "cut";
+
+/** HEAD marker: a wider node that reads as the rail's origin. ok has a core,
+ * warn is the ring with no core, cut is a dashed ring struck through. */
+export function HeadGlyph({ state }: { state: HeadState }) {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
-      {cut ? (
+      {state === "cut" ? (
         <>
           <circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth={STROKE} strokeDasharray="3 2.5" />
           <path d="M3 13L13 3" stroke="currentColor" strokeWidth={STROKE} />
@@ -84,7 +87,7 @@ export function HeadGlyph({ cut }: { cut: boolean }) {
       ) : (
         <>
           <circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth={STROKE} />
-          <circle cx="8" cy="8" r="2" fill="currentColor" />
+          {state === "ok" && <circle cx="8" cy="8" r="2" fill="currentColor" />}
         </>
       )}
     </svg>

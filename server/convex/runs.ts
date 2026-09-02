@@ -16,6 +16,7 @@ export const recordDispatch = internalMutation({
     kind: v.string(),
     trigger: v.string(),
     prNumber: v.optional(v.number()),
+    prTitle: v.optional(v.string()),
     triggerer: v.optional(v.string()),
     title: v.string(),
     checkRunId: v.optional(v.number()),

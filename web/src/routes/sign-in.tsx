@@ -26,10 +26,10 @@ function SignIn() {
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-[72ch] flex-col justify-center px-5 py-16">
-      <div className="mono text-sm text-ink-2">ecrofaidem</div>
-      <h1 className="mt-1 text-xl font-semibold tracking-[-0.01em]">frogbot</h1>
+      <h1 className="text-xl font-semibold tracking-[-0.01em]">frogbot</h1>
       <p className="mt-3 max-w-[48ch] text-base text-ink-2">
-        Runs, review policy and the Codex credential for the repos frogbot is installed on.
+        Runs, review policy and the Codex credential for the ecrofaidem repos frogbot is
+        installed on.
       </p>
       <div className="mt-8 flex flex-wrap items-center gap-3">
         <button type="button" className="btn btn-primary" onClick={signIn} disabled={busy}>
