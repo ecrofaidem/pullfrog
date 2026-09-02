@@ -1,0 +1,3 @@
+packages: [] # own workspace root — keeps pnpm from adopting the action's root above
+allowBuilds:
+  esbuild: true

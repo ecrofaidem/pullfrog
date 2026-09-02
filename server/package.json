@@ -1,0 +1,21 @@
+{
+  "name": "frogbot-server",
+  "private": true,
+  "type": "module",
+  "description": "Convex backend that stands in for the closed Pullfrog server: OIDC-gated installation tokens, run-context with Codex subscription refresh, secret write-back, and the GitHub App webhook dispatcher.",
+  "scripts": {
+    "dev": "convex dev",
+    "deploy": "convex deploy",
+    "codegen": "convex codegen",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@convex-dev/better-auth": "^0.12.5",
+    "better-auth": "~1.6.15",
+    "convex": "^1.45.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}
