@@ -1,0 +1,9 @@
+packages: [] # own workspace root — keeps pnpm from adopting the action's root above
+allowBuilds:
+  esbuild: true
+  workerd: true
+  sharp: true
+minimumReleaseAgeExclude:
+  - '@cloudflare/vite-plugin@1.54.3'
+  - miniflare@5.20260831.0-alpha
+  - wrangler@4.128.0

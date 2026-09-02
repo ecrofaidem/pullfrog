@@ -1,0 +1,119 @@
+{
+  "title": "Choose the visual world for the frogbot dashboard",
+  "question": "The roll assigned the Git Graph Rail. Keep it, take an alternate, or re-roll.",
+  "options": [
+    {
+      "id": "assigned",
+      "label": "Git Graph Rail",
+      "kicker": "THE ROLL",
+      "lineage": "git log --graph, the commit rail every engineer reads daily",
+      "thesis": "Runs are commits on a rail. The rail's continuity is the health of the system: an unbroken line means reviews are flowing, a cut at HEAD means the credential died. Refuses the card-grid dashboard with stat tiles.",
+      "palette": ["#f4f5f7", "#15181d", "#5b5bd6", "#8a909a"],
+      "materials": ["hairline rail", "state glyphs", "mono ref labels", "system sans"],
+      "viewport": "A single content column. Top strip: owner/repo as a mono ref, then Runs · Settings · Credentials as plain tabs. Below, the rail runs down the left edge of the column with one node per run; the newest at top under a HEAD marker that doubles as the health banner. Each row: PR number as a ref pill, title, kind, who triggered it, elapsed, tokens; the node glyph is the state (filled dot done, rotating ring in progress, crossed dot failed, hollow queued, slashed cancelled). An incremental review draws a lane back to the review it extends. Primary action lives in the row: open the PR, open the Actions log.",
+      "risk": "Reads like a git client if the rail turns decorative. The lane connecting incremental reviews must be real data or the metaphor is a costume.",
+      "raised": [
+        { "from": "challenger-iridescent-cloud-edge", "raise": "Colour confined to the hairline: only the rail and state glyphs carry hue; every text field stays achromatic." },
+        { "from": "challenger-orienteering-map", "raise": "The accent is reserved for the active leg: only the in-progress run wears the rail colour; finished runs are ink." },
+        { "from": "challenger-cloud-quarry", "raise": "Sections separated by real gaps, never by card borders: the page is one sheet with deep quiet between blocks." },
+        { "from": "challenger-crt-arcade", "raise": "Palette law: exactly five state glyphs, no intermediate hues, no tinted backgrounds for status." }
+      ],
+      "hero": "https://impeccable.style/worlds/cards/crouwel-grid-specimen-hero.webp"
+    },
+    {
+      "id": "model-pick",
+      "label": "Departures Board",
+      "kicker": "IMPECCABLE’S PICK",
+      "lineage": "airport split-flap departures board",
+      "thesis": "Every run is a departure: time, PR, destination, status in a fixed-width row, and a state change flips the flap. The clearest 'did my thing run' surface there is.",
+      "palette": ["#101214", "#f2efe6", "#e0a100", "#6b7078"],
+      "materials": ["split-flap rows", "condensed caps", "fixed column pitch"],
+      "viewport": "A dark board filling the width: columns TIME · PR · KIND · STATUS, rows in strict pitch, the status column flipping on change. Settings and credentials are boards of their own below a thin header.",
+      "risk": "The most familiar status metaphor; many runs in this category land here, and the flip animation is decoration the moment it stops carrying a real state change."
+    },
+    {
+      "id": "challenger-crouwel-grid-specimen",
+      "label": "Crouwel Grid Specimen",
+      "verdict": "competitive",
+      "lineage": "Wim Crouwel gridded type specimens",
+      "thesis": "The layout grid stays visible; every row, glyph and control snaps to its cells. Engineers read graph paper natively.",
+      "palette": ["#ffffff", "#1a1a1a", "#3b6fe0", "#c9d3ee"],
+      "materials": ["visible construction grid", "cell-snapped type", "one accent plane"],
+      "viewport": "Faint grid hairlines across the sheet; the runs list is a table whose rows are exact cell multiples; the repo name set large from grid cells.",
+      "case": "Fuses cleanly: rows and settings snap to cells and the grid is honest structure. Holds product clarity; loses on identification, since the audience reads git graphs, not type specimens.",
+      "risk": "Becomes wallpaper if the grid is not load-bearing.",
+      "hero": "https://impeccable.style/worlds/cards/crouwel-grid-specimen-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/crouwel-grid-specimen.webp"
+    },
+    {
+      "id": "challenger-cutting-bench",
+      "label": "Cutting Bench Select Rail",
+      "verdict": "competitive",
+      "lineage": "film cutting bench and select rail",
+      "thesis": "A perforated rail crossing the sheet; each run a punched frame; state is a mark, not a hue.",
+      "palette": ["#000000", "#f26d1e", "#ffffff"],
+      "materials": ["film grain", "perforated rail", "grease-pencil marks"],
+      "viewport": "A horizontal rail of frames at fixed pitch, the frame you left flagged, discarded runs hung on pins below.",
+      "case": "Holds product clarity: 'state is a mark' is exactly the product principle. Loses identification; nobody on the team has cut film, and the orange-on-black field fights daylight phone use.",
+      "risk": "Reads as a theme on a phone in daylight.",
+      "hero": "https://impeccable.style/worlds/cards/operate-a-cutting-bench-select-rail-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/operate-a-cutting-bench-select-rail.webp"
+    },
+    {
+      "id": "challenger-iridescent-cloud-edge",
+      "label": "Iridescent Cloud Edge",
+      "verdict": "declined",
+      "lineage": "diffraction fringe on a forming cloud",
+      "palette": ["#ffffff", "#4a5058", "#9fe3c7", "#e7b4d6", "#b7a4f2"],
+      "materials": ["achromatic field", "hairline colour bands"],
+      "case": "Loses both axes: the audience does not identify with atmospheric optics and pastel bands blur status.",
+      "kept": "Colour confined to hairline edges while the text field stays achromatic.",
+      "hero": "https://impeccable.style/worlds/cards/clouds-storms-auroras-iridescent-cloud-edge-hero.webp"
+    },
+    {
+      "id": "challenger-orienteering-map",
+      "label": "Orienteering Map",
+      "verdict": "declined",
+      "lineage": "ISOM orienteering map and legend",
+      "palette": ["#ffffff", "#7a5a2c", "#b8a800", "#8b2fc9"],
+      "materials": ["contour ground", "course purple overlay"],
+      "case": "Loses both: terrain inks carry no product meaning here and the legend is a second vocabulary to learn.",
+      "kept": "One colour reserved for the active leg only.",
+      "hero": "https://impeccable.style/worlds/cards/notation-diagram-systems-orienteering-map-hero.webp"
+    },
+    {
+      "id": "challenger-cloud-quarry",
+      "label": "Cloud Quarry",
+      "verdict": "declined",
+      "lineage": "surreal quarry of cut weather",
+      "palette": ["#f5f7fa", "#4d5b70", "#2c6fd6", "#c0c8d2"],
+      "materials": ["cut block mass", "sky-blue voids"],
+      "case": "Loses both: a surreal construction world for a status tool obscures the task.",
+      "kept": "Sections stacked as blocks with deep gaps, never boxed.",
+      "hero": "https://impeccable.style/worlds/cards/dream-surreal-impossible-worlds-cloud-quarry-hero.webp"
+    },
+    {
+      "id": "challenger-crt-arcade",
+      "label": "CRT Arcade Pixel Glow",
+      "verdict": "declined",
+      "lineage": "pixel-art arcade cabinet screen",
+      "palette": ["#000000", "#ffd23f", "#3ec1ff", "#ff4f7b"],
+      "materials": ["fat pixels", "scanlines", "phosphor bloom"],
+      "case": "Loses both: novelty grammar and glow fight legibility on a phone in daylight.",
+      "kept": "Strict palette law: a fixed set of state colours and nothing in between.",
+      "hero": "https://impeccable.style/worlds/cards/medium-native-crt-arcade-pixel-glow-hero.webp"
+    }
+  ],
+  "reroll": { "registers": ["safer", "bolder"] },
+  "buildPath": { "value": "code", "toggle": false },
+  "canon": true,
+  "canonCard": {
+    "label": "The category standard",
+    "thesis": "A SaaS admin: left sidebar, white content cards, blue primary button, a row of stat tiles above a table. Executed impeccably.",
+    "palette": ["#ffffff", "#111827", "#2563eb", "#e5e7eb"],
+    "materials": ["sidebar nav", "bordered cards", "data table"],
+    "viewport": "Sidebar with three items; a header with the repo name; four stat tiles; the runs table beneath.",
+    "risk": "Indistinguishable from every other internal tool by design."
+  },
+  "steer": true
+}

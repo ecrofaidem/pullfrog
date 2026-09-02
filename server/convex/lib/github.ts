@@ -36,7 +36,7 @@ export async function gh<T = unknown>(
       "User-Agent": "frogbot-server",
       ...(options.body !== undefined ? { "Content-Type": "application/json" } : {}),
     },
-    body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+    ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
     signal: AbortSignal.timeout(20_000),
   });
   if (!response.ok) {

@@ -69,6 +69,11 @@ export interface DashboardUser {
 /** every dashboard query and mutation starts here. */
 export async function requireDashboardUser(ctx: QueryCtx | MutationCtx): Promise<DashboardUser> {
   const identity = await ctx.auth.getUserIdentity();
+  // local development only: an anonymous local deployment with this env set
+  // skips sign-in so the dashboard can be built and inspected without OAuth.
+  if (!identity && process.env.DASHBOARD_DEV_BYPASS === "1") {
+    return { subject: "dev", login: process.env.DASHBOARD_DEV_LOGIN ?? "dev" };
+  }
   if (!identity) throw new Error("unauthenticated");
   const login =
     (typeof identity.nickname === "string" && identity.nickname) ||

@@ -1,0 +1,161 @@
+@import "tailwindcss";
+
+/* ── world: one sheet, achromatic ink, one rail hue ────────────────────────── */
+@theme {
+  --color-sheet: light-dark(#f4f5f7, #14161a);
+  --color-sheet-2: light-dark(#eceef2, #1b1e24);
+  --color-ink: light-dark(#15181d, #e6e8ec);
+  --color-ink-2: light-dark(#5f6672, #9aa1ab);
+  --color-ink-3: light-dark(#666d79, #8b929c);
+  --color-hair: light-dark(#d9dce2, #2a2e35);
+  --color-rail: light-dark(#5b5bd6, #8b8bff);
+  --color-rail-soft: light-dark(#e4e4f9, #26264a);
+
+  --font-sans:
+    system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1rem;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 0.9375rem;
+  --text-base--line-height: 1.5rem;
+  --text-lg: 1.0625rem;
+  --text-lg--line-height: 1.5rem;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.75rem;
+
+  --radius-pill: 999px;
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+:root {
+  color-scheme: light dark;
+}
+
+html {
+  background: var(--color-sheet);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-variant-numeric: tabular-nums;
+  accent-color: var(--color-rail);
+  caret-color: var(--color-rail);
+}
+
+/* the browser surfaces the design still owns */
+::selection {
+  background: var(--color-rail);
+  color: #fff;
+}
+:focus-visible {
+  outline: 2px solid var(--color-rail);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+a {
+  text-underline-offset: 0.2em;
+  text-decoration-thickness: 1px;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-hair) transparent;
+}
+code,
+kbd,
+pre,
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+/* form controls in the sheet's own vocabulary */
+.field {
+  @apply w-full rounded-sm border border-hair bg-sheet px-2.5 py-1.5 text-base text-ink;
+  transition: border-color 150ms var(--ease-out-expo);
+}
+.field:hover {
+  border-color: var(--color-ink-3);
+}
+.field:focus {
+  border-color: var(--color-rail);
+  outline: none;
+}
+.field:disabled {
+  color: var(--color-ink-3);
+  background: var(--color-sheet-2);
+}
+.field[aria-invalid="true"] {
+  border-color: var(--color-ink);
+  border-style: dashed;
+}
+
+.btn {
+  @apply inline-flex items-center gap-1.5 rounded-sm border px-3 py-1.5 text-sm font-medium;
+  transition:
+    background-color 150ms var(--ease-out-expo),
+    border-color 150ms var(--ease-out-expo),
+    color 150ms var(--ease-out-expo);
+}
+.btn-primary {
+  @apply border-rail bg-rail text-white;
+}
+.btn-primary:hover {
+  filter: brightness(1.08);
+}
+.btn-primary:disabled {
+  @apply border-hair bg-sheet-2 text-ink-3;
+  filter: none;
+}
+.btn-quiet {
+  @apply border-hair bg-transparent text-ink;
+}
+.btn-quiet:hover {
+  border-color: var(--color-ink-3);
+}
+.btn-danger {
+  @apply border-hair bg-transparent text-ink;
+}
+.btn-danger:hover {
+  border-color: var(--color-ink);
+  border-style: dashed;
+}
+
+/* the ref pill: a git ref label */
+.ref {
+  @apply inline-flex items-center rounded-pill border border-hair px-1.5 text-xs leading-5 text-ink-2;
+  font-family: var(--font-mono);
+  background: var(--color-sheet);
+}
+
+/* rail motion: the in-progress ring turns; new rows draw in */
+@keyframes rail-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.glyph-active {
+  transform-origin: 50% 50%;
+  animation: rail-spin 1.4s linear infinite;
+}
+@keyframes row-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+.row-in {
+  animation: row-in 220ms var(--ease-out-expo);
+}
+@media (prefers-reduced-motion: reduce) {
+  .glyph-active {
+    animation-duration: 6s;
+  }
+  .row-in {
+    animation: none;
+  }
+}

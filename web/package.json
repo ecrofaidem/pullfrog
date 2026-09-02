@@ -1,0 +1,38 @@
+{
+  "name": "frogbot-web",
+  "private": true,
+  "type": "module",
+  "description": "frogbot dashboard: runs, settings and credentials for the Convex server in ../server. TanStack Start on Cloudflare Workers.",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "deploy": "pnpm build && wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "cf-typegen": "wrangler types"
+  },
+  "dependencies": {
+    "@convex-dev/better-auth": "^0.12.5",
+    "@convex-dev/react-query": "^0.1.0",
+    "@tanstack/react-query": "^5.102.8",
+    "@tanstack/react-router": "^1.170.32",
+    "@tanstack/react-router-ssr-query": "^1.167.2",
+    "@tanstack/react-start": "^1.168.49",
+    "better-auth": "~1.6.15",
+    "convex": "^1.45.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.54.3",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "@vitejs/plugin-react": "^6.1.1",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.9.0",
+    "vite": "^8.2.2",
+    "wrangler": "^4.128.0"
+  }
+}

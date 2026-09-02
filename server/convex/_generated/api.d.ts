@@ -29,6 +29,7 @@ import type * as lib_jwt from "../lib/jwt.js";
 import type * as lib_oauthShared from "../lib/oauthShared.js";
 import type * as lib_oidc from "../lib/oidc.js";
 import type * as lib_runToken from "../lib/runToken.js";
+import type * as me from "../me.js";
 import type * as repos from "../repos.js";
 import type * as runs from "../runs.js";
 import type * as secrets from "../secrets.js";
@@ -61,6 +62,7 @@ declare const fullApi: ApiFromModules<{
   "lib/oauthShared": typeof lib_oauthShared;
   "lib/oidc": typeof lib_oidc;
   "lib/runToken": typeof lib_runToken;
+  me: typeof me;
   repos: typeof repos;
   runs: typeof runs;
   secrets: typeof secrets;
