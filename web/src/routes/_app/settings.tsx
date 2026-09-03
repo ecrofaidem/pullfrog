@@ -162,9 +162,11 @@ function SettingsPage() {
     }
   }, [repo, seed, dirty]);
 
-  useBlocker({
-    shouldBlockFn: () => dirty && !window.confirm("Discard unsaved settings?"),
+  // leaving with edits pending is answered inline in the save bar, never by a browser modal
+  const blocker = useBlocker({
+    shouldBlockFn: () => dirty,
     enableBeforeUnload: () => dirty,
+    withResolver: true,
   });
 
   const set = <K extends keyof Form>(key: K, value: Form[K]) => {
@@ -184,8 +186,11 @@ function SettingsPage() {
     setSaving(true);
     setServerError(null);
     try {
-      await update({ id: repo._id, patch: toPatch(form) });
-      setSeed(repo);
+      const patch = toPatch(form);
+      await update({ id: repo._id, patch });
+      // the seed becomes what was just written; the live doc replaces it when it arrives
+      const defined = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined));
+      setSeed({ ...repo, ...defined } as Doc<"repos">);
       setSavedAt(Date.now());
     } catch (err) {
       const raw = err instanceof Error ? err.message : String(err);
@@ -196,7 +201,8 @@ function SettingsPage() {
   }
 
   const allowlistCount = toPatch(form).reviewAuthors!.length;
-  const showBar = dirty || saving || !!serverError || (savedAt !== null && now !== null && now - savedAt < 8000);
+  const leaving = blocker.status === "blocked";
+  const showBar = dirty || saving || !!serverError || leaving || (savedAt !== null && now !== null && now - savedAt < 8000);
   const siteUrl = import.meta.env.VITE_CONVEX_SITE_URL;
 
   return (
@@ -377,7 +383,17 @@ function SettingsPage() {
 
       {showBar && (
         <div className="sticky bottom-0 -mx-5 mt-6 flex flex-wrap items-center gap-3 border-t border-hair bg-sheet px-5 py-3 sm:mx-0 sm:px-0">
-          {dirty ? (
+          {leaving ? (
+            <>
+              <span className="text-sm text-ink">Unsaved settings.</span>
+              <button type="button" className="btn btn-danger" onClick={() => blocker.proceed()}>
+                Discard and leave
+              </button>
+              <button type="button" className="btn btn-quiet" onClick={() => blocker.reset()}>
+                Stay
+              </button>
+            </>
+          ) : dirty ? (
             <>
               <button type="submit" className="btn btn-primary" disabled={saving}>
                 {saving ? "Saving…" : "Save changes"}

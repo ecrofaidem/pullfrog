@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-09-02T00:00:00.000Z",
+  "generatedAt": "2026-09-03T00:00:00.000Z",
   "title": "Design System: frogbot",
   "extensions": {
     "colorMeta": {
@@ -67,16 +67,16 @@
       "ink-2": {
         "role": "neutral",
         "displayName": "Ink Muted",
-        "canonical": "light-dark(#5f6672, #9aa1ab)",
+        "canonical": "light-dark(#4e5561, #a3aab4)",
         "tonalRamp": [
-          "oklch(22% 0.012 265)",
-          "oklch(32% 0.015 265)",
-          "oklch(45% 0.018 265)",
-          "oklch(50% 0.019 265)",
-          "oklch(63% 0.017 265)",
-          "oklch(75% 0.014 265)",
-          "oklch(86% 0.010 265)",
-          "oklch(95% 0.006 265)"
+          "oklch(21% 0.014 265)",
+          "oklch(31% 0.017 265)",
+          "oklch(43% 0.020 265)",
+          "oklch(45% 0.021 265)",
+          "oklch(60% 0.019 265)",
+          "oklch(73% 0.015 265)",
+          "oklch(85% 0.011 265)",
+          "oklch(94% 0.007 265)"
         ]
       },
       "ink-3": {
@@ -117,15 +117,15 @@
       },
       "title": {
         "displayName": "Title",
-        "purpose": "Section headings (Review policy, Model, Codex subscription). With the primary button, the only bold text in the product."
+        "purpose": "Section headings (Repository, Review policy, Model, Run, Codex subscription). With the primary button, the only bold text in the product."
       },
       "body": {
         "displayName": "Body",
-        "purpose": "Run titles, HEAD's health sentence, prose. Capped at 48-60ch inside the 72ch column."
+        "purpose": "Run titles, HEAD's health sentence, the repo's full name, secret names, prose. Capped at 48-60ch inside the 72ch column."
       },
       "label": {
         "displayName": "Label",
-        "purpose": "The workhorse: state words, run metadata, per-setting help text, button labels, nav tabs."
+        "purpose": "The workhorse: state words, run metadata, setting keys, per-setting help text, button labels, nav tabs, disclosure summaries."
       },
       "caption": {
         "displayName": "Caption",
@@ -133,15 +133,21 @@
       },
       "mono": {
         "displayName": "Machine Mono",
-        "purpose": "A face switch applied at any size, never a size of its own. Anything GitHub or the server owns: owner/repo, #1318, logins, relative times, elapsed durations, model ids, token counts, setting keys, shell commands."
+        "purpose": "A face switch applied at any size, never a size of its own. Anything GitHub or the server owns: owner/repo, #1318, logins, relative times, elapsed durations, model ids, token counts, setting keys, secret names, shell commands."
       }
     },
-    "shadows": [],
+    "shadows": [
+      {
+        "name": "tab-underline",
+        "value": "inset 0 -1px 0 var(--color-ink)",
+        "purpose": "The only box-shadow in the system, and it is a rule rather than a shadow: the active tab's 1px underline, drawn inside its own box so it cannot change the tab's height or hit area. Nothing in this product casts an outer shadow."
+      }
+    ],
     "motion": [
       {
         "name": "ease-out-expo",
         "value": "cubic-bezier(0.16, 1, 0.3, 1)",
-        "purpose": "The system's only easing curve. Every transition and every keyframe animation uses it, except the in-progress ring which is linear."
+        "purpose": "The system's only easing curve. Every transition and every keyframe animation uses it, except the in-progress ring which is linear and the skeleton pulse which is ease-in-out."
       },
       {
         "name": "control-transition",
@@ -151,7 +157,7 @@
       {
         "name": "rail-spin",
         "value": "@keyframes rail-spin { to { transform: rotate(360deg); } } — 1.4s linear infinite",
-        "purpose": "The in-progress ring rotates. The only perpetual motion in the system; it means exactly one thing, that a run is in flight right now. Under prefers-reduced-motion it slows to 6s rather than stopping, because the signal is load-bearing."
+        "purpose": "The in-progress ring rotates. It means exactly one thing, that a run is executing right now. Under prefers-reduced-motion it slows to 6s rather than stopping, because the signal is load-bearing."
       },
       {
         "name": "row-in",
@@ -160,8 +166,18 @@
       },
       {
         "name": "rail-draw",
-        "value": "@keyframes rail-draw { from { clip-path: inset(0 0 100% 0); } to { clip-path: inset(0 0 0 0); } } — 420ms ease-out-expo, then fade out over 600ms",
+        "value": "@keyframes rail-draw { from { clip-path: inset(0 0 100% 0); } to { clip-path: inset(0 0 0 0); } } — 420ms ease-out-expo, then rail-fade over 600ms forwards",
         "purpose": "The signature interaction: when a run arrives, a heavier 3px indigo stroke wipes down the rail from HEAD to the new node, then dissolves. The rail literally extends to reach the run."
+      },
+      {
+        "name": "bone",
+        "value": "@keyframes bone { 50% { opacity: 0.55; } } — 1.4s ease-in-out infinite",
+        "purpose": "Skeleton bars breathe while an answer is outstanding, and stop the moment it lands. Removed entirely under prefers-reduced-motion. There is no spinner in this product."
+      },
+      {
+        "name": "shared-clock",
+        "value": "useNow(1000 | 30_000) — one useSyncExternalStore tick shared by the page; null on the server and through hydration",
+        "purpose": "Every relative time on a page changes together: each second while a run is open, each thirty otherwise. Before hydration the clock is null and times render as absolute UTC stamps, so SSR and the first client paint agree exactly."
       }
     ],
     "breakpoints": [
@@ -178,31 +194,31 @@
       "refersTo": "button-primary",
       "description": "The one committing action on a view: Save changes, Continue with GitHub. The darkest thing on the page.",
       "html": "<button class=\"ds-btn ds-btn-primary\">Save changes</button>",
-      "css": ".ds-btn { display: inline-flex; align-items: center; gap: 6px; border-radius: 4px; border: 1px solid transparent; padding: 6px 12px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 0.8125rem; line-height: 1.25rem; font-weight: 500; cursor: pointer; transition: background-color 150ms cubic-bezier(0.16,1,0.3,1), border-color 150ms cubic-bezier(0.16,1,0.3,1), color 150ms cubic-bezier(0.16,1,0.3,1); } .ds-btn-primary { background: var(--color-ink, #15181d); border-color: var(--color-ink, #15181d); color: var(--color-sheet, #f4f5f7); } .ds-btn-primary:hover { opacity: 0.88; } .ds-btn-primary:focus-visible { outline: 2px solid var(--color-rail, #5b5bd6); outline-offset: 2px; border-radius: 2px; } .ds-btn-primary:disabled { background: var(--color-sheet-2, #eceef2); border-color: var(--color-hair, #d9dce2); color: var(--color-ink-3, #666d79); opacity: 1; cursor: default; }"
+      "css": ".ds-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; border-radius: 4px; border: 1px solid transparent; padding: 6px 12px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 0.8125rem; line-height: 1.25rem; font-weight: 500; cursor: pointer; transition: background-color 150ms cubic-bezier(0.16,1,0.3,1), border-color 150ms cubic-bezier(0.16,1,0.3,1), color 150ms cubic-bezier(0.16,1,0.3,1); } .ds-btn-primary { background: var(--color-ink, #15181d); border-color: var(--color-ink, #15181d); color: var(--color-sheet, #f4f5f7); } .ds-btn-primary:hover { opacity: 0.88; } .ds-btn-primary:focus-visible { outline: 2px solid var(--color-rail, #5b5bd6); outline-offset: 2px; border-radius: 2px; } .ds-btn-primary:disabled { background: var(--color-sheet-2, #eceef2); border-color: var(--color-hair, #d9dce2); color: var(--color-ink-3, #666d79); opacity: 1; cursor: default; }"
     },
     {
       "name": "Quiet Button",
       "kind": "button",
       "refersTo": "button-quiet",
-      "description": "The default for anything that is not the one committing action: Discard, Keep. A labelled edge, not an object.",
+      "description": "The default for anything that is not the one committing action: Discard, Keep, Turn on, copy. A labelled edge, not an object.",
       "html": "<button class=\"ds-btn ds-btn-quiet\">Discard</button>",
-      "css": ".ds-btn { display: inline-flex; align-items: center; gap: 6px; border-radius: 4px; border: 1px solid transparent; padding: 6px 12px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 0.8125rem; line-height: 1.25rem; font-weight: 500; cursor: pointer; transition: border-color 150ms cubic-bezier(0.16,1,0.3,1), color 150ms cubic-bezier(0.16,1,0.3,1); } .ds-btn-quiet { background: transparent; border-color: var(--color-hair, #d9dce2); color: var(--color-ink, #15181d); } .ds-btn-quiet:hover { border-color: var(--color-ink-3, #666d79); } .ds-btn-quiet:focus-visible { outline: 2px solid var(--color-rail, #5b5bd6); outline-offset: 2px; border-radius: 2px; }"
+      "css": ".ds-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; border-radius: 4px; border: 1px solid transparent; padding: 6px 12px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 0.8125rem; line-height: 1.25rem; font-weight: 500; cursor: pointer; transition: border-color 150ms cubic-bezier(0.16,1,0.3,1), color 150ms cubic-bezier(0.16,1,0.3,1); } .ds-btn-quiet { background: transparent; border-color: var(--color-hair, #d9dce2); color: var(--color-ink, #15181d); } .ds-btn-quiet:hover { border-color: var(--color-ink-3, #666d79); } .ds-btn-quiet:focus-visible { outline: 2px solid var(--color-rail, #5b5bd6); outline-offset: 2px; border-radius: 2px; }"
     },
     {
-      "name": "Danger Button",
+      "name": "Danger Button (inline confirm)",
       "kind": "button",
       "refersTo": "button-danger",
-      "description": "Destructive confirmation, inline in the row it acts on. Identical to quiet at rest; on hover the border goes full ink AND dashed. No red, no fill.",
-      "html": "<button class=\"ds-btn ds-btn-danger\">Remove</button>",
-      "css": ".ds-btn { display: inline-flex; align-items: center; gap: 6px; border-radius: 4px; border: 1px solid transparent; padding: 6px 12px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 0.8125rem; line-height: 1.25rem; font-weight: 500; cursor: pointer; transition: border-color 150ms cubic-bezier(0.16,1,0.3,1); } .ds-btn-danger { background: transparent; border-color: var(--color-hair, #d9dce2); color: var(--color-ink, #15181d); } .ds-btn-danger:hover { border-color: var(--color-ink, #15181d); border-style: dashed; } .ds-btn-danger:focus-visible { outline: 2px solid var(--color-rail, #5b5bd6); outline-offset: 2px; border-radius: 2px; }"
+      "description": "Destructive confirmation, inline in the row it acts on, never in a dialog. Identical to quiet at rest; on hover the border goes full ink AND dashed. No red, no fill.",
+      "html": "<span class=\"ds-confirm\"><span class=\"ds-confirm-q\">remove OPENAI_API_KEY?</span><button class=\"ds-btn ds-btn-danger\">Remove</button><button class=\"ds-btn ds-btn-quiet\">Keep</button></span>",
+      "css": ".ds-confirm { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 0.8125rem; } .ds-confirm-q { color: var(--color-ink-2, #4e5561); } .ds-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; border-radius: 4px; border: 1px solid transparent; padding: 6px 12px; font-size: 0.8125rem; line-height: 1.25rem; font-weight: 500; cursor: pointer; transition: border-color 150ms cubic-bezier(0.16,1,0.3,1); } .ds-btn-danger, .ds-btn-quiet { background: transparent; border-color: var(--color-hair, #d9dce2); color: var(--color-ink, #15181d); } .ds-btn-danger:hover { border-color: var(--color-ink, #15181d); border-style: dashed; } .ds-btn-quiet:hover { border-color: var(--color-ink-3, #666d79); } .ds-btn:focus-visible { outline: 2px solid var(--color-rail, #5b5bd6); outline-offset: 2px; border-radius: 2px; }"
     },
     {
       "name": "Text Field",
       "kind": "input",
       "refersTo": "field",
-      "description": "One class covers inputs, textareas and selects so a form reads as a single material. Width is content-sized, never full-bleed, as a hint about the value's size. Focus joins the rail's colour.",
-      "html": "<input class=\"ds-field ds-field-mono\" value=\"frogbot\" aria-label=\"handle\" />",
-      "css": ".ds-field { width: 100%; max-width: 20rem; border-radius: 4px; border: 1px solid var(--color-hair, #d9dce2); background: var(--color-sheet, #f4f5f7); padding: 6px 10px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 0.9375rem; line-height: 1.5rem; color: var(--color-ink, #15181d); font-variant-numeric: tabular-nums; transition: border-color 150ms cubic-bezier(0.16,1,0.3,1); } .ds-field-mono { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 0.9em; } .ds-field:hover { border-color: var(--color-ink-3, #666d79); } .ds-field:focus { border-color: var(--color-rail, #5b5bd6); outline: none; } .ds-field:disabled { color: var(--color-ink-3, #666d79); background: var(--color-sheet-2, #eceef2); } .ds-field[aria-invalid=\"true\"] { border-color: var(--color-ink, #15181d); border-style: dashed; }"
+      "description": "One class covers inputs, textareas and selects so a form reads as a single material. The class sets no width beyond max-width:100% — each use site gives the field a content-sized width, because the width is a hint about the value's size. Focus joins the rail's colour; invalid goes ink and dashed, never red.",
+      "html": "<span class=\"ds-fieldrow\"><input class=\"ds-field ds-field-mono\" style=\"width:11rem\" value=\"frogbot\" aria-label=\"handle\" /><input class=\"ds-field ds-field-mono\" style=\"width:7rem\" value=\"45min\" aria-invalid=\"true\" aria-label=\"timeout\" /><label class=\"ds-check\"><input type=\"checkbox\" checked /> re-review on push</label></span>",
+      "css": ".ds-fieldrow { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; accent-color: var(--color-rail, #5b5bd6); } .ds-field { max-width: 100%; border-radius: 4px; border: 1px solid var(--color-hair, #d9dce2); background: var(--color-sheet, #f4f5f7); padding: 6px 10px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 0.9375rem; line-height: 1.5rem; color: var(--color-ink, #15181d); font-variant-numeric: tabular-nums; transition: border-color 150ms cubic-bezier(0.16,1,0.3,1); } .ds-field-mono { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 0.9em; } .ds-field:hover { border-color: var(--color-ink-3, #666d79); } .ds-field:focus { border-color: var(--color-rail, #5b5bd6); outline: none; } .ds-field:disabled { color: var(--color-ink-3, #666d79); background: var(--color-sheet-2, #eceef2); } .ds-field[aria-invalid=\"true\"] { border-color: var(--color-ink, #15181d); border-style: dashed; } .ds-check { display: inline-flex; align-items: center; gap: 8px; min-height: 24px; font-size: 0.8125rem; color: var(--color-ink, #15181d); } .ds-check input { width: 16px; height: 16px; }"
     },
     {
       "name": "Ref Pill",
@@ -210,51 +226,77 @@
       "refersTo": "ref-pill",
       "description": "The only fully-round object in the system, because it is quoting GitHub's own ref chip. Holds a PR number and links out.",
       "html": "<a class=\"ds-ref\" href=\"#\">#1318</a>",
-      "css": ".ds-ref { display: inline-flex; align-items: center; border-radius: 999px; border: 1px solid var(--color-hair, #d9dce2); background: var(--color-sheet, #f4f5f7); padding: 0 6px; font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 0.75rem; line-height: 20px; color: var(--color-ink-2, #5f6672); text-decoration: none; font-variant-numeric: tabular-nums; transition: border-color 150ms cubic-bezier(0.16,1,0.3,1); } .ds-ref:hover { border-color: var(--color-ink-3, #666d79); } .ds-ref:focus-visible { outline: 2px solid var(--color-rail, #5b5bd6); outline-offset: 2px; }"
+      "css": ".ds-ref { display: inline-flex; align-items: center; border-radius: 999px; border: 1px solid var(--color-hair, #d9dce2); background: var(--color-sheet, #f4f5f7); padding: 0 6px; font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 0.75rem; line-height: 20px; color: var(--color-ink-2, #4e5561); text-decoration: none; font-variant-numeric: tabular-nums; transition: border-color 150ms cubic-bezier(0.16,1,0.3,1); } .ds-ref:hover { border-color: var(--color-ink-3, #666d79); } .ds-ref:focus-visible { outline: 2px solid var(--color-rail, #5b5bd6); outline-offset: 2px; }"
     },
     {
       "name": "Section Tabs",
       "kind": "nav",
-      "refersTo": "nav-tab",
-      "description": "Three inline text tabs beside the repo's mono full name. Active is a full-ink label over a 1px ink underline; the transparent border is always present so nothing shifts on activation. On mobile the header simply wraps — no hamburger, no drawer.",
-      "html": "<nav class=\"ds-nav\" aria-label=\"Sections\"><a class=\"ds-tab ds-tab-active\" href=\"#\">Runs</a><a class=\"ds-tab\" href=\"#\">Settings</a><a class=\"ds-tab\" href=\"#\">Credentials</a></nav>",
-      "css": ".ds-nav { display: flex; flex-wrap: wrap; gap: 16px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 0.8125rem; line-height: 1.25rem; } .ds-tab { border-bottom: 1px solid transparent; padding-bottom: 2px; color: var(--color-ink-2, #5f6672); text-decoration: none; transition: color 150ms cubic-bezier(0.16,1,0.3,1); } .ds-tab:hover { color: var(--color-ink, #15181d); } .ds-tab-active { border-bottom-color: var(--color-ink, #15181d); color: var(--color-ink, #15181d); } .ds-tab:focus-visible { outline: 2px solid var(--color-rail, #5b5bd6); outline-offset: 2px; border-radius: 2px; }"
+      "refersTo": "tab",
+      "description": "Three inline text tabs beside the repo's mono full name. The same .tab class gives every small text control a 24px hit area, padded out and pulled back with an equal negative margin so nothing moves. Active is full ink over a 1px inset underline, so activating a tab shifts nothing. On mobile the header simply wraps — no hamburger, no drawer.",
+      "html": "<header class=\"ds-header\"><span class=\"ds-repo\">ecrofaidem/monorepo</span><nav class=\"ds-nav\" aria-label=\"Sections\"><a class=\"ds-tab ds-tab-active\" href=\"#\">Runs</a><a class=\"ds-tab\" href=\"#\">Settings</a><a class=\"ds-tab\" href=\"#\">Credentials</a></nav><span class=\"ds-id\"><span class=\"ds-mono\">tristan</span><button class=\"ds-tab ds-textbtn\">sign out</button></span></header>",
+      "css": ".ds-header { display: flex; flex-wrap: wrap; align-items: center; column-gap: 12px; row-gap: 4px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 0.8125rem; } .ds-repo { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 0.9375rem; color: var(--color-ink, #15181d); padding: 6px 0; } .ds-nav { display: flex; flex-wrap: wrap; gap: 12px; } .ds-tab { display: inline-flex; min-height: 24px; align-items: center; border-radius: 4px; padding: 4px; margin: -4px; color: var(--color-ink-2, #4e5561); text-decoration: none; background: none; border: 0; font: inherit; cursor: pointer; transition: color 150ms cubic-bezier(0.16,1,0.3,1); } .ds-tab:hover { color: var(--color-ink, #15181d); } .ds-tab-active { color: var(--color-ink, #15181d); box-shadow: inset 0 -1px 0 var(--color-ink, #15181d); } .ds-tab:focus-visible { outline: 2px solid var(--color-rail, #5b5bd6); outline-offset: 2px; border-radius: 2px; } .ds-id { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; color: var(--color-ink-3, #666d79); } .ds-textbtn { text-decoration: underline; text-underline-offset: 0.2em; } .ds-mono { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 0.9em; }"
     },
     {
       "name": "Rail Row",
       "kind": "custom",
       "refersTo": null,
-      "description": "One run as a commit on the rail. The 28px glyph track holds a sheet-painted cell so the indigo hairline passes behind the node; content is a ref pill, title, state word, then a metadata line in mono. This grid is shared by every list-shaped thing on every view.",
-      "html": "<div class=\"ds-rail\"><span class=\"ds-rail-line\" aria-hidden=\"true\"></span><ol class=\"ds-rail-list\"><li class=\"ds-row\"><span class=\"ds-glyph ds-glyph-active\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" aria-hidden=\"true\"><circle cx=\"8\" cy=\"8\" r=\"4.5\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-dasharray=\"20 8.3\" stroke-linecap=\"round\"/></svg></span><div class=\"ds-row-body\"><div class=\"ds-row-head\"><a class=\"ds-ref\" href=\"#\">#1318</a><span class=\"ds-row-title\">fix(dashboard): debounce account search</span><span class=\"ds-row-state\">in progress</span></div><div class=\"ds-row-meta\"><span>incremental review</span><span class=\"ds-mono\">mt-mf-1</span><span class=\"ds-mono\">13m ago</span><span class=\"ds-mono ds-faint\">12m 41s</span></div></div></li><li class=\"ds-row\"><span class=\"ds-glyph\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" aria-hidden=\"true\"><circle cx=\"8\" cy=\"8\" r=\"4.5\" fill=\"currentColor\"/></svg></span><div class=\"ds-row-body\"><div class=\"ds-row-head\"><a class=\"ds-ref\" href=\"#\">#1318</a><span class=\"ds-row-title\">review</span><span class=\"ds-row-state ds-muted\">done</span></div><div class=\"ds-row-meta\"><span class=\"ds-mono\">mt-mf-1</span><span class=\"ds-mono\">13m ago</span><span class=\"ds-mono ds-faint\">96.4K in · 6.1K out</span></div></div></li><li class=\"ds-row\"><span class=\"ds-glyph\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" aria-hidden=\"true\"><circle cx=\"8\" cy=\"8\" r=\"4.5\" stroke=\"currentColor\" stroke-width=\"1.5\"/><path d=\"M5.9 5.9l4.2 4.2M10.1 5.9l-4.2 4.2\" stroke=\"currentColor\" stroke-width=\"1.5\"/></svg></span><div class=\"ds-row-body\"><div class=\"ds-row-head\"><a class=\"ds-ref\" href=\"#\">#1312</a><span class=\"ds-row-title\">incremental review</span><span class=\"ds-row-state ds-muted\">failed</span></div><div class=\"ds-row-meta\"><span class=\"ds-mono\">mt-mf-1</span><span class=\"ds-mono\">23m ago</span><span class=\"ds-mono ds-faint\">1s</span></div></div></li></ol></div>",
-      "css": ".ds-rail { position: relative; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-variant-numeric: tabular-nums; max-width: 72ch; } .ds-rail-line { position: absolute; top: 12px; bottom: 12px; left: 14px; width: 1px; background: var(--color-rail, #5b5bd6); } .ds-rail-list { position: relative; list-style: none; margin: 0; padding: 0; } .ds-row { display: grid; grid-template-columns: 28px 1fr; column-gap: 8px; align-items: start; padding: 12px 0; } .ds-glyph { position: relative; z-index: 10; display: flex; height: 24px; align-items: center; justify-content: center; background: var(--color-sheet, #f4f5f7); color: var(--color-ink, #15181d); } .ds-glyph-active { color: var(--color-rail, #5b5bd6); transform-origin: 50% 50%; animation: ds-rail-spin 1.4s linear infinite; } @keyframes ds-rail-spin { to { transform: rotate(360deg); } } .ds-row-body { min-width: 0; } .ds-row-head { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 8px; row-gap: 4px; } .ds-row-title { font-size: 0.9375rem; line-height: 1.5rem; color: var(--color-ink, #15181d); } .ds-row-state { font-size: 0.8125rem; color: var(--color-rail, #5b5bd6); } .ds-row-state.ds-muted { color: var(--color-ink-2, #5f6672); } .ds-row-meta { margin-top: 2px; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 12px; row-gap: 2px; font-size: 0.8125rem; line-height: 1.25rem; color: var(--color-ink-2, #5f6672); } .ds-mono { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 0.9em; } .ds-faint { color: var(--color-ink-3, #666d79); } .ds-ref { display: inline-flex; align-items: center; border-radius: 999px; border: 1px solid var(--color-hair, #d9dce2); background: var(--color-sheet, #f4f5f7); padding: 0 6px; font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 0.75rem; line-height: 20px; color: var(--color-ink-2, #5f6672); text-decoration: none; } .ds-ref:hover { border-color: var(--color-ink-3, #666d79); } @media (prefers-reduced-motion: reduce) { .ds-glyph-active { animation-duration: 6s; } }"
+      "description": "One run as a commit on the rail. The 28px glyph track holds a sheet-painted cell so the indigo hairline passes behind the node; the PR title leads its group as a link and later runs of the same PR show what they are instead; a failure states itself in a sentence with the raw text behind a disclosure. This grid is shared by every list-shaped thing on every view.",
+      "html": "<div class=\"ds-rail\"><span class=\"ds-rail-line\" aria-hidden=\"true\"></span><ol class=\"ds-rail-list\"><li class=\"ds-row\"><span class=\"ds-glyph ds-glyph-active\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" aria-hidden=\"true\"><circle cx=\"8\" cy=\"8\" r=\"4.5\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-dasharray=\"20 8.3\" stroke-linecap=\"round\"/></svg></span><div class=\"ds-row-body\"><div class=\"ds-row-head\"><a class=\"ds-ref\" href=\"#\">#2886</a><a class=\"ds-row-title\" href=\"#\">feat(cm): order actions by last activity, filter by status</a><span class=\"ds-row-state ds-active\">in progress</span></div><div class=\"ds-row-meta\"><span>review</span><span class=\"ds-mono\">mt-mf-1</span><span class=\"ds-mono\">40m ago</span><span class=\"ds-mono ds-faint\">30m 00s</span><a class=\"ds-tab ds-out\" href=\"#\">Actions log <svg width=\"12\" height=\"12\" viewBox=\"0 0 12 12\" fill=\"none\" aria-hidden=\"true\"><path d=\"M4 2.5h5.5V8M9.5 2.5L2.5 9.5\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\"/></svg></a></div></div></li><li class=\"ds-row\"><span class=\"ds-glyph\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" aria-hidden=\"true\"><circle cx=\"8\" cy=\"8\" r=\"4.5\" fill=\"currentColor\"/></svg></span><div class=\"ds-row-body\"><div class=\"ds-row-head\"><a class=\"ds-ref\" href=\"#\">#2885</a><a class=\"ds-row-title\" href=\"#\">fix(cm): a schedule-gate refusal is no session</a><span class=\"ds-row-state\">done</span></div><div class=\"ds-row-meta\"><span class=\"ds-mono\">mt-mf-1</span><span class=\"ds-mono\">48m ago</span><span class=\"ds-mono ds-faint\">10m 29s</span><span class=\"ds-mono ds-faint\">1.9M in · 5.4K out</span></div></div></li><li class=\"ds-row\"><span class=\"ds-glyph\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" aria-hidden=\"true\"><circle cx=\"8\" cy=\"8\" r=\"4.5\" stroke=\"currentColor\" stroke-width=\"1.5\"/><path d=\"M5.9 5.9l4.2 4.2M10.1 5.9l-4.2 4.2\" stroke=\"currentColor\" stroke-width=\"1.5\"/></svg></span><div class=\"ds-row-body\"><div class=\"ds-row-head\"><a class=\"ds-ref\" href=\"#\">#2871</a><span class=\"ds-row-title\">review</span><span class=\"ds-row-state\">failed</span></div><div class=\"ds-row-meta\"><span class=\"ds-mono\">mt-mf-1</span><span class=\"ds-mono\">13h ago</span><span class=\"ds-mono ds-faint\">0s</span></div><div class=\"ds-row-error\"><p>GitHub returned 404 while dispatching the workflow. The workflow file may be missing from the default branch, or the App is not installed here.</p><details class=\"ds-disclosure\"><summary>raw error</summary><pre class=\"ds-cmd\">GitHub 404 on /repos/ecrofaidem/monorepo/actions/workflows/pullfrog.yml/dispatches: Not Found</pre></details></div></div></li></ol></div>",
+      "css": ".ds-rail { position: relative; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-variant-numeric: tabular-nums; max-width: 72ch; } .ds-rail-line { position: absolute; top: 12px; bottom: 12px; left: 14px; width: 1px; background: var(--color-rail, #5b5bd6); } .ds-rail-list { position: relative; list-style: none; margin: 0; padding: 0; } .ds-row { display: grid; grid-template-columns: 28px 1fr; column-gap: 8px; align-items: start; padding: 12px 0; } .ds-glyph { position: relative; z-index: 10; display: flex; height: 24px; align-items: center; justify-content: center; background: var(--color-sheet, #f4f5f7); color: var(--color-ink, #15181d); } .ds-glyph-active { color: var(--color-rail, #5b5bd6); transform-origin: 50% 50%; animation: ds-rail-spin 1.4s linear infinite; } @keyframes ds-rail-spin { to { transform: rotate(360deg); } } .ds-row-body { min-width: 0; } .ds-row-head { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 8px; row-gap: 4px; } .ds-row-title { font-size: 0.9375rem; line-height: 1.5rem; color: var(--color-ink, #15181d); text-decoration: none; } a.ds-row-title:hover { text-decoration: underline; } .ds-row-state { font-size: 0.8125rem; color: var(--color-ink-2, #4e5561); } .ds-row-state.ds-active { color: var(--color-rail, #5b5bd6); } .ds-row-meta { margin-top: 2px; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 12px; row-gap: 2px; font-size: 0.8125rem; line-height: 1.25rem; color: var(--color-ink-2, #4e5561); } .ds-out { display: inline-flex; align-items: center; gap: 4px; color: var(--color-ink-2, #4e5561); text-decoration: none; } .ds-out:hover { color: var(--color-ink, #15181d); } .ds-tab { min-height: 24px; padding: 4px; margin: -4px; border-radius: 4px; } .ds-row-error { margin-top: 4px; max-width: 60ch; font-size: 0.8125rem; line-height: 1.25rem; color: var(--color-ink-2, #4e5561); } .ds-row-error p { margin: 0; } .ds-disclosure { margin-top: 2px; } .ds-disclosure > summary { list-style: none; cursor: pointer; color: var(--color-ink-3, #666d79); text-decoration: underline; text-underline-offset: 0.2em; } .ds-disclosure > summary::-webkit-details-marker { display: none; } .ds-cmd { margin: 4px 0 0; border-radius: 4px; background: var(--color-sheet-2, #eceef2); padding: 8px 12px; font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 0.75rem; line-height: 1.5; color: var(--color-ink, #15181d); white-space: pre-wrap; overflow-wrap: anywhere; } .ds-mono { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 0.9em; } .ds-faint { color: var(--color-ink-3, #666d79); } .ds-ref { display: inline-flex; align-items: center; border-radius: 999px; border: 1px solid var(--color-hair, #d9dce2); background: var(--color-sheet, #f4f5f7); padding: 0 6px; font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 0.75rem; line-height: 20px; color: var(--color-ink-2, #4e5561); text-decoration: none; } .ds-ref:hover { border-color: var(--color-ink-3, #666d79); } @media (prefers-reduced-motion: reduce) { .ds-glyph-active { animation-duration: 6s; } }"
     },
     {
       "name": "HEAD Marker — cut",
       "kind": "custom",
       "refersTo": null,
-      "description": "The rail's origin, carrying one derived sentence of system health. Cut is a dashed ink ring struck through, full-weight text, a detail paragraph and the exact selectable reseed command. Health escalates the weight and detail of the same sentence; it never changes colour or position.",
-      "html": "<div class=\"ds-head\"><span class=\"ds-head-glyph\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" aria-hidden=\"true\"><circle cx=\"8\" cy=\"8\" r=\"5.5\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-dasharray=\"3 2.5\"/><path d=\"M3 13L13 3\" stroke=\"currentColor\" stroke-width=\"1.5\"/></svg></span><div class=\"ds-head-body\"><p class=\"ds-head-line\"><span class=\"ds-head-label\">HEAD</span><span class=\"ds-head-text\">No Codex credential stored</span></p><p class=\"ds-head-detail\">Runs will fall back to OPENAI_API_KEY if one is set, otherwise they fail at startup.</p><div class=\"ds-head-fix\"><p class=\"ds-head-detail\">Reseed from a checkout of the repo:</p><pre class=\"ds-cmd\"><code>PULLFROG_API_URL=https://example.convex.site npx pullfrog auth codex</code></pre></div></div><span class=\"ds-head-rail\" aria-hidden=\"true\"></span></div>",
-      "css": ".ds-head { position: relative; display: grid; grid-template-columns: 28px 1fr; column-gap: 8px; align-items: start; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; max-width: 72ch; } .ds-head-rail { position: absolute; top: 28px; bottom: -12px; left: 14px; width: 1px; background: repeating-linear-gradient(to bottom, var(--color-ink-3, #666d79) 0 4px, transparent 4px 8px); } .ds-head-glyph { position: relative; z-index: 10; display: flex; height: 24px; align-items: center; justify-content: center; background: var(--color-sheet, #f4f5f7); color: var(--color-ink, #15181d); } .ds-head-body { min-width: 0; } .ds-head-line { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 8px; font-size: 0.9375rem; line-height: 1.5rem; } .ds-head-label { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 0.8125rem; color: var(--color-ink-2, #5f6672); } .ds-head-text { font-weight: 500; color: var(--color-ink, #15181d); } .ds-head-detail { margin: 4px 0 0; max-width: 60ch; font-size: 0.8125rem; line-height: 1.25rem; color: var(--color-ink-2, #5f6672); } .ds-head-fix { margin-top: 8px; } .ds-cmd { margin: 4px 0 0; border-radius: 4px; background: var(--color-sheet-2, #eceef2); padding: 8px 12px; font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 0.75rem; line-height: 1rem; color: var(--color-ink, #15181d); white-space: pre-wrap; word-break: break-all; } .ds-cmd code { user-select: all; }"
+      "description": "The rail's origin, carrying one derived sentence of system health, from one subscription shared by every view. Cut is a dashed ink ring struck through (missing is the same ring unstruck), full-weight text, a detail paragraph and the exact selectable reseed command. Health escalates the weight and detail of the same sentence; it never changes colour or position.",
+      "html": "<div class=\"ds-head\"><span class=\"ds-head-glyph\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" aria-hidden=\"true\"><circle cx=\"8\" cy=\"8\" r=\"5.5\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-dasharray=\"3 2.5\"/><path d=\"M3 13L13 3\" stroke=\"currentColor\" stroke-width=\"1.5\"/></svg></span><div class=\"ds-head-body\"><p class=\"ds-head-line\"><span class=\"ds-head-label\">HEAD</span><span class=\"ds-head-text\">Codex chain rejected 2h ago</span></p><p class=\"ds-head-detail\">OpenAI refused the refresh. Every run fails until it is reseeded.</p><div class=\"ds-head-fix\"><p class=\"ds-head-detail\">Reseed from a checkout of the repo:</p><pre class=\"ds-cmd\" tabindex=\"0\"><code>PULLFROG_API_URL=https://example.convex.site npx pullfrog auth codex</code></pre></div></div><span class=\"ds-head-rail\" aria-hidden=\"true\"></span></div>",
+      "css": ".ds-head { position: relative; display: grid; grid-template-columns: 28px 1fr; column-gap: 8px; align-items: start; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; max-width: 72ch; } .ds-head-rail { position: absolute; top: 28px; bottom: -12px; left: 14px; width: 1px; background: repeating-linear-gradient(to bottom, var(--color-ink-3, #666d79) 0 4px, transparent 4px 8px); } .ds-head-glyph { position: relative; z-index: 10; display: flex; height: 24px; align-items: center; justify-content: center; background: var(--color-sheet, #f4f5f7); color: var(--color-ink, #15181d); } .ds-head-body { min-width: 0; } .ds-head-line { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 8px; font-size: 0.9375rem; line-height: 1.5rem; } .ds-head-label { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 0.8125rem; color: var(--color-ink-2, #4e5561); } .ds-head-text { font-weight: 500; color: var(--color-ink, #15181d); } .ds-head-detail { margin: 4px 0 0; max-width: 60ch; font-size: 0.8125rem; line-height: 1.25rem; color: var(--color-ink-2, #4e5561); } .ds-head-fix { margin-top: 8px; } .ds-cmd { margin: 4px 0 0; border-radius: 4px; background: var(--color-sheet-2, #eceef2); padding: 8px 12px; font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 0.75rem; line-height: 1.5; color: var(--color-ink, #15181d); white-space: pre-wrap; overflow-wrap: anywhere; } .ds-cmd code { user-select: all; } .ds-cmd:focus-visible { outline: 2px solid var(--color-rail, #5b5bd6); outline-offset: 2px; }"
+    },
+    {
+      "name": "Command Block with Copy",
+      "kind": "custom",
+      "refersTo": "command",
+      "description": "The fix, spelled out. Sheet-shade block at caption mono, focusable, select-all, wrapping at spaces and breaking anywhere so it never scrolls sideways on a phone. A quiet copy button sits beside it and swaps its mark for a check and the word 'copied' for 1.5s.",
+      "html": "<div class=\"ds-cmdrow\"><pre class=\"ds-cmd\" tabindex=\"0\"><code>PULLFROG_API_URL=https://example.convex.site npx pullfrog auth codex</code></pre><button class=\"ds-btn ds-btn-quiet\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 12 12\" fill=\"none\" aria-hidden=\"true\"><rect x=\"4\" y=\"4\" width=\"6.5\" height=\"6.5\" rx=\"1\" stroke=\"currentColor\" stroke-width=\"1.5\"/><path d=\"M2.5 8V2.5H8\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\"/></svg>copy</button></div>",
+      "css": ".ds-cmdrow { display: flex; align-items: flex-start; gap: 8px; max-width: 60ch; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; } .ds-cmd { flex: 1; min-width: 0; margin: 0; border-radius: 4px; background: var(--color-sheet-2, #eceef2); padding: 8px 12px; font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 0.75rem; line-height: 1.5; color: var(--color-ink, #15181d); white-space: pre-wrap; overflow-wrap: anywhere; } .ds-cmd code { user-select: all; } .ds-cmd:focus-visible { outline: 2px solid var(--color-rail, #5b5bd6); outline-offset: 2px; } .ds-btn { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; min-height: 24px; border-radius: 4px; border: 1px solid var(--color-hair, #d9dce2); background: transparent; padding: 6px 12px; font-size: 0.8125rem; line-height: 1.25rem; font-weight: 500; color: var(--color-ink, #15181d); cursor: pointer; transition: border-color 150ms cubic-bezier(0.16,1,0.3,1); } .ds-btn:hover { border-color: var(--color-ink-3, #666d79); } .ds-btn:focus-visible { outline: 2px solid var(--color-rail, #5b5bd6); outline-offset: 2px; }"
     },
     {
       "name": "Settings Row",
       "kind": "custom",
       "refersTo": null,
-      "description": "A mono setting key in an 11rem column, the control beside it, one sentence of faint help beneath. Rows are hairline-divided inside a hairline-bounded stack — no fieldset, no card. Below 640px the key stacks above its control.",
-      "html": "<section class=\"ds-group\"><h2 class=\"ds-group-title\">Review policy</h2><p class=\"ds-group-hint\">Who gets reviewed automatically, and when.</p><div class=\"ds-group-rows\"><div class=\"ds-srow\"><div class=\"ds-skey\">handle</div><div><span class=\"ds-sat\">@</span><input class=\"ds-field ds-field-mono\" value=\"frogbot\" aria-label=\"handle\" /><p class=\"ds-shelp\">Anyone with write access can comment @frogbot review on any PR.</p></div></div><div class=\"ds-srow\"><div class=\"ds-skey\">review.on_push</div><div><label class=\"ds-toggle\"><input type=\"checkbox\" checked /> re-review on push</label><p class=\"ds-shelp\">Review the new commits when a reviewed PR is pushed to (incremental review).</p></div></div></div></section>",
-      "css": ".ds-group { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; max-width: 60ch; accent-color: var(--color-rail, #5b5bd6); } .ds-group-title { margin: 0; font-size: 1.0625rem; line-height: 1.5rem; font-weight: 600; letter-spacing: -0.01em; color: var(--color-ink, #15181d); } .ds-group-hint { margin: 2px 0 0; font-size: 0.8125rem; line-height: 1.25rem; color: var(--color-ink-2, #5f6672); } .ds-group-rows { margin-top: 16px; border-top: 1px solid var(--color-hair, #d9dce2); border-bottom: 1px solid var(--color-hair, #d9dce2); } .ds-srow { display: grid; gap: 6px 24px; padding: 12px 0; } .ds-srow + .ds-srow { border-top: 1px solid var(--color-hair, #d9dce2); } @media (min-width: 640px) { .ds-srow { grid-template-columns: 11rem 1fr; } } .ds-skey { padding-top: 6px; font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 0.8125rem; line-height: 1.25rem; color: var(--color-ink-2, #5f6672); } .ds-shelp { margin: 4px 0 0; font-size: 0.8125rem; line-height: 1.25rem; color: var(--color-ink-3, #666d79); } .ds-sat { color: var(--color-ink-3, #666d79); margin-right: 4px; } .ds-toggle { display: inline-flex; align-items: center; gap: 8px; padding-top: 4px; font-size: 0.8125rem; color: var(--color-ink, #15181d); } .ds-field { width: 10rem; border-radius: 4px; border: 1px solid var(--color-hair, #d9dce2); background: var(--color-sheet, #f4f5f7); padding: 6px 10px; font-size: 0.9375rem; line-height: 1.5rem; color: var(--color-ink, #15181d); transition: border-color 150ms cubic-bezier(0.16,1,0.3,1); } .ds-field-mono { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 0.9em; } .ds-field:hover { border-color: var(--color-ink-3, #666d79); } .ds-field:focus { border-color: var(--color-rail, #5b5bd6); outline: none; }"
+      "description": "The config key is a real label in mono, bound to its control, in an 11rem column; the control beside it; one sentence of faint help beneath, bound as the control's description. Rows are hairline-divided inside a hairline-bounded stack — no fieldset, no card. Below 640px the key stacks above its control. Invalid states go ink and dashed with a full-ink sentence, never red.",
+      "html": "<section class=\"ds-group\"><h2 class=\"ds-group-title\">Run</h2><p class=\"ds-group-hint\">Limits and permissions handed to the action.</p><div class=\"ds-group-rows\"><div class=\"ds-srow\"><label class=\"ds-skey\" for=\"ds-timeout\">run.timeout</label><div><input id=\"ds-timeout\" class=\"ds-field ds-field-mono\" style=\"width:7rem\" value=\"45min\" aria-invalid=\"true\" /><p class=\"ds-serror\">Use a length like 45m, 1h or 1h30m.</p><p class=\"ds-shelp\">Maximum run length: 45m, 1h, 1h30m. Runs still open 15 minutes past it are marked failed.</p></div></div><div class=\"ds-srow\"><span class=\"ds-skey\">run.checks</span><div><label class=\"ds-toggle\"><input type=\"checkbox\" checked /> status check</label><p class=\"ds-shelp\">Post the pullfrog check-run on the PR while a run is in flight.</p></div></div></div></section>",
+      "css": ".ds-group { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; max-width: 60ch; accent-color: var(--color-rail, #5b5bd6); } .ds-group-title { margin: 0; font-size: 1.0625rem; line-height: 1.5rem; font-weight: 600; letter-spacing: -0.01em; color: var(--color-ink, #15181d); } .ds-group-hint { margin: 2px 0 0; font-size: 0.8125rem; line-height: 1.25rem; color: var(--color-ink-2, #4e5561); } .ds-group-rows { margin-top: 16px; border-top: 1px solid var(--color-hair, #d9dce2); border-bottom: 1px solid var(--color-hair, #d9dce2); } .ds-srow { display: grid; gap: 6px 24px; padding: 12px 0; } .ds-srow + .ds-srow { border-top: 1px solid var(--color-hair, #d9dce2); } @media (min-width: 640px) { .ds-srow { grid-template-columns: 11rem 1fr; } } .ds-skey { padding-top: 6px; font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 0.8125rem; line-height: 1.25rem; color: var(--color-ink-2, #4e5561); } .ds-serror { margin: 4px 0 0; font-size: 0.8125rem; line-height: 1.25rem; color: var(--color-ink, #15181d); } .ds-shelp { margin: 4px 0 0; font-size: 0.8125rem; line-height: 1.25rem; color: var(--color-ink-3, #666d79); } .ds-toggle { display: inline-flex; align-items: center; gap: 8px; min-height: 24px; padding: 4px 0; font-size: 0.8125rem; color: var(--color-ink, #15181d); } .ds-toggle input { width: 16px; height: 16px; } .ds-field { max-width: 100%; border-radius: 4px; border: 1px solid var(--color-hair, #d9dce2); background: var(--color-sheet, #f4f5f7); padding: 6px 10px; font-size: 0.9375rem; line-height: 1.5rem; color: var(--color-ink, #15181d); transition: border-color 150ms cubic-bezier(0.16,1,0.3,1); } .ds-field-mono { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 0.9em; } .ds-field:hover { border-color: var(--color-ink-3, #666d79); } .ds-field:focus { border-color: var(--color-rail, #5b5bd6); outline: none; } .ds-field[aria-invalid=\"true\"] { border-color: var(--color-ink, #15181d); border-style: dashed; }"
+    },
+    {
+      "name": "Rail Skeleton",
+      "kind": "custom",
+      "refersTo": "bone",
+      "description": "The pending state for Runs: the rail itself with nothing on it yet — a hairline line, four glyph cells and two bars per row at descending widths, breathing in the sheet's second tone. Never a spinner; under reduced motion the bars stand still.",
+      "html": "<div class=\"ds-skel\" aria-busy=\"true\" aria-label=\"Loading runs\"><span class=\"ds-skel-line\" aria-hidden=\"true\"></span><div class=\"ds-skel-row\"><span class=\"ds-skel-cell\"><span class=\"ds-bone ds-bone-dot\"></span></span><div><span class=\"ds-bone\" style=\"height:12px;width:44%\"></span><span class=\"ds-bone ds-bone-2\" style=\"height:10px;width:28%\"></span></div></div><div class=\"ds-skel-row\"><span class=\"ds-skel-cell\"><span class=\"ds-bone ds-bone-dot\"></span></span><div><span class=\"ds-bone\" style=\"height:12px;width:38%\"></span><span class=\"ds-bone ds-bone-2\" style=\"height:10px;width:32%\"></span></div></div><div class=\"ds-skel-row\"><span class=\"ds-skel-cell\"><span class=\"ds-bone ds-bone-dot\"></span></span><div><span class=\"ds-bone\" style=\"height:12px;width:32%\"></span><span class=\"ds-bone ds-bone-2\" style=\"height:10px;width:36%\"></span></div></div></div>",
+      "css": ".ds-skel { position: relative; max-width: 72ch; } .ds-skel-line { position: absolute; top: 12px; bottom: 12px; left: 14px; width: 1px; background: var(--color-hair, #d9dce2); } .ds-skel-row { display: grid; grid-template-columns: 28px 1fr; column-gap: 8px; align-items: start; padding: 12px 0; } .ds-skel-cell { position: relative; z-index: 10; display: flex; height: 24px; align-items: center; justify-content: center; background: var(--color-sheet, #f4f5f7); } .ds-skel-row > div { padding-top: 6px; } .ds-bone { display: block; border-radius: 4px; background: var(--color-sheet-2, #eceef2); animation: ds-bone 1.4s ease-in-out infinite; } .ds-bone-2 { margin-top: 10px; } .ds-bone-dot { width: 12px; height: 12px; border-radius: 999px; } @keyframes ds-bone { 50% { opacity: 0.55; } } @media (prefers-reduced-motion: reduce) { .ds-bone { animation: none; } }"
+    },
+    {
+      "name": "Health Line",
+      "kind": "custom",
+      "refersTo": null,
+      "description": "The HEAD sentence carried as a one-line banner under the header on every non-Runs view, on the same 28px gutter and from the same subscription, linking back to Runs. It is the only element that takes the sheet shade on hover.",
+      "html": "<a class=\"ds-health\" href=\"#\" aria-label=\"Health: chain rotated 3m ago. Open runs.\"><span class=\"ds-health-glyph\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" aria-hidden=\"true\"><circle cx=\"8\" cy=\"8\" r=\"5.5\" stroke=\"currentColor\" stroke-width=\"1.5\"/><circle cx=\"8\" cy=\"8\" r=\"2\" fill=\"currentColor\"/></svg></span><span class=\"ds-health-body\"><span class=\"ds-health-label\">HEAD</span><span>chain rotated 3m ago · last run 13m ago</span></span></a>",
+      "css": ".ds-health { display: grid; grid-template-columns: 28px 1fr; column-gap: 8px; align-items: start; margin: 12px -4px 0; padding: 4px; border-radius: 4px; text-decoration: none; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; max-width: 72ch; } .ds-health:hover { background: var(--color-sheet-2, #eceef2); } .ds-health:focus-visible { outline: 2px solid var(--color-rail, #5b5bd6); outline-offset: 2px; } .ds-health-glyph { display: flex; height: 24px; align-items: center; justify-content: center; color: var(--color-rail, #5b5bd6); } .ds-health-body { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 8px; font-size: 0.8125rem; line-height: 1.5rem; color: var(--color-ink-2, #4e5561); } .ds-health-label { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 0.9em; }"
     }
   ],
   "narrative": {
     "northStar": "The Git Graph Rail",
-    "overview": "frogbot renders the state of a review bot the way git renders history: a vertical hairline down the left edge, a node on it for every run, and a HEAD marker at the top that says in one sentence whether anything is flowing. The rail is not decoration around the data — it is the reading order. A visitor lands, reads HEAD, and either sees an unbroken line (reviews are running) or a line that has gone dashed and grey below a struck-through HEAD (the credential is dead, and the one command that fixes it is right there). Only then do they scan down for their own PR. Every screen in the product is a variation on that one gesture.\n\nThe world is achromatic by construction. Text, borders, glyphs, buttons and dividers are all ink on a cool near-white sheet (graphite in dark scheme); a single indigo is the only hue in the system, and it is worn exclusively by the rail, the run that is in flight, and the browser affordances that belong to the rail's job (focus ring, selection, caret). Nothing turns red when it fails and nothing turns green when it succeeds — a failed run is a ring with a cross through it and the word \"failed\", a done run is a filled dot and the word \"done\". This is an accessibility commitment (status by shape and text, never colour alone) that the build kept without a single exception, and it is also what makes the one indigo legible: when the only colour on the page is the rail, the eye goes to the rail.\n\nDensity is high and the chrome is nearly absent. One 72ch column, no sidebar, no cards, no stat tiles, no panels. Sections are separated by vertical gap and, at most, a hairline rule; nothing in this product is ever put in a box. A system sans carries prose and a system mono carries everything the machine owns — repo names, refs, logins, elapsed times, token counts, setting keys, shell commands — so a glance can tell language from data without reading either. It is a tool for people who visit for forty seconds on a phone, and the layout is the same structure at 390px as at 1440px: the column narrows, the rail stays.",
+    "overview": "frogbot renders the state of a review bot the way git renders history: a vertical hairline down the left edge, a node on it for every run, and a HEAD marker at the top that says in one sentence whether anything is flowing. The rail is not decoration around the data — it is the reading order. A visitor lands, reads HEAD, and either sees an unbroken line (reviews are running) or a line that has gone dashed and grey below a struck-through HEAD (the credential is dead, and the one command that fixes it is right there, with a copy button beside it). Only then do they scan down for their own PR. Every screen in the product is a variation on that one gesture.\n\nThe world is achromatic by construction. Text, borders, glyphs, buttons and dividers are all ink on a cool near-white sheet (graphite in dark scheme); a single indigo is the only hue in the system, and it is worn exclusively by the rail, the run that is in flight, and the browser affordances that belong to the rail's job (focus ring, selection, caret, checkbox accent). Nothing turns red when it fails and nothing turns green when it succeeds — a failed run is a ring with a cross through it and the word \"failed\", a done run is a filled dot and the word \"done\", a run that has gone quiet past its timeout is a dashed ring and the words \"no result yet\". This is an accessibility commitment (status by shape and text, never colour alone) that the build kept without a single exception, and it is also what makes the one indigo legible: when the only colour on the page is the rail, the eye goes to the rail.\n\nDensity is high and the chrome is nearly absent. One 72ch column, no sidebar, no cards, no stat tiles, no panels. Sections are separated by vertical gap and, at most, a hairline rule; nothing in this product is ever put in a box. A system sans carries prose and a system mono carries everything the machine owns — repo names, refs, logins, elapsed times, token counts, setting keys, shell commands — so a glance can tell language from data without reading either. The page also refuses to make the reader parse machine spew: a failed run states its failure as an English sentence and keeps the raw text behind a disclosure. It is a tool for people who visit for forty seconds on a phone, and the layout is the same structure at 390px as at 1440px: the column narrows, the rail stays.",
     "keyCharacteristics": [
       "One 72ch column; the rail runs down its left edge on every view",
       "Achromatic ink plus exactly one indigo, confined to the rail and the in-flight run",
       "State is a glyph plus a word, never a hue",
-      "Flat: no shadow exists anywhere in the system",
+      "Flat: no surface floats, and the only box-shadow in the system draws a 1px underline",
       "Gaps and hairlines divide; boxes never do",
       "System sans for prose, system mono for machine text",
+      "The machine's raw output lives behind a disclosure; the surface speaks in sentences",
+      "Loading shows the shape of the content, never a spinner",
       "Motion only ever reports server state"
     ],
     "rules": [
@@ -265,17 +307,17 @@
       },
       {
         "name": "The Never-By-Colour Rule",
-        "body": "No state in this system is signalled by hue. Failure is a struck ring plus the word \"failed\" in full-strength ink; a destructive button announces itself by its border going dashed on hover, not by turning red. There is no red, green or amber token, and adding one breaks the world.",
+        "body": "No state in this system is signalled by hue. Failure is a struck ring plus the word \"failed\" in full-strength ink; a stall is a dashed ring plus \"no result yet\"; a destructive button announces itself by its border going dashed on hover, not by turning red. Attention is spelled with ink weight — muted text goes full ink and medium weight — never with a colour. There is no red, green or amber token, and adding one breaks the world.",
         "section": "colors"
       },
       {
         "name": "The Two-Surface Rule",
-        "body": "There are exactly two backgrounds: the sheet, and one shade of it for command blocks and disabled controls. A third surface tone means someone is building a card.",
+        "body": "There are exactly two backgrounds: the sheet, and one shade of it for everything inert — command blocks, disabled controls, skeleton bars, the health banner's hover. A third surface tone means someone is building a card.",
         "section": "colors"
       },
       {
         "name": "The Machine-Text-Is-Mono Rule",
-        "body": "If GitHub or the server owns the string, it is set in mono: owner/repo, #1318, a login, a relative time, an elapsed duration, a model id, a token count, a setting key (review.authors), a shell command. If a person wrote it — a PR title, a help sentence, a heading — it is sans. Mixed baselines in one row are expected and correct.",
+        "body": "If GitHub or the server owns the string, it is set in mono: owner/repo, #1318, a login, a relative time, an elapsed duration, a model id, a token count, a setting key (review.authors), a secret name, a shell command. If a person wrote it — a PR title, a help sentence, a heading — it is sans. Mixed baselines in one row are expected and correct.",
         "section": "typography"
       },
       {
@@ -285,7 +327,12 @@
       },
       {
         "name": "The Lowercase-Machine Rule",
-        "body": "State words and control labels are lowercase (in progress, done, failed, sign out, remove, allowlist); headings and sentences are sentence case. Nothing is uppercased or letter-spaced for effect.",
+        "body": "State words and control labels are lowercase (in progress, done, failed, no result yet, sign out, remove, turn off, copy, allowlist); headings, buttons that commit (Save changes, Discard, Keep, Turn off) and full sentences are sentence case. Nothing is uppercased or letter-spaced for effect.",
+        "section": "typography"
+      },
+      {
+        "name": "The Plain-Sentence Rule",
+        "body": "Server output is rewritten for a person before it is shown: \"GitHub returned 404 while dispatching the workflow. The workflow file may be missing from the default branch.\" The raw string is never the first thing on screen — it goes behind a raw error disclosure, in a command block, at caption size.",
         "section": "typography"
       },
       {
@@ -295,37 +342,47 @@
       },
       {
         "name": "The Gap-Not-Box Rule",
-        "body": "Sections are separated by vertical space and at most a hairline rule. No card, no panel, no bordered container, no elevated surface. The only rectangles with a fill in this product are command blocks and form controls.",
+        "body": "Sections are separated by vertical space and at most a hairline rule. No card, no panel, no bordered container, no elevated surface. The only rectangles with a fill in this product are command blocks, form controls and skeleton bars.",
         "section": "layout"
       },
       {
         "name": "The 28px Gutter Rule",
-        "body": "Every list-shaped thing on every view uses the 28px glyph track, whether or not the rail is drawn behind it. That shared gutter is what makes Runs, Credentials and the health line feel like one surface.",
+        "body": "Every list-shaped thing on every view uses the 28px glyph track, whether or not the rail is drawn behind it. That shared gutter is what makes Runs, Settings' health banner, Credentials and the loading skeletons feel like one surface.",
+        "section": "layout"
+      },
+      {
+        "name": "The Grown-Not-Moved Target Rule",
+        "body": "A hit area is enlarged with padding and cancelled with an equal negative margin. A control never gains touch size by pushing its neighbours around.",
         "section": "layout"
       },
       {
         "name": "The Flat Sheet Rule",
-        "body": "Nothing in this product casts a shadow. A component that needs to float is a component that does not belong on the rail.",
+        "body": "Nothing in this product casts a shadow. The only box-shadow allowed is an inset one standing in for a border that must not change an element's geometry. A component that needs to float is a component that does not belong on the rail.",
         "section": "elevation"
       },
       {
         "name": "The Rail Passes Behind Rule",
-        "body": "Any element sitting on the rail must paint the sheet colour behind itself and raise its stacking context. The line must never appear to cross a glyph.",
+        "body": "Any element sitting on the rail must paint the sheet colour behind itself and raise its stacking context. The line must never appear to cross a glyph — and anything that must cross the knockouts (the lanes) goes above them, not through them.",
         "section": "elevation"
       },
       {
         "name": "The Dashed-Means-Broken Rule",
-        "body": "A dashed border is never decorative. It means severed, rejected, invalid or destructive, and it is how this achromatic system says what other systems say in red.",
+        "body": "A dashed border is never decorative. It means severed, absent, stalled, invalid or destructive, and it is how this achromatic system says what other systems say in red.",
         "section": "shapes"
       },
       {
         "name": "The One-Stroke Rule",
-        "body": "Every icon and glyph is authored SVG on a 16×16 (or 12×12) grid at 1.5 stroke weight, drawn from the system's own circle primitive. No icon library, no icon font, no imported set.",
+        "body": "Every icon and glyph is authored SVG on a 16×16 (or 12×12) grid at 1.5 stroke weight, drawn from the system's own circle primitive. No icon library, no icon font, no emoji. The one filled, non-stroke mark in the system is GitHub's own logo on the sign-in button, inlined as a path because it is a brand mark and not an icon.",
         "section": "shapes"
       },
       {
         "name": "The Motion-Reports-State Rule",
-        "body": "Every animation in this system is bound to a fact about the server: a ring turns because a run is executing; the rail draws because a run arrived. There are no entrance animations, no scroll effects, no hover lifts. If a motion cannot name the server state it is reporting, it does not ship.",
+        "body": "Every animation in this system is bound to a fact about the server: a ring turns because a run is executing; the rail draws because a run arrived; a bar pulses because an answer is outstanding. There are no entrance animations, no scroll effects, no hover lifts. If a motion cannot name the server state it is reporting, it does not ship.",
+        "section": "components"
+      },
+      {
+        "name": "The One-Clock Rule",
+        "body": "No component reads the wall clock during render. Relative times come from the shared ticking clock, which is null on the server and through hydration; a component that has no clock yet prints the absolute stamp instead of guessing.",
         "section": "components"
       }
     ],
@@ -333,24 +390,33 @@
       "Do put every new view in the one 72ch column, on the 28px glyph track, with prose capped at 48-60ch.",
       "Do give every state a glyph and a word. The glyph is built from the system's circle primitive at 1.5 stroke weight; the word is lowercase.",
       "Do keep indigo on the rail and the in-flight run. If a new element wants the accent, first make it part of the rail's story.",
-      "Do use a dashed border for anything severed, rejected, invalid or destructive — it is this system's substitute for red.",
-      "Do set machine text in mono (refs, logins, times, durations, model ids, token counts, setting keys, commands) and human text in sans.",
+      "Do use a dashed border for anything severed, absent, stalled, invalid or destructive — it is this system's substitute for red.",
+      "Do say what happened in a sentence a person can act on, and put the server's raw string behind a raw error disclosure in a command block.",
+      "Do set machine text in mono (refs, logins, times, durations, model ids, token counts, setting keys, secret names, commands) and human text in sans.",
       "Do separate sections with vertical space (40px between groups, 48px between major sections) and at most a hairline rule.",
-      "Do paint the sheet colour behind anything sitting on the rail and raise it to z-10, so the line passes behind the glyph.",
+      "Do paint the sheet colour behind anything sitting on the rail and raise it to z-10, so the line passes behind the glyph; put anything that must cross those knockouts above them.",
       "Do define both schemes in a single light-dark() token when adding a colour. Every colour in the system carries both, and neither is a second-class rendering.",
-      "Do show a command the reader can select and run when the fix is a terminal command, in a sheet-shade block at caption size.",
+      "Do show a command the reader can select and run when the fix is a terminal command, in a sheet-shade block that wraps rather than scrolls, with a copy button when the command is the point of the section.",
+      "Do give a control its own width at its use site; the field class sets none, and the width should say how big the value is.",
+      "Do draw the shape of the content while it loads — the rail with empty nodes, the form with bare rows — and let it pulse in the sheet's second tone.",
+      "Do grow a small control's hit area to 24px with padding and cancel it with an equal negative margin.",
+      "Do bind a setting's key to its control as a real <label>, and its help sentence as the control's description.",
       "Do link out to GitHub with a small arrow glyph rather than re-rendering GitHub's content."
     ],
     "donts": [
       "Don't introduce a second hue, or any red / green / amber. Status colour does not exist in this system.",
       "Don't put anything in a card, panel, tile or bordered container. Gaps and hairlines divide; boxes never do.",
-      "Don't add a shadow, blur, scrim or elevated surface. The system has zero box-shadow declarations and should keep it that way.",
+      "Don't add an outer shadow, blur, scrim or elevated surface. The only box-shadow in the system is the inset 1px rule under the active tab.",
       "Don't set type above 1.25rem, or uppercase and letter-space a label for emphasis.",
       "Don't add a sidebar, a tile grid, a stat tile, or a chart. The rail is the navigation and the summary.",
       "Don't round a corner past 4px. The pill radius belongs to the ref chip alone, because it is quoting GitHub's own chip.",
-      "Don't import an icon library, icon font or emoji as UI. Icons are authored SVG on the 16×16 grid at 1.5 stroke, drawn from the circle primitive.",
+      "Don't import an icon library, icon font or emoji as UI. Icons are authored SVG on the 16×16 and 12×12 grids at 1.5 stroke; GitHub's logo is the one inlined brand mark, and it is not a licence for a second.",
+      "Don't ship a spinner. Pending is the shape of the content that is coming.",
       "Don't animate anything that is not reporting server state, and don't remove the rotating ring under reduced motion — slow it, because it carries meaning.",
-      "Don't build a modal or popover for confirmation. Destructive intent is confirmed inline, in the row, with a quiet Keep beside a dashed-on-hover Remove.",
+      "Don't print a raw stack trace, JSON blob or HTTP body as the first thing a reader sees.",
+      "Don't show a save bar on a clean form, or any chrome that has nothing to report.",
+      "Don't build an in-page modal or popover for confirmation. Destructive intent is confirmed inline, in the row, with a quiet Keep beside a dashed-on-hover Remove.",
+      "Don't call Date.now() during render. One shared clock ticks the page.",
       "Don't load a webfont. Both faces are system stacks so the first paint is the final paint."
     ]
   }
