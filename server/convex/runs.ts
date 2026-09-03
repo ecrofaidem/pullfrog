@@ -27,6 +27,24 @@ export const recordDispatch = internalMutation({
   },
 });
 
+const patchableStrings = [
+  "model",
+  "agent",
+  "credential",
+  "prNodeId",
+  "issueNodeId",
+  "reviewNodeId",
+  "planCommentNodeId",
+  "summarySnapshot",
+] as const;
+const patchableNumbers = [
+  "inputTokens",
+  "outputTokens",
+  "cacheReadTokens",
+  "cacheWriteTokens",
+  "costUsd",
+] as const;
+
 /** workflow_run webhook: attach the GitHub run to the dispatch it came from. */
 export const observeWorkflowRun = internalMutation({
   args: {
@@ -46,13 +64,12 @@ export const observeWorkflowRun = internalMutation({
       .withIndex("by_github_run", (q) => q.eq("githubRunId", args.githubRunId))
       .unique();
     const byDispatch =
-      byRun ??
       (args.dispatchId
         ? await ctx.db
             .query("runs")
             .withIndex("by_dispatch", (q) => q.eq("dispatchId", args.dispatchId))
             .unique()
-        : null);
+        : null) ?? byRun;
     const terminal = args.status === "completed" || args.status === "failed" || args.status === "cancelled";
     const patch = {
       githubRunId: args.githubRunId,
@@ -63,6 +80,17 @@ export const observeWorkflowRun = internalMutation({
       ...(terminal ? { completedAt: now } : {}),
     };
     if (byDispatch) {
+      // the action's PATCHes may have landed on a row keyed only by GitHub run
+      // id before we knew which dispatch it belonged to: fold that orphan in.
+      if (byRun && byRun._id !== byDispatch._id) {
+        const carried: Record<string, string | number> = {};
+        for (const key of [...patchableStrings, ...patchableNumbers]) {
+          const value = byRun[key];
+          if (value !== undefined) carried[key] = value;
+        }
+        await ctx.db.patch(byDispatch._id, carried);
+        await ctx.db.delete(byRun._id);
+      }
       // never regress a terminal row back to in_progress from a late webhook.
       if (byDispatch.completedAt && !terminal) return byDispatch._id;
       await ctx.db.patch(byDispatch._id, patch);
@@ -81,23 +109,7 @@ export const observeWorkflowRun = internalMutation({
   },
 });
 
-const patchableStrings = [
-  "model",
-  "agent",
-  "credential",
-  "prNodeId",
-  "issueNodeId",
-  "reviewNodeId",
-  "planCommentNodeId",
-  "summarySnapshot",
-] as const;
-const patchableNumbers = [
-  "inputTokens",
-  "outputTokens",
-  "cacheReadTokens",
-  "cacheWriteTokens",
-  "costUsd",
-] as const;
+
 
 /** PATCH /api/workflow-run/:id from the action. upserts by GitHub run id. */
 export const patchFromAction = internalMutation({
@@ -160,6 +172,18 @@ export const claimDelivery = internalMutation({
     if (seen) return false;
     await ctx.db.insert("webhookDeliveries", { deliveryId: args.deliveryId, receivedAt: Date.now() });
     return true;
+  },
+});
+
+/** observed rows that never found their dispatch: kind manual, a GitHub run id, no dispatch id. */
+export const orphans = internalQuery({
+  args: { owner: v.string(), repo: v.string() },
+  handler: async (ctx, args): Promise<Doc<"runs">[]> => {
+    const rows = await ctx.db
+      .query("runs")
+      .withIndex("by_repo", (q) => q.eq("owner", args.owner).eq("repo", args.repo))
+      .collect();
+    return rows.filter((r) => r.kind === "manual" && r.githubRunId !== undefined && !r.dispatchId);
   },
 });
 

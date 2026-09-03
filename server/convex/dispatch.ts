@@ -18,6 +18,7 @@ import {
   finalizeCheckRun,
   findRepoInstallation,
   getPullRequest,
+  getWorkflowRun,
 } from "./lib/github";
 
 /** the check-run name the action finalizes; it is also what branch protection matches on. */
@@ -332,14 +333,70 @@ async function dispatchReview(ctx: ActionCtx, params: DispatchReviewParams) {
 
 // ── run lifecycle from workflow_run events ───────────────────────────────────
 
+const DISPATCH_ID_RE = /· ([a-z0-9]{8})$/;
+
+async function resolveRunTitle(owner: string, repo: string, runId: number): Promise<string | null> {
+  try {
+    const installation = await findRepoInstallation(owner, repo);
+    if (!installation) return null;
+    const token = (await createInstallationToken(installation.id, { repositories: [repo] })).token;
+    const info = await getWorkflowRun({ token, owner, repo, runId });
+    return info?.display_title ?? null;
+  } catch (err) {
+    console.warn(`could not resolve run title for ${owner}/${repo}#${runId}: ${String(err)}`);
+    return null;
+  }
+}
+
+/** one-off repair: re-observe every orphaned run with its API title so it folds into its dispatch. */
+export const relinkOrphans = internalAction({
+  args: { owner: v.string(), repo: v.string() },
+  handler: async (ctx, args): Promise<{ relinked: number; unresolved: number }> => {
+    const orphans = await ctx.runQuery(internal.runs.orphans, args);
+    let relinked = 0;
+    let unresolved = 0;
+    for (const row of orphans) {
+      const title = await resolveRunTitle(args.owner, args.repo, row.githubRunId!);
+      const dispatchId = title ? DISPATCH_ID_RE.exec(title)?.[1] : undefined;
+      if (!dispatchId) {
+        unresolved += 1;
+        continue;
+      }
+      await ctx.runMutation(internal.runs.observeWorkflowRun, {
+        owner: args.owner,
+        repo: args.repo,
+        dispatchId,
+        githubRunId: row.githubRunId!,
+        htmlUrl: row.htmlUrl ?? "",
+        title: title!,
+        status: row.status,
+        ...(row.conclusion ? { conclusion: row.conclusion } : {}),
+      });
+      relinked += 1;
+    }
+    return { relinked, unresolved };
+  },
+});
+
 async function handleWorkflowRun(ctx: ActionCtx, payload: Json) {
   const run = payload.workflow_run as Json;
   const path = String(run?.path ?? "");
   if (!path.endsWith(`/${actionWorkflow()}`)) return;
 
   const repository = payload.repository as Json;
-  const title = String(run.display_title ?? run.name ?? "");
-  const dispatchId = /· ([a-z0-9]{8})$/.exec(title)?.[1];
+  const owner = String(repository.owner?.login ?? "");
+  const name = String(repository.name ?? "");
+  let title = String(run.display_title ?? run.name ?? "");
+  let dispatchId = DISPATCH_ID_RE.exec(title)?.[1];
+  // the webhook's display_title is the workflow name for a workflow_dispatch
+  // run; the API has the real run-name, which carries our dispatch id.
+  if (!dispatchId) {
+    const resolved = await resolveRunTitle(owner, name, Number(run.id));
+    if (resolved) {
+      title = resolved;
+      dispatchId = DISPATCH_ID_RE.exec(title)?.[1];
+    }
+  }
 
   const action = String(payload.action);
   const conclusion = run.conclusion ? String(run.conclusion) : undefined;
@@ -355,8 +412,8 @@ async function handleWorkflowRun(ctx: ActionCtx, payload: Json) {
         : "queued";
 
   await ctx.runMutation(internal.runs.observeWorkflowRun, {
-    owner: String(repository.owner?.login ?? ""),
-    repo: String(repository.name ?? ""),
+    owner,
+    repo: name,
     ...(dispatchId ? { dispatchId } : {}),
     githubRunId: Number(run.id),
     htmlUrl: String(run.html_url ?? ""),

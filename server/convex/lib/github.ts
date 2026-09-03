@@ -138,6 +138,28 @@ export async function dispatchWorkflow(params: {
   );
 }
 
+export interface WorkflowRunInfo {
+  id: number;
+  name: string;
+  display_title: string;
+  html_url: string;
+  status: string | null;
+  conclusion: string | null;
+}
+
+/** the run as the API sees it; the webhook payload's title is only the workflow name. */
+export async function getWorkflowRun(params: {
+  token: string;
+  owner: string;
+  repo: string;
+  runId: number;
+}): Promise<WorkflowRunInfo | null> {
+  return gh<WorkflowRunInfo | null>(
+    `/repos/${params.owner}/${params.repo}/actions/runs/${params.runId}`,
+    { token: params.token, tolerate: [404] }
+  );
+}
+
 export async function createCheckRun(params: {
   token: string;
   owner: string;
