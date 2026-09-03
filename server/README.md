@@ -7,7 +7,13 @@ What it does:
 - **Installation tokens.** `POST /api/github/installation-token` verifies the GitHub Actions OIDC token and mints an App installation token for the calling repo. This is why the action's pushes trigger downstream workflows.
 - **Run context.** `GET /api/repo/:owner/:repo/run-context` returns the repo's settings, a per-run bearer, and the stored secrets. The Codex chain is refreshed under a lease so concurrent runs never race the rotation.
 - **Write-back.** `PUT /api/runtime/secret` accepts the rotated Codex chain from the action's post step. `PATCH /api/workflow-run/:id` records model, tokens and artifact ids.
-- **CLI.** `/api/cli/secrets` is what `npx pullfrog auth codex` talks to, unmodified, when `PULLFROG_API_URL` points here.
+- **CLI.** `/api/cli/secrets` is what `npx pullfrog auth codex` talks to, unmodified, when `PULLFROG_API_URL` points here. `/api/cli/config` reads and patches a repo's settings with the same dotted keys the dashboard shows (`convex/configKeys.ts`), authenticated with the user's `gh auth token`:
+
+  ```
+  curl -H "Authorization: Bearer $(gh auth token)" "https://<site>/api/cli/config?owner=ecrofaidem&repo=monorepo"
+  curl -X PATCH -H "Authorization: Bearer $(gh auth token)" -H "content-type: application/json" \
+    -d '{"owner":"ecrofaidem","repo":"monorepo","set":{"review.on_push":true}}' https://<site>/api/cli/config
+  ```
 - **Dispatcher.** `POST /webhooks/github` receives the App's webhooks and dispatches `pullfrog.yml` with the JSON envelope the action expects. Review policy lives in `convex/dispatch.ts`.
 
 ## Layout
@@ -19,7 +25,10 @@ convex/
   dispatch.ts        webhook → review policy → workflow_dispatch
   repos.ts           settings, installations, RepoSettings mapping
   secrets.ts         encrypted store + refresh lease
-  runs.ts            run rows for the dashboard
+  runs.ts            run rows for the dashboard, stale-run sweep
+  health.ts          the one HEAD sentence's data, shared by every view
+  configKeys.ts      the settings contract (dashboard labels = CLI keys)
+  crons.ts           sweep stale runs every 5 minutes
   actionVersion.ts   envelope version tracks the fork's package.json
   auth.ts            Better Auth, GitHub sign-in, org gate
   lib/               jwt, oidc, crypto, github client, codex refresh
