@@ -230,7 +230,7 @@ function SettingsPage() {
           help={
             form.reviewAuthorsMode === "all"
               ? "The bot reviews every non-draft PR that a person opens. Each review uses the ChatGPT usage limit."
-              : `The bot only reviews PRs from these GitHub logins. ${allowlistCount === 0 ? "The list is empty, so the bot reviews nobody automatically." : `${allowlistCount} allowed.`}`
+              : `One GitHub login per line, as many as you like. The bot only reviews PRs from these people. ${allowlistCount === 0 ? "The list is empty, so nobody gets automatic reviews." : allowlistCount === 1 ? "1 login on the list." : `${allowlistCount} logins on the list.`}`
           }
           control={(ids) => (
             <fieldset className="flex flex-col gap-2">
@@ -254,7 +254,7 @@ function SettingsPage() {
                   rows={3}
                   value={form.reviewAuthors}
                   onChange={(e) => set("reviewAuthors", e.target.value)}
-                  placeholder="one GitHub login per line"
+                  placeholder="one GitHub login per line, e.g. mt-mf-1"
                   spellCheck={false}
                   autoCapitalize="off"
                   autoCorrect="off"
