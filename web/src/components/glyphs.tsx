@@ -1,14 +1,16 @@
-// The five state glyphs and the few icons the page needs, all authored SVG in
-// one stroke weight. State is shape plus a text label, never a hue: only the
+// The state glyphs and the few icons the page needs, all authored SVG in one
+// stroke weight. State is shape plus a text label, never a hue: only the
 // in-progress ring wears the rail colour.
 
 import type { Doc } from "@server/_generated/dataModel";
 
 export type RunState = Doc<"runs">["status"];
+/** a run still open long after its timeout: the server will sweep it, the page names it first */
+export type RowState = RunState | "stalled";
 
 const STROKE = 1.5;
 
-export function StateGlyph({ state, className = "" }: { state: RunState; className?: string }) {
+export function StateGlyph({ state, className = "" }: { state: RowState; className?: string }) {
   const common = {
     width: 16,
     height: 16,
@@ -52,6 +54,12 @@ export function StateGlyph({ state, className = "" }: { state: RunState; classNa
           <path d="M4.8 11.2l6.4-6.4" stroke="currentColor" strokeWidth={STROKE} />
         </svg>
       );
+    case "stalled":
+      return (
+        <svg {...common}>
+          <circle cx="8" cy="8" r="4.5" stroke="currentColor" strokeWidth={STROKE} strokeDasharray="2.5 2.2" />
+        </svg>
+      );
     case "queued":
     case "dispatched":
     default:
@@ -63,28 +71,33 @@ export function StateGlyph({ state, className = "" }: { state: RunState; classNa
   }
 }
 
-export const STATE_LABEL: Record<RunState, string> = {
+export const STATE_LABEL: Record<RowState, string> = {
   dispatched: "dispatched",
   queued: "queued",
   in_progress: "in progress",
   completed: "done",
   failed: "failed",
   cancelled: "cancelled",
+  stalled: "no result yet",
 };
 
-export type HeadState = "ok" | "warn" | "cut";
+export type HeadState = "ok" | "warn" | "cut" | "missing";
 
-/** HEAD marker: a wider node that reads as the rail's origin. ok has a core,
- * warn is the ring with no core, cut is a dashed ring struck through. */
+/** HEAD marker: ok has a core, warn is the ring with no core, cut is a dashed
+ * ring struck through, missing is a dashed ring with nothing inside. */
 export function HeadGlyph({ state }: { state: HeadState }) {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
-      {state === "cut" ? (
+      {state === "cut" && (
         <>
           <circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth={STROKE} strokeDasharray="3 2.5" />
           <path d="M3 13L13 3" stroke="currentColor" strokeWidth={STROKE} />
         </>
-      ) : (
+      )}
+      {state === "missing" && (
+        <circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth={STROKE} strokeDasharray="3 2.5" />
+      )}
+      {(state === "ok" || state === "warn") && (
         <>
           <circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth={STROKE} />
           {state === "ok" && <circle cx="8" cy="8" r="2" fill="currentColor" />}
@@ -106,6 +119,24 @@ export function Check({ className = "" }: { className?: string }) {
   return (
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden className={className}>
       <path d="M2.5 6.5l2.5 2.5 4.5-5" stroke="currentColor" strokeWidth={STROKE} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function CopyIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden className={className}>
+      <rect x="4" y="4" width="6.5" height="6.5" rx="1" stroke="currentColor" strokeWidth={STROKE} />
+      <path d="M2.5 8V2.5H8" stroke="currentColor" strokeWidth={STROKE} strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** a plain list mark for things that are not runs */
+export function Dot({ className = "" }: { className?: string }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden className={className}>
+      <circle cx="8" cy="8" r="2" fill="currentColor" />
     </svg>
   );
 }

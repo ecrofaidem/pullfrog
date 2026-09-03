@@ -5,7 +5,7 @@
   --color-sheet: light-dark(#f4f5f7, #14161a);
   --color-sheet-2: light-dark(#eceef2, #1b1e24);
   --color-ink: light-dark(#15181d, #e6e8ec);
-  --color-ink-2: light-dark(#5f6672, #9aa1ab);
+  --color-ink-2: light-dark(#4e5561, #a3aab4);
   --color-ink-3: light-dark(#666d79, #8b929c);
   --color-hair: light-dark(#d9dce2, #2a2e35);
   --color-rail: light-dark(#5b5bd6, #8b8bff);
@@ -72,10 +72,58 @@ pre,
   font-size: 0.9em;
 }
 
-/* form controls in the sheet's own vocabulary */
-.field {
-  @apply w-full rounded-sm border border-hair bg-sheet px-2.5 py-1.5 text-base text-ink;
-  transition: border-color 150ms var(--ease-out-expo);
+/* form controls in the sheet's own vocabulary; the width is the value's size */
+@layer components {
+  .field {
+    @apply max-w-full rounded-sm border border-hair bg-sheet px-2.5 py-1.5 text-base text-ink;
+    transition: border-color 150ms var(--ease-out-expo);
+  }
+  input[type="checkbox"],
+  input[type="radio"] {
+    @apply size-4;
+  }
+  /* tab-height hit areas for the small chrome controls */
+  .tab {
+    @apply inline-flex min-h-6 items-center rounded-sm px-1 py-1 text-ink-2;
+    margin: -0.25rem -0.25rem;
+    transition: color 150ms var(--ease-out-expo);
+  }
+  .tab:hover {
+    color: var(--color-ink);
+  }
+  .tab-active {
+    @apply text-ink;
+    box-shadow: inset 0 -1px 0 var(--color-ink);
+  }
+  /* a command to copy: wraps at spaces first, never scrolls sideways */
+  .command {
+    @apply rounded-sm bg-sheet-2 px-3 py-2 text-xs text-ink;
+    font-family: var(--font-mono);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    line-height: 1.5;
+  }
+  .disclosure > summary {
+    @apply cursor-pointer text-sm text-ink-2 underline;
+    list-style: none;
+  }
+  .disclosure > summary::-webkit-details-marker {
+    display: none;
+  }
+  .disclosure[open] > summary {
+    @apply text-ink;
+  }
+  /* skeleton bars in the sheet's second tone */
+  .bone {
+    @apply rounded-sm;
+    background: var(--color-sheet-2);
+    animation: bone 1.4s ease-in-out infinite;
+  }
+}
+@keyframes bone {
+  50% {
+    opacity: 0.55;
+  }
 }
 .field:hover {
   border-color: var(--color-ink-3);
@@ -94,7 +142,7 @@ pre,
 }
 
 .btn {
-  @apply inline-flex items-center gap-1.5 rounded-sm border px-3 py-1.5 text-sm font-medium;
+  @apply inline-flex min-h-6 items-center gap-1.5 rounded-sm border px-3 py-1.5 text-sm font-medium;
   transition:
     background-color 150ms var(--ease-out-expo),
     border-color 150ms var(--ease-out-expo),
@@ -174,7 +222,8 @@ pre,
     animation-duration: 6s;
   }
   .row-in,
-  .rail-draw {
+  .rail-draw,
+  .bone {
     animation: none;
   }
 }

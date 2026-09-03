@@ -1,26 +1,25 @@
 // The one-line health banner every non-Runs view carries under the header:
-// the same HEAD sentence the rail starts from, without the rail.
+// the same HEAD sentence the rail starts from, from the same subscription.
 
-import { convexQuery } from "@convex-dev/react-query";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { api } from "@server/_generated/api";
 import type { Doc } from "@server/_generated/dataModel";
 import { HeadGlyph } from "~/components/glyphs";
 import { deriveHealth } from "~/lib/health";
+import { useNow } from "~/lib/now";
+import { healthQuery } from "~/lib/repo";
 
 export function HealthLine({ repo }: { repo: Doc<"repos"> }) {
-  const args = { owner: repo.owner, repo: repo.name };
-  const { data: runs } = useSuspenseQuery(convexQuery(api.runs.list, { ...args, limit: 3 }));
-  const { data: secrets } = useSuspenseQuery(convexQuery(api.secrets.status, args));
-  const health = deriveHealth(secrets, runs);
+  const { data } = useSuspenseQuery(healthQuery(repo));
+  const now = useNow();
+  const health = deriveHealth(data, now);
   const ok = health.kind === "ok";
 
   return (
     <Link
       to="/"
       search={(prev) => prev}
-      className="mt-4 grid grid-cols-[28px_1fr] items-start gap-x-2 no-underline"
+      className="-mx-1 mt-3 grid grid-cols-[28px_1fr] items-start gap-x-2 rounded-sm px-1 py-1 no-underline hover:bg-sheet-2"
       aria-label={`Health: ${health.line}. Open runs.`}
     >
       <span className={`flex h-6 items-center justify-center ${ok ? "text-rail" : "text-ink"}`}>

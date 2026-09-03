@@ -204,7 +204,10 @@ export const status = query({
       refreshRejectedAt: row.refreshRejectedAt,
       refreshRejectedReason: row.refreshRejectedReason,
     });
-    return [...account.map((r) => toStatus(r, "account")), ...repo.map((r) => toStatus(r, "repo"))];
+    const byName = new Map<string, SecretStatus>();
+    for (const r of account) byName.set(r.name, toStatus(r, "account"));
+    for (const r of repo) byName.set(r.name, toStatus(r, "repo"));
+    return [...byName.values()];
   },
 });
 

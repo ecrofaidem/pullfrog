@@ -1,54 +1,65 @@
-// The one sentence at HEAD. Derived on the client from what the server already
-// exposes: the Codex chain's row and the latest runs.
+// The one sentence at HEAD. Derived from the server's health query, the same
+// subscription on every view, so no two tabs can disagree.
 
-import type { Doc } from "@server/_generated/dataModel";
-import type { SecretStatus } from "@server/secrets";
-import { ago } from "./format";
+import type { HealthData } from "@server/health";
+import { relative } from "./format";
 
-export type Health =
-  | { kind: "ok"; line: string }
-  | { kind: "cut"; line: string; detail: string; command: string }
-  | { kind: "warn"; line: string; detail: string };
+export type HealthKind = "ok" | "warn" | "cut" | "missing";
+
+export interface Health {
+  kind: HealthKind;
+  line: string;
+  detail?: string;
+  /** the newest failed run's Actions log, when the failures are not credential failures */
+  failedUrl?: string;
+  /** whether the chain has ever rotated; false is the trial's most important signal */
+  rotated: boolean;
+}
 
 export function reseedCommand(): string {
   return `PULLFROG_API_URL=${import.meta.env.VITE_CONVEX_SITE_URL} npx pullfrog auth codex`;
 }
 
-export function deriveHealth(secrets: SecretStatus[], runs: Doc<"runs">[]): Health {
-  const chain = secrets.find((s) => s.name === "CODEX_AUTH_JSON");
-  const command = reseedCommand();
+export function deriveHealth(data: HealthData, now: number | null): Health {
+  const { chain, recent } = data;
 
   if (!chain) {
     return {
-      kind: "cut",
+      kind: "missing",
+      rotated: false,
       line: "No Codex credential stored",
-      detail: "Runs will fall back to OPENAI_API_KEY if one is set, otherwise they fail at startup.",
-      command,
+      detail: "Runs fall back to OPENAI_API_KEY if one is set, otherwise they fail at startup.",
     };
   }
   if (chain.refreshRejectedAt) {
     return {
       kind: "cut",
-      line: `Codex chain rejected ${ago(chain.refreshRejectedAt)}`,
+      rotated: chain.lastRefreshAt !== undefined,
+      line: `Codex chain rejected ${relative(chain.refreshRejectedAt, now)}`,
       detail: chain.refreshRejectedReason
-        ? `OpenAI refused the refresh (${chain.refreshRejectedReason.slice(0, 120)}). Every run fails until it is reseeded.`
+        ? `OpenAI refused the refresh: ${chain.refreshRejectedReason}. Every run fails until it is reseeded.`
         : "OpenAI refused the refresh. Every run fails until it is reseeded.",
-      command,
     };
   }
 
-  const settled = runs.filter((r) => r.status === "failed" || r.status === "completed").slice(0, 3);
+  const rotated = chain.lastRefreshAt !== undefined;
+  const settled = recent.filter((r) => r.status === "failed" || r.status === "completed").slice(0, 3);
   if (settled.length >= 2 && settled.every((r) => r.status === "failed")) {
+    const newest = settled.find((r) => r.htmlUrl);
     return {
       kind: "warn",
+      rotated,
       line: `Last ${settled.length} runs failed`,
-      detail: "The chain looks healthy, so start with the newest run's Actions log.",
+      detail: "The chain is healthy, so these are not credential failures. Start with the newest run's Actions log.",
+      ...(newest?.htmlUrl ? { failedUrl: newest.htmlUrl } : {}),
     };
   }
 
-  const fresh = chain.lastRefreshAt ?? chain.updatedAt;
-  const last = runs[0];
-  const parts = [`chain refreshed ${ago(fresh)}`];
-  if (last) parts.push(`last run ${ago(last.createdAt)}`);
-  return { kind: "ok", line: parts.join(" · ") };
+  const chainPart = rotated
+    ? `chain rotated ${relative(chain.lastRefreshAt!, now)}`
+    : `chain seeded ${relative(chain.updatedAt, now)}, not yet rotated`;
+  const last = recent[0];
+  const parts = [chainPart];
+  if (last) parts.push(`last run ${relative(last.createdAt, now)}`);
+  return { kind: "ok", rotated, line: parts.join(" · ") };
 }

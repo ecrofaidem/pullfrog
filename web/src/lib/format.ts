@@ -1,7 +1,7 @@
 const rtf = new Intl.RelativeTimeFormat("en", { numeric: "always", style: "narrow" });
 
-/** "3m ago", "2h ago", "yesterday" — for timestamps the reader compares to now. */
-export function ago(ms: number, now = Date.now()): string {
+/** "3m ago", "2h ago", "yesterday" — relative to an explicit clock, never to render time. */
+export function ago(ms: number, now: number): string {
   const s = Math.round((ms - now) / 1000);
   const abs = Math.abs(s);
   if (abs < 45) return "just now";
@@ -9,6 +9,11 @@ export function ago(ms: number, now = Date.now()): string {
   if (abs < 86_400) return rtf.format(Math.round(s / 3600), "hour");
   if (abs < 7 * 86_400) return rtf.format(Math.round(s / 86_400), "day");
   return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/** relative when a clock exists, absolute before hydration so SSR and client agree. */
+export function relative(ms: number, now: number | null): string {
+  return now === null ? stamp(ms) : ago(ms, now);
 }
 
 /** elapsed between two instants: "48s", "6m 12s", "1h 03m". */
@@ -34,10 +39,11 @@ export function usd(n: number | undefined): string {
 }
 
 export function stamp(ms: number): string {
-  return new Date(ms).toLocaleString(undefined, {
+  return new Date(ms).toLocaleString("en-GB", {
     month: "short",
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+    timeZone: "UTC",
   });
 }

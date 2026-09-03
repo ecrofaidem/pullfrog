@@ -175,6 +175,47 @@ export const claimDelivery = internalMutation({
   },
 });
 
+const OPEN: Doc<"runs">["status"][] = ["dispatched", "queued", "in_progress"];
+const STALE_GRACE_MS = 15 * 60 * 1000;
+
+/** "1h30m" → ms; anything unparseable is treated as the action's 1h default. */
+function timeoutMs(text: string): number {
+  const m = /^(?:(\d+)h)?(?:(\d+)m)?$/.exec(text.trim());
+  if (!m || (!m[1] && !m[2])) return 60 * 60 * 1000;
+  return (Number(m[1] ?? 0) * 60 + Number(m[2] ?? 0)) * 60 * 1000;
+}
+
+/** cron: an open run older than the repo's timeout plus grace never reported back; say so. */
+export const sweepStale = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const repos = await ctx.db.query("repos").collect();
+    const now = Date.now();
+    let swept = 0;
+    for (const repo of repos) {
+      const cutoff = now - timeoutMs(repo.timeout) - STALE_GRACE_MS;
+      const open = await ctx.db
+        .query("runs")
+        .withIndex("by_repo", (q) =>
+          q.eq("owner", repo.owner).eq("repo", repo.name).lt("createdAt", cutoff)
+        )
+        .filter((q) => q.or(...OPEN.map((s) => q.eq(q.field("status"), s))))
+        .collect();
+      for (const run of open) {
+        await ctx.db.patch(run._id, {
+          status: "failed",
+          conclusion: "stale",
+          error: `No completion reported within ${repo.timeout} of dispatch.`,
+          updatedAt: now,
+          completedAt: now,
+        });
+        swept += 1;
+      }
+    }
+    return { swept };
+  },
+});
+
 /** observed rows that never found their dispatch: kind manual, a GitHub run id, no dispatch id. */
 export const orphans = internalQuery({
   args: { owner: v.string(), repo: v.string() },

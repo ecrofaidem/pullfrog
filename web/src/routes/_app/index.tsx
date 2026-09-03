@@ -1,47 +1,78 @@
 // Runs: the rail. HEAD carries the health sentence; every run below is a node.
 
-import { convexQuery } from "@convex-dev/react-query";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { api } from "@server/_generated/api";
 import type { Doc } from "@server/_generated/dataModel";
-import { ArrowOut, HeadGlyph, STATE_LABEL, StateGlyph } from "~/components/glyphs";
-import { ago, duration, tokens, usd } from "~/lib/format";
-import { deriveHealth, type Health } from "~/lib/health";
-import { useCurrentRepo } from "~/lib/repo";
+import { ArrowOut, HeadGlyph, type RowState, STATE_LABEL, StateGlyph } from "~/components/glyphs";
+import { RailSkeleton } from "~/components/skeleton";
+import { duration, relative, stamp, tokens, usd } from "~/lib/format";
+import { deriveHealth, type Health, reseedCommand } from "~/lib/health";
+import { useNow } from "~/lib/now";
+import { fullName, healthQuery, pickRepo, reposQuery, RUNS_LIMIT, runsQuery, useCurrentRepo } from "~/lib/repo";
 
 export const Route = createFileRoute("/_app/")({
+  loaderDeps: ({ search }) => ({ repo: search.repo }),
+  loader: async ({ context, deps }) => {
+    const repos = await context.queryClient.ensureQueryData(reposQuery);
+    const repo = pickRepo(repos, deps.repo);
+    if (!repo) return;
+    await Promise.all([
+      context.queryClient.ensureQueryData(runsQuery(repo)),
+      context.queryClient.ensureQueryData(healthQuery(repo)),
+    ]);
+  },
+  pendingComponent: RailSkeleton,
   component: RunsPage,
 });
 
-const LIMIT = 100;
+/** an open run this old is not going to report back; the sweep marks it failed later */
+const STALL_MS = 30 * 60 * 1000;
 
 function RunsPage() {
   const repo = useCurrentRepo()!;
-  const args = { owner: repo.owner, repo: repo.name };
-  const { data: runs } = useSuspenseQuery(convexQuery(api.runs.list, { ...args, limit: LIMIT }));
-  const { data: secrets } = useSuspenseQuery(convexQuery(api.secrets.status, args));
-  const health = deriveHealth(secrets, runs);
+  const { data: runs } = useSuspenseQuery(runsQuery(repo));
+  const { data: healthData } = useSuspenseQuery(healthQuery(repo));
+  const hasOpen = runs.some((r) => isOpen(r.status));
+  const now = useNow(hasOpen ? 1000 : 30_000);
+  const health = deriveHealth(healthData, now);
 
   return (
-    <section aria-label="Runs">
-      <Rail runs={runs} health={health} handle={repo.handle} />
+    <section aria-labelledby="runs-heading">
+      <h1 id="runs-heading" className="sr-only">
+        Runs for {fullName(repo)}
+      </h1>
+      <Rail key={fullName(repo)} runs={runs} health={health} handle={repo.handle} now={now} />
     </section>
   );
+}
+
+function isOpen(status: Doc<"runs">["status"]): boolean {
+  return status === "in_progress" || status === "queued" || status === "dispatched";
 }
 
 // ── the rail ─────────────────────────────────────────────────────────────────
 
 const GLYPH_COL = 28; // px: glyph column width; the rail line sits at its centre
 const LANE_OFFSET = 12; // px: the incremental-review lane runs this far right of the rail
+const ARRIVAL_MS = 900; // how long a row keeps its arrival motion
 
 interface Lane {
   fromY: number;
   toY: number;
 }
 
-function Rail({ runs, health, handle }: { runs: Doc<"runs">[]; health: Health; handle: string }) {
+function Rail({
+  runs,
+  health,
+  handle,
+  now,
+}: {
+  runs: Doc<"runs">[];
+  health: Health;
+  handle: string;
+  now: number | null;
+}) {
   const listRef = useRef<HTMLOListElement>(null);
   const [lanes, setLanes] = useState<Lane[]>([]);
 
@@ -58,6 +89,16 @@ function Rail({ runs, health, handle }: { runs: Doc<"runs">[]; health: Health; h
     if (fresh.length === 0) return;
     for (const id of fresh) seen.current.add(id);
     setArrived((a) => ({ ids: new Set([...a.ids, ...fresh]), key: a.key + 1 }));
+    const timer = setTimeout(
+      () =>
+        setArrived((a) => {
+          const ids = new Set(a.ids);
+          for (const id of fresh) ids.delete(id);
+          return { ids, key: a.key };
+        }),
+      ARRIVAL_MS
+    );
+    return () => clearTimeout(timer);
   }, [runs]);
 
   // an incremental review draws a lane back to the review it extends: the
@@ -89,8 +130,6 @@ function Rail({ runs, health, handle }: { runs: Doc<"runs">[]; health: Health; h
       );
     };
     measure();
-    // rows re-wrap on resize, after late stylesheets and after fonts; the
-    // lanes follow the glyphs through all of it.
     const observer = new ResizeObserver(measure);
     observer.observe(list);
     for (const li of list.children) observer.observe(li);
@@ -105,10 +144,10 @@ function Rail({ runs, health, handle }: { runs: Doc<"runs">[]; health: Health; h
   }, [runs]);
 
   const x = GLYPH_COL / 2;
-  const cut = health.kind === "cut";
+  const broken = health.kind === "cut" || health.kind === "missing";
   const railStyle = {
     left: x,
-    background: cut
+    background: broken
       ? `repeating-linear-gradient(to bottom, var(--color-ink-3) 0 4px, transparent 4px 8px)`
       : "var(--color-rail)",
   } as const;
@@ -148,11 +187,12 @@ function Rail({ runs, health, handle }: { runs: Doc<"runs">[]; health: Health; h
         {runs.length === 0 ? (
           <EmptyRail handle={handle} />
         ) : (
-          <ol ref={listRef} className="relative">
+          <ol ref={listRef} className="relative" aria-live="polite" aria-relevant="additions">
             {runs.map((run, i) => (
               <RunRow
                 key={run._id}
                 run={run}
+                now={now}
                 arrived={arrived.ids.has(run._id)}
                 // the PR title leads its group; later runs of the same PR show what they are
                 leadsGroup={i === 0 || runs[i - 1]!.prNumber !== run.prNumber}
@@ -161,8 +201,8 @@ function Rail({ runs, health, handle }: { runs: Doc<"runs">[]; health: Health; h
           </ol>
         )}
       </div>
-      {runs.length >= LIMIT && (
-        <p className="mt-6 pl-7 text-sm text-ink-3">Showing the newest {LIMIT} runs.</p>
+      {runs.length >= RUNS_LIMIT && (
+        <p className="mt-6 pl-7 text-sm text-ink-3">Showing the newest {RUNS_LIMIT} runs.</p>
       )}
     </div>
   );
@@ -182,14 +222,19 @@ function Head({ health }: { health: Health }) {
           <span className="mono text-sm text-ink-2">HEAD</span>
           <span className={ok ? "text-ink-2" : "font-medium text-ink"}>{health.line}</span>
         </p>
-        {health.kind !== "ok" && (
-          <p className="mt-1 max-w-[60ch] text-sm text-ink-2">{health.detail}</p>
+        {health.detail && <p className="mt-1 max-w-[60ch] text-sm text-ink-2">{health.detail}</p>}
+        {health.kind === "warn" && health.failedUrl && (
+          <p className="mt-1 text-sm">
+            <a href={health.failedUrl} className="inline-flex items-center gap-1 text-ink-2 hover:text-ink" target="_blank" rel="noreferrer">
+              Newest failed run's Actions log <ArrowOut />
+            </a>
+          </p>
         )}
-        {health.kind === "cut" && (
+        {(health.kind === "cut" || health.kind === "missing") && (
           <div className="mt-2 text-sm">
             <p className="text-ink-2">Reseed from a checkout of the repo:</p>
-            <pre className="mt-1 whitespace-pre-wrap break-all rounded-sm bg-sheet-2 px-3 py-2 text-xs text-ink">
-              <code className="select-all">{health.command}</code>
+            <pre className="command mt-1" tabIndex={0}>
+              <code className="select-all">{reseedCommand()}</code>
             </pre>
           </div>
         )}
@@ -200,22 +245,35 @@ function Head({ health }: { health: Health }) {
 
 function RunRow({
   run,
+  now,
   arrived,
   leadsGroup,
 }: {
   run: Doc<"runs">;
+  now: number | null;
   arrived: boolean;
   leadsGroup: boolean;
 }) {
-  const active = run.status === "in_progress";
-  const open = active || run.status === "queued" || run.status === "dispatched";
-  const elapsed = duration(run.createdAt, open ? Date.now() : (run.completedAt ?? run.updatedAt));
+  const open = isOpen(run.status);
+  const stalled = open && now !== null && now - run.createdAt > STALL_MS;
+  const state: RowState = stalled ? "stalled" : run.status;
+  const active = run.status === "in_progress" && !stalled;
+  const settledAt = run.completedAt ?? run.updatedAt;
+  const elapsed = open
+    ? stalled
+      ? duration(run.createdAt, run.createdAt + STALL_MS)
+      : now === null
+        ? ""
+        : duration(run.createdAt, now)
+    : duration(run.createdAt, settledAt);
   const prHref =
     run.prNumber !== undefined
       ? `https://github.com/${run.owner}/${run.repo}/pull/${run.prNumber}`
       : undefined;
   const showPrTitle = leadsGroup && run.prTitle !== undefined;
   const title = showPrTitle ? run.prTitle : kindLabel(run);
+  const refLabel = run.prNumber !== undefined ? `#${run.prNumber}` : undefined;
+  const failure = run.error ? describeError(run.error) : undefined;
 
   return (
     <li
@@ -226,18 +284,35 @@ function RunRow({
         className="relative z-10 flex h-6 items-center justify-center bg-sheet text-ink"
         data-glyph
       >
-        <StateGlyph state={run.status} />
+        <StateGlyph state={state} />
       </span>
       <div className="min-w-0">
         <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-          {run.prNumber !== undefined && (
-            <a href={prHref} className="ref no-underline hover:border-ink-3" target="_blank" rel="noreferrer">
-              #{run.prNumber}
+          {refLabel && (
+            <a
+              href={prHref}
+              className="ref no-underline hover:border-ink-3"
+              target="_blank"
+              rel="noreferrer"
+              aria-label={`Pull request ${refLabel} on GitHub`}
+            >
+              {refLabel}
             </a>
           )}
-          <span className="text-base leading-6 text-ink">{title}</span>
+          {prHref && showPrTitle ? (
+            <a
+              href={prHref}
+              className="text-base leading-6 text-ink no-underline hover:underline"
+              target="_blank"
+              rel="noreferrer"
+            >
+              {title}
+            </a>
+          ) : (
+            <span className="text-base leading-6 text-ink">{title}</span>
+          )}
           <span className={`text-sm ${active ? "text-rail" : "text-ink-2"}`}>
-            {STATE_LABEL[run.status]}
+            {STATE_LABEL[state]}
             {run.conclusion && run.status === "failed" && run.conclusion !== "failure"
               ? ` (${run.conclusion})`
               : ""}
@@ -249,11 +324,11 @@ function RunRow({
           <time
             className="mono"
             dateTime={new Date(run.createdAt).toISOString()}
-            title={new Date(run.createdAt).toLocaleString()}
+            title={`${stamp(run.createdAt)} UTC`}
           >
-            {ago(run.createdAt)}
+            {relative(run.createdAt, now)}
           </time>
-          <span className="mono text-ink-3">{elapsed}</span>
+          {elapsed && <span className="mono text-ink-3">{elapsed}</span>}
           {run.model && <span className="mono text-ink-3">{run.model.replace(/^openai\//, "")}</span>}
           {run.credential === "subscription" && <span className="text-ink-3">subscription</span>}
           {(run.inputTokens !== undefined || run.outputTokens !== undefined) && (
@@ -265,15 +340,26 @@ function RunRow({
           {run.htmlUrl && (
             <a
               href={run.htmlUrl}
-              className="inline-flex items-center gap-1 text-ink-2 hover:text-ink"
+              className="tab inline-flex items-center gap-1 text-ink-2 no-underline hover:text-ink"
               target="_blank"
               rel="noreferrer"
+              aria-label={`Actions log for ${refLabel ?? kindLabel(run)}`}
             >
               Actions log <ArrowOut />
             </a>
           )}
         </div>
-        {run.error && <p className="mt-1 max-w-[60ch] text-sm text-ink">{run.error}</p>}
+        {failure && (
+          <div className="mt-1 max-w-[60ch] text-sm text-ink-2">
+            <p>{failure.summary}</p>
+            {failure.raw && (
+              <details className="mt-0.5">
+                <summary className="cursor-pointer text-ink-3">raw error</summary>
+                <pre className="command mt-1 text-xs">{failure.raw}</pre>
+              </details>
+            )}
+          </div>
+        )}
       </div>
     </li>
   );
@@ -286,10 +372,32 @@ function kindLabel(run: Doc<"runs">): string {
     case "incremental_review":
       return "incremental review";
     case "manual":
-      return run.title || "manual run";
+      return "workflow run";
     default:
-      return run.kind;
+      return run.kind.replace(/_/g, " ");
   }
+}
+
+/** a plain sentence for the error the server recorded, with the raw text on request. */
+function describeError(raw: string): { summary: string; raw: string | undefined } {
+  const github = /^GitHub (\d{3}) on ([^:]+):/.exec(raw);
+  if (github) {
+    const [, status, path] = github;
+    const what = path!.includes("/dispatches")
+      ? "dispatching the workflow"
+      : path!.includes("/check-runs")
+        ? "creating the check-run"
+        : `calling ${path}`;
+    const why =
+      status === "404"
+        ? "The workflow file may be missing from the default branch, or the App is not installed here."
+        : status === "403"
+          ? "The App lacks a permission it needs."
+          : "";
+    return { summary: `GitHub returned ${status} while ${what}. ${why}`.trim(), raw };
+  }
+  if (raw.startsWith("No completion reported")) return { summary: raw, raw: undefined };
+  return { summary: raw.length > 160 ? `${raw.slice(0, 160)}…` : raw, raw: raw.length > 160 ? raw : undefined };
 }
 
 function EmptyRail({ handle }: { handle: string }) {

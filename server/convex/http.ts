@@ -6,6 +6,7 @@
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { authComponent, createAuth } from "./auth";
+import { cliConfigGet, cliConfigPatch } from "./handlers/cliConfig";
 import { cliSecretsGet, cliSecretsPost } from "./handlers/cliSecrets";
 import { installationToken } from "./handlers/installationToken";
 import { runContext } from "./handlers/runContext";
@@ -26,6 +27,8 @@ http.route({ path: "/api/runtime/secret", method: "PUT", handler: runtimeSecretP
 http.route({ pathPrefix: "/api/workflow-run/", method: "PATCH", handler: workflowRunPatch });
 http.route({ path: "/api/cli/secrets", method: "GET", handler: cliSecretsGet });
 http.route({ path: "/api/cli/secrets", method: "POST", handler: cliSecretsPost });
+http.route({ path: "/api/cli/config", method: "GET", handler: cliConfigGet });
+http.route({ path: "/api/cli/config", method: "PATCH", handler: cliConfigPatch });
 
 http.route({ path: "/webhooks/github", method: "POST", handler: githubWebhook });
 

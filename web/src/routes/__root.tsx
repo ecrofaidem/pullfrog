@@ -1,5 +1,4 @@
 import { ConvexBetterAuthProvider } from "@convex-dev/better-auth/react";
-import type { ComponentProps } from "react";
 import type { ConvexQueryClient } from "@convex-dev/react-query";
 import type { QueryClient } from "@tanstack/react-query";
 import {
@@ -10,7 +9,7 @@ import {
   useRouteContext,
 } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { authClient } from "~/lib/auth-client";
 import { getToken } from "~/lib/auth-server";
 import appCss from "~/styles.css?url";
@@ -18,6 +17,17 @@ import appCss from "~/styles.css?url";
 const getAuth = createServerFn({ method: "GET" }).handler(async () => {
   return await getToken();
 });
+
+interface AuthState {
+  isAuthenticated: boolean;
+  token: string | undefined;
+}
+
+// beforeLoad runs on every navigation. On the server it must fetch the token
+// for SSR; in the browser it must not cost a round trip per tab switch, so the
+// first client result is cached for the session. Sign-out does a full reload,
+// which drops the cache.
+let clientAuth: AuthState | undefined;
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -32,10 +42,14 @@ export const Route = createRootRouteWithContext<{
     ],
     links: [{ rel: "stylesheet", href: appCss }],
   }),
-  beforeLoad: async (ctx) => {
+  beforeLoad: async (ctx): Promise<AuthState> => {
+    const inBrowser = typeof window !== "undefined";
+    if (inBrowser && clientAuth) return clientAuth;
     const token = await getAuth();
     if (token) ctx.context.convexQueryClient.serverHttpClient?.setAuth(token);
-    return { isAuthenticated: !!token, token };
+    const auth: AuthState = { isAuthenticated: !!token, token };
+    if (inBrowser) clientAuth = auth;
+    return auth;
   },
   component: RootComponent,
 });

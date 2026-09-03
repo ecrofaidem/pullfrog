@@ -6,3 +6,4 @@ dist
 .env.local
 src/routeTree.gen.ts
 worker-configuration.d.ts
+.env.development.local
