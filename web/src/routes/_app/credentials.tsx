@@ -10,7 +10,7 @@ import type { SecretStatus } from "@server/secrets";
 import { ArrowOut, Check, CopyIcon, Dot, HeadGlyph } from "~/components/glyphs";
 import { SheetSkeleton } from "~/components/skeleton";
 import { relative, stamp } from "~/lib/format";
-import { deriveHealth, reseedCommand } from "~/lib/health";
+import { deriveHealth, describeUsage, reseedCommand } from "~/lib/health";
 import { useNow } from "~/lib/now";
 import { fullName, healthQuery, pickRepo, reposQuery, secretsQuery, useCurrentRepo } from "~/lib/repo";
 
@@ -101,6 +101,11 @@ function CredentialsPage() {
                 )}
               </p>
             )}
+            {(health.kind === "ok" || health.kind === "warn") && describeUsage(healthData.usage, now) && (
+              <p className="mt-1 text-sm text-ink-2">
+                <UsageBar usedPercent={healthData.usage!.usedPercent} /> {describeUsage(healthData.usage, now)}
+              </p>
+            )}
             {health.kind === "ok" && !health.rotated && (
               <p className="mt-1 max-w-[56ch] text-sm text-ink-2">
                 It renews itself on the first run that needs it.
@@ -140,6 +145,17 @@ function CredentialsPage() {
         )}
       </section>
     </div>
+  );
+}
+
+/** ten cells, filled for what is left, in the sheet's own two tones */
+function UsageBar({ usedPercent }: { usedPercent: number }) {
+  const filled = Math.round((100 - usedPercent) / 10);
+  return (
+    <span className="mono text-ink" aria-hidden>
+      {"▰".repeat(filled)}
+      <span className="text-ink-3">{"▱".repeat(10 - filled)}</span>
+    </span>
   );
 }
 

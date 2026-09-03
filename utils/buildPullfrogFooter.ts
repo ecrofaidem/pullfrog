@@ -5,6 +5,7 @@ import {
   providers,
   resolveDisplayAlias,
 } from "../models.ts";
+import { currentCodexUsage, renderCodexUsage } from "./codexUsage.ts";
 
 export const PULLFROG_DIVIDER = "<!-- PULLFROG_DIVIDER_DO_NOT_REMOVE_PLZ -->";
 
@@ -166,6 +167,10 @@ export function buildPullfrogFooter(params: BuildPullfrogFooterParams): string {
       })}`
     );
   }
+
+  // FORK: the subscription's remaining limit, read once at run start (utils/codexUsage.ts)
+  const usage = currentCodexUsage();
+  if (usage) parts.push(renderCodexUsage(usage));
 
   if (parts.length === 0) return "";
   return `\n\n${PULLFROG_DIVIDER}\n<sup>${parts.join(" ｜ ")}</sup>`;

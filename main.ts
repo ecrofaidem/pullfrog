@@ -25,6 +25,7 @@ import { formatCommercialGateSummary } from "./utils/billingErrors.ts";
 import { resolveBody } from "./utils/body.ts";
 import { log } from "./utils/cli.ts";
 import { installCodexAuth, installXaiAuth, PULLFROG_DATA_DIR } from "./utils/codexHome.ts";
+import { primeCodexUsage } from "./utils/codexUsage.ts";
 import { checkConfiguredCredentials } from "./utils/credentialFallback.ts";
 import { recordDiffReadFromToolUse } from "./utils/diffCoverage.ts";
 import { onExitSignal } from "./utils/exitHandler.ts";
@@ -265,6 +266,10 @@ export async function main(): Promise<MainResult> {
   // more accurate than the static envVars/managedCredentials catalog,
   // which can miss new auth shapes.
   captureAuthorizedModels(opencodeCliPath);
+
+  // FORK: start reading the subscription's remaining limit for the footer;
+  // never awaited here, footers built minutes later read the result.
+  void primeCodexUsage();
 
   // close the window opened before the baseline capture.
   if (preIntrospectionDirty && repoDir) {

@@ -9,7 +9,8 @@ Consumers pin `uses: ecrofaidem/pullfrog@<sha>` with `API_URL` pointing at the C
 
 Deliberate divergences from upstream in the action tree (expect a merge conflict here, keep ours):
 
-- `utils/buildPullfrogFooter.ts` — the comment footer is just the workflow-run link and the model. Upstream's logo, X link, SHA-pin nudge and Fix-all links are dropped; the fix links pointed at a hosted `/trigger` endpoint this server does not have.
+- `utils/buildPullfrogFooter.ts` — the comment footer is the workflow-run link, the model, and the subscription's remaining limit. Upstream's logo, X link, SHA-pin nudge and Fix-all links are dropped; the fix links pointed at a hosted `/trigger` endpoint this server does not have.
+- `utils/codexUsage.ts` (new) and one `primeCodexUsage()` line in `main.ts` — reads `GET https://chatgpt.com/backend-api/wham/usage` with the run's chain, the same call the Codex CLI's status screen makes.
 
 Upstream sync:
 

@@ -37,6 +37,7 @@ import type * as me from "../me.js";
 import type * as repos from "../repos.js";
 import type * as runs from "../runs.js";
 import type * as secrets from "../secrets.js";
+import type * as usage from "../usage.js";
 
 import type {
   ApiFromModules,
@@ -74,6 +75,7 @@ declare const fullApi: ApiFromModules<{
   repos: typeof repos;
   runs: typeof runs;
   secrets: typeof secrets;
+  usage: typeof usage;
 }>;
 
 /**

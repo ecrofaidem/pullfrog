@@ -121,6 +121,16 @@ export default defineSchema({
     .index("by_github_run", ["githubRunId"])
     .index("by_dispatch", ["dispatchId"]),
 
+  /** the ChatGPT subscription's remaining limit, read from OpenAI every 15 minutes per stored chain. */
+  codexUsage: defineTable({
+    secretId: v.id("secrets"),
+    plan: v.optional(v.string()),
+    usedPercent: v.number(),
+    windowSeconds: v.number(),
+    resetAt: v.number(),
+    fetchedAt: v.number(),
+  }).index("by_secret", ["secretId"]),
+
   /** GitHub redelivers on any non-2xx; this makes a redelivery a no-op. */
   webhookDeliveries: defineTable({
     deliveryId: v.string(),

@@ -24,8 +24,17 @@ export interface RecentRun {
   prNumber: number | undefined;
 }
 
+export interface UsageHealth {
+  plan: string | undefined;
+  usedPercent: number;
+  windowSeconds: number;
+  resetAt: number;
+  fetchedAt: number;
+}
+
 export interface HealthData {
   chain: ChainHealth | null;
+  usage: UsageHealth | null;
   recent: RecentRun[];
 }
 
@@ -58,6 +67,21 @@ export const get = query({
           refreshRejectedReason: row.refreshRejectedReason?.slice(0, 200),
         }
       : null;
+    const usageRow = row
+      ? await ctx.db
+          .query("codexUsage")
+          .withIndex("by_secret", (q) => q.eq("secretId", row._id))
+          .unique()
+      : null;
+    const usage: UsageHealth | null = usageRow
+      ? {
+          plan: usageRow.plan,
+          usedPercent: usageRow.usedPercent,
+          windowSeconds: usageRow.windowSeconds,
+          resetAt: usageRow.resetAt,
+          fetchedAt: usageRow.fetchedAt,
+        }
+      : null;
     const runs = await ctx.db
       .query("runs")
       .withIndex("by_repo", (q) => q.eq("owner", args.owner).eq("repo", args.repo))
@@ -65,6 +89,7 @@ export const get = query({
       .take(5);
     return {
       chain,
+      usage,
       recent: runs.map((r) => ({
         id: r._id,
         status: r.status,

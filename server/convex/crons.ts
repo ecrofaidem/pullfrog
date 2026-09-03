@@ -8,5 +8,6 @@ import { internal } from "./_generated/api";
 const crons = cronJobs();
 
 crons.interval("sweep stale runs", { minutes: 5 }, internal.runs.sweepStale, {});
+crons.interval("refresh codex usage", { minutes: 15 }, internal.usage.refresh, {});
 
 export default crons;
