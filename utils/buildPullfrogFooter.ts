@@ -8,8 +8,6 @@ import {
 
 export const PULLFROG_DIVIDER = "<!-- PULLFROG_DIVIDER_DO_NOT_REMOVE_PLZ -->";
 
-const FROG_LOGO = `<a href="https://pullfrog.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://pullfrog.com/logos/frog-white-full-18px.png"><img src="https://pullfrog.com/logos/frog-green-full-18px.png" width="9px" height="9px" style="vertical-align: middle; " alt="Pullfrog"></picture></a>`;
-
 export interface WorkflowRunFooterInfo {
   owner: string;
   repo: string;
@@ -137,22 +135,17 @@ function formatModelLabel(params: {
 }
 
 /**
- * build a pullfrog footer with configurable parts
- * always includes: frog logo at start and X link at end
- * order: action links (customParts) > workflow run > model > attribution > reference links
+ * build the footer under every comment and review the agent posts.
+ *
+ * FORK: trimmed to what a reader acts on — the workflow run link and the
+ * model. upstream also renders the frog logo, an X link, "via Pullfrog", the
+ * SHA-pin nudge and the Fix-all/Fix-👍s links; the fix links target the hosted
+ * server's /trigger endpoint, which this fork's server does not implement, so
+ * they were dead, and the rest was noise. the signature is unchanged so the
+ * callers (comment, pr, review, errorReport) merge cleanly from upstream.
  */
 export function buildPullfrogFooter(params: BuildPullfrogFooterParams): string {
   const parts: string[] = [];
-
-  if (params.shaPinned) {
-    parts.push(
-      "⚠️ this action is pinned to a commit SHA, which [freezes the cleanup step](https://docs.pullfrog.com/versioning) — switch to `@v0` or keep the SHA fresh with Dependabot"
-    );
-  }
-
-  if (params.customParts) {
-    parts.push(...params.customParts);
-  }
 
   if (params.workflowRunUrl) {
     parts.push(`[View workflow run](${params.workflowRunUrl})`);
@@ -160,10 +153,6 @@ export function buildPullfrogFooter(params: BuildPullfrogFooterParams): string {
     const baseUrl = `https://github.com/${params.workflowRun.owner}/${params.workflowRun.repo}/actions/runs/${params.workflowRun.runId}`;
     const url = params.workflowRun.jobId ? `${baseUrl}/job/${params.workflowRun.jobId}` : baseUrl;
     parts.push(`[View workflow run](${url})`);
-  }
-
-  if (params.triggeredBy) {
-    parts.push("via [Pullfrog](https://pullfrog.com)");
   }
 
   if (params.model) {
@@ -178,9 +167,8 @@ export function buildPullfrogFooter(params: BuildPullfrogFooterParams): string {
     );
   }
 
-  const allParts = [...parts, "[𝕏](https://x.com/pullfrogai)"];
-
-  return `\n\n${PULLFROG_DIVIDER}\n<sup>${FROG_LOGO}&nbsp;&nbsp;｜ ${allParts.join(" ｜ ")}</sup>`;
+  if (parts.length === 0) return "";
+  return `\n\n${PULLFROG_DIVIDER}\n<sup>${parts.join(" ｜ ")}</sup>`;
 }
 
 /**

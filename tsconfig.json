@@ -22,5 +22,5 @@
     "useUnknownInCatchVariables": true,
     "noEmit": true
   },
-  "exclude": ["dist"]
+  "exclude": ["dist", "server", "web"]
 }
