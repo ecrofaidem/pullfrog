@@ -875,6 +875,8 @@ export function CreatePullRequestReviewTool(ctx: ToolContext) {
                     body,
                     approved: approved ?? false,
                     hasComments: (params.comments?.length ?? 0) > 0,
+                    inlineComments: params.comments?.length ?? 0,
+                    droppedComments: droppedComments.length,
                   })
                 : createReviewWithStrandedRecovery(ctx, params),
             {
@@ -1072,7 +1074,14 @@ function runDiffCoveragePreflight(params: { ctx: ToolContext }): void {
   );
 }
 
-type FooterOpts = { body: string; approved: boolean; hasComments: boolean };
+type FooterOpts = {
+  body: string;
+  approved: boolean;
+  hasComments: boolean;
+  /** FORK: counts for the footer's run stats */
+  inlineComments?: number;
+  droppedComments?: number;
+};
 
 /**
  * clear a pending review draft stranded on the PR by a prior hard-killed run
@@ -1227,6 +1236,8 @@ export async function createAndSubmitWithFooter(
       unselectedProxyDefault: ctx.toolState.unselectedProxyDefault,
       shaPinned: ctx.toolState.shaPinned,
       oss: ctx.oss,
+      toolState: ctx.toolState,
+      review: { inlineComments: opts.inlineComments ?? 0, droppedComments: opts.droppedComments ?? 0 },
     });
 
     return await ctx.octokit.rest.pulls.submitReview({

@@ -26,6 +26,7 @@ import { resolveBody } from "./utils/body.ts";
 import { log } from "./utils/cli.ts";
 import { installCodexAuth, installXaiAuth, PULLFROG_DATA_DIR } from "./utils/codexHome.ts";
 import { primeCodexUsage } from "./utils/codexUsage.ts";
+import { recordToolUse } from "./utils/runStats.ts";
 import { checkConfiguredCredentials } from "./utils/credentialFallback.ts";
 import { recordDiffReadFromToolUse } from "./utils/diffCoverage.ts";
 import { onExitSignal } from "./utils/exitHandler.ts";
@@ -881,6 +882,7 @@ export async function main(): Promise<MainResult> {
       onActivityTimeout: onInnerActivityTimeout,
       onTurnRecovered,
       onToolUse: (event) => {
+        recordToolUse(event.toolName); // FORK: footer run stats
         const wasTracked = recordDiffReadFromToolUse({
           state: primaryRepoState(toolState).diffCoverage,
           toolName: event.toolName,

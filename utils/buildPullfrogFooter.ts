@@ -6,6 +6,8 @@ import {
   resolveDisplayAlias,
 } from "../models.ts";
 import { currentCodexUsage, renderCodexUsage } from "./codexUsage.ts";
+import { type ReviewStats, renderRunStats } from "./runStats.ts";
+import type { ToolState } from "../toolState.ts";
 
 export const PULLFROG_DIVIDER = "<!-- PULLFROG_DIVIDER_DO_NOT_REMOVE_PLZ -->";
 
@@ -65,6 +67,10 @@ export interface BuildPullfrogFooterParams {
    * with the phrase linking to the OSS application page.
    */
   oss?: boolean | undefined;
+  /** FORK: run stats (time, tokens, subagents, coverage) are read off the run's toolState */
+  toolState?: ToolState | undefined;
+  /** FORK: inline-comment counts, review submissions only */
+  review?: ReviewStats | undefined;
 }
 
 /** Provider display name (e.g. "Anthropic") for the slug, or the raw provider segment as a fallback. */
@@ -168,12 +174,16 @@ export function buildPullfrogFooter(params: BuildPullfrogFooterParams): string {
     );
   }
 
-  // FORK: the subscription's remaining limit, read once at run start (utils/codexUsage.ts)
+  // FORK: what this run did (utils/runStats.ts) and what is left of the
+  // subscription's limit (utils/codexUsage.ts); the breakdown stays collapsed.
+  const stats = params.toolState ? renderRunStats({ toolState: params.toolState, review: params.review }) : null;
+  if (stats) parts.push(stats.line);
   const usage = currentCodexUsage();
   if (usage) parts.push(renderCodexUsage(usage));
 
   if (parts.length === 0) return "";
-  return `\n\n${PULLFROG_DIVIDER}\n<sup>${parts.join(" ｜ ")}</sup>`;
+  const line = `<sup>${parts.join(" ｜ ")}</sup>`;
+  return `\n\n${PULLFROG_DIVIDER}\n${line}${stats ? `\n\n${stats.details}` : ""}`;
 }
 
 /**

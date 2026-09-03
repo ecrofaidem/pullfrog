@@ -32,6 +32,7 @@ function buildPrBodyWithFooter(ctx: ToolContext, body: string): string {
     unselectedProxyDefault: ctx.toolState.unselectedProxyDefault,
     shaPinned: ctx.toolState.shaPinned,
     oss: ctx.oss,
+    toolState: ctx.toolState,
   });
 
   const bodyWithoutFooter = stripExistingFooter(fixDoubleEscapedString(body));

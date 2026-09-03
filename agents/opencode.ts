@@ -102,6 +102,7 @@ import {
 import { buildReflectionPrompt, runPostRunRetryLoop } from "./postRun.ts";
 import { REVIEWER_AGENT_NAME } from "./reviewer.ts";
 import { formatWithLabel, ORCHESTRATOR_LABEL, SessionLabeler } from "./sessionLabeler.ts";
+import { recordSubagentFinish } from "../utils/runStats.ts";
 import {
   type AgentResult,
   type AgentRunContext,
@@ -679,6 +680,7 @@ function processTerminalToolPart(
         `» subagent finished: ${dispatch.label} (${dur}s, status=${state.status})` +
           (preview ? ` — ${String(preview).replace(/\n/g, " ")}` : "")
       );
+      recordSubagentFinish(dispatch.label, Number(dur), String(state.status)); // FORK: footer run stats
       ctx.taskDispatchByCallID.delete(toolId);
     }
   }

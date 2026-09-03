@@ -48,6 +48,7 @@ export async function reportErrorToComment(ctx: ReportErrorParams): Promise<void
     unselectedProxyDefault: ctx.toolState.unselectedProxyDefault,
     shaPinned: ctx.toolState.shaPinned,
     oss: ctx.toolState.oss,
+    toolState: ctx.toolState,
   });
 
   const body = `${formattedError}${footer}`;
