@@ -27,18 +27,18 @@ export function deriveHealth(data: HealthData, now: number | null): Health {
     return {
       kind: "missing",
       rotated: false,
-      line: "No Codex credential stored",
-      detail: "Runs fall back to OPENAI_API_KEY if one is set, otherwise they fail at startup.",
+      line: "No ChatGPT login saved",
+      detail: "Runs use the OPENAI_API_KEY secret if it exists. Otherwise every run fails at the start.",
     };
   }
   if (chain.refreshRejectedAt) {
     return {
       kind: "cut",
       rotated: chain.lastRefreshAt !== undefined,
-      line: `Codex chain rejected ${relative(chain.refreshRejectedAt, now)}`,
+      line: `ChatGPT login rejected ${relative(chain.refreshRejectedAt, now)}`,
       detail: chain.refreshRejectedReason
-        ? `OpenAI refused the refresh: ${chain.refreshRejectedReason}. Every run fails until it is reseeded.`
-        : "OpenAI refused the refresh. Every run fails until it is reseeded.",
+        ? `OpenAI rejected it (${chain.refreshRejectedReason}). Every run fails until someone signs in again.`
+        : "OpenAI rejected it. Every run fails until someone signs in again.",
     };
   }
 
@@ -50,14 +50,14 @@ export function deriveHealth(data: HealthData, now: number | null): Health {
       kind: "warn",
       rotated,
       line: `Last ${settled.length} runs failed`,
-      detail: "The chain is healthy, so these are not credential failures. Start with the newest run's Actions log.",
+      detail: "The ChatGPT login works, so the login is not the cause. Open the newest failed run's log.",
       ...(newest?.htmlUrl ? { failedUrl: newest.htmlUrl } : {}),
     };
   }
 
   const chainPart = rotated
-    ? `chain rotated ${relative(chain.lastRefreshAt!, now)}`
-    : `chain seeded ${relative(chain.updatedAt, now)}, not yet rotated`;
+    ? `login renewed ${relative(chain.lastRefreshAt!, now)}`
+    : `login saved ${relative(chain.updatedAt, now)}, not renewed yet`;
   const last = recent[0];
   const parts = [chainPart];
   if (last) parts.push(`last run ${relative(last.createdAt, now)}`);

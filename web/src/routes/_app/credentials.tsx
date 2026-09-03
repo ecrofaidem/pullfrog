@@ -43,11 +43,12 @@ function CredentialsPage() {
       <h1 className="sr-only">Credentials for {fullName(repo)}</h1>
       <section aria-labelledby="chain-heading">
         <h2 id="chain-heading" className="text-lg font-semibold tracking-[-0.01em]">
-          Codex subscription
+          ChatGPT login
         </h2>
         <p className="mt-0.5 text-sm text-ink-2">
-          The ChatGPT chain <span className="mono">CODEX_AUTH_JSON</span> that every run authenticates
-          with. It rotates on use and is written back after each run.
+          Every run signs in to ChatGPT with the saved login{" "}
+          <span className="mono">CODEX_AUTH_JSON</span>. The login renews itself when a run uses
+          it, and the run saves the renewed login back here.
         </p>
 
         <div className="mt-5 grid grid-cols-[28px_1fr] gap-x-2">
@@ -56,31 +57,31 @@ function CredentialsPage() {
           </span>
           <div className="min-w-0">
             {health.kind === "missing" && (
-              <p className="text-base font-medium">No chain stored for this repo or its account.</p>
+              <p className="text-base font-medium">No ChatGPT login saved for this repo or its account.</p>
             )}
             {health.kind === "cut" && chain && (
               <>
                 <p className="text-base font-medium">
-                  Rejected by OpenAI {relative(chain.refreshRejectedAt!, now)}.
+                  OpenAI rejected the login {relative(chain.refreshRejectedAt!, now)}.
                 </p>
                 {chain.refreshRejectedReason && (
                   <p className="mt-1 break-words text-sm text-ink-2">{chain.refreshRejectedReason}</p>
                 )}
                 <p className="mt-1 text-sm text-ink-2">
-                  Every run fails until it is reseeded. This follows a logout from the ChatGPT
-                  account, a password change, or a rotation that was written back too late.
+                  Every run fails until someone signs in again. This happens after a sign-out from
+                  the ChatGPT account, a password change, or a renewal that was not saved back in time.
                 </p>
               </>
             )}
             {(health.kind === "ok" || health.kind === "warn") && chain && (
               <p className="flex flex-wrap items-baseline gap-x-2 text-base leading-6">
-                <span className="font-medium text-ink">{health.rotated ? "Healthy." : "Seeded, not yet rotated."}</span>
+                <span className="font-medium text-ink">{health.rotated ? "Working." : "Saved, not renewed yet."}</span>
                 <span className="text-sm text-ink-2">
                   {health.rotated
-                    ? `rotated ${relative(chain.lastRefreshAt!, now)}`
-                    : `seeded ${relative(chain.updatedAt, now)}`}
+                    ? `renewed ${relative(chain.lastRefreshAt!, now)}`
+                    : `saved ${relative(chain.updatedAt, now)}`}
                   {" · "}
-                  {chain.scope === "account" ? "account scope" : "this repo"}
+                  {chain.scope === "account" ? "shared by all repos in the account" : "this repo only"}
                   {chain.updatedBy && (
                     <>
                       {" · "}
@@ -102,7 +103,7 @@ function CredentialsPage() {
             )}
             {health.kind === "ok" && !health.rotated && (
               <p className="mt-1 max-w-[56ch] text-sm text-ink-2">
-                The first run that needs a fresh token will rotate it. Until then the write-back path is untested.
+                It renews itself on the first run that needs it.
               </p>
             )}
 
@@ -128,7 +129,7 @@ function CredentialsPage() {
               Other secrets
             </h2>
             <p className="mt-0.5 text-sm text-ink-2">
-              Handed to every run as environment variables. Values are never shown here.
+              Every run gets these as environment variables. The values never appear here.
             </p>
             <ul className="mt-4 divide-y divide-hair border-y border-hair">
               {others.map((s) => (
@@ -159,7 +160,7 @@ function Reseed({ expanded, healthy }: { expanded: boolean; healthy: boolean }) 
   const body = (
     <>
       <p className="text-sm text-ink-2">
-        {healthy ? "To switch ChatGPT accounts, run this from a checkout of the repo:" : "From a checkout of the repo:"}
+        {healthy ? "To switch to a different ChatGPT account, run this from a checkout of the repo:" : "Run this from a checkout of the repo:"}
       </p>
       <div className="mt-1.5 flex items-start gap-2">
         <pre className="command min-w-0 flex-1" tabIndex={0}>
@@ -171,8 +172,8 @@ function Reseed({ expanded, healthy }: { expanded: boolean; healthy: boolean }) 
         </button>
       </div>
       <p className="mt-1.5 text-sm text-ink-3">
-        Opens a device-code login. Pick account scope to share the chain across the org's repos.
-        Device-code sign-in must be enabled in the ChatGPT account's security settings.
+        This opens a device sign-in page in your browser. Choose account scope to share the login with
+        all repos in the org. Device sign-in must be turned on in the ChatGPT account's security settings.
       </p>
     </>
   );
@@ -180,7 +181,7 @@ function Reseed({ expanded, healthy }: { expanded: boolean; healthy: boolean }) 
   if (expanded) return <div className="mt-4">{body}</div>;
   return (
     <details className="disclosure mt-3">
-      <summary>reseed or switch account</summary>
+      <summary>sign in again or switch account</summary>
       <div className="mt-2">{body}</div>
     </details>
   );

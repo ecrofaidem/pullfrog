@@ -72,7 +72,7 @@ export function StateGlyph({ state, className = "" }: { state: RowState; classNa
 }
 
 export const STATE_LABEL: Record<RowState, string> = {
-  dispatched: "dispatched",
+  dispatched: "starting",
   queued: "queued",
   in_progress: "in progress",
   completed: "done",

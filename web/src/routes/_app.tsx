@@ -96,8 +96,8 @@ function AppShell() {
           <Outlet />
         ) : (
           <p className="max-w-[48ch] text-base text-ink-2">
-            frogbot is not installed on any repository yet. Install the GitHub App on a repo and
-            this page fills in when the first webhook arrives.
+            The bot is not installed on any repository yet. Install the GitHub App on a repo. This
+            page fills in when the first GitHub event arrives.
           </p>
         )}
       </main>

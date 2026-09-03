@@ -226,13 +226,13 @@ function Head({ health }: { health: Health }) {
         {health.kind === "warn" && health.failedUrl && (
           <p className="mt-1 text-sm">
             <a href={health.failedUrl} className="inline-flex items-center gap-1 text-ink-2 hover:text-ink" target="_blank" rel="noreferrer">
-              Newest failed run's Actions log <ArrowOut />
+              Open the newest failed run's log <ArrowOut />
             </a>
           </p>
         )}
         {(health.kind === "cut" || health.kind === "missing") && (
           <div className="mt-2 text-sm">
-            <p className="text-ink-2">Reseed from a checkout of the repo:</p>
+            <p className="text-ink-2">To sign in again, run this from a checkout of the repo:</p>
             <pre className="command mt-1" tabIndex={0}>
               <code className="select-all">{reseedCommand()}</code>
             </pre>
@@ -384,15 +384,15 @@ function describeError(raw: string): { summary: string; raw: string | undefined 
   if (github) {
     const [, status, path] = github;
     const what = path!.includes("/dispatches")
-      ? "dispatching the workflow"
+      ? "starting the workflow"
       : path!.includes("/check-runs")
-        ? "creating the check-run"
+        ? "creating the status check"
         : `calling ${path}`;
     const why =
       status === "404"
-        ? "The workflow file may be missing from the default branch, or the App is not installed here."
+        ? "The workflow file may be missing from the default branch, or the App is not installed on this repo."
         : status === "403"
-          ? "The App lacks a permission it needs."
+          ? "The App does not have a permission it needs."
           : "";
     return { summary: `GitHub returned ${status} while ${what}. ${why}`.trim(), raw };
   }
@@ -407,9 +407,9 @@ function EmptyRail({ handle }: { handle: string }) {
         <StateGlyph state="queued" />
       </span>
       <div className="max-w-[56ch] text-base text-ink-2">
-        <p>No runs yet. The first one appears here the moment a webhook dispatches it.</p>
+        <p>No runs yet. The first one appears here as soon as GitHub sends the event.</p>
         <p className="mt-2 text-sm text-ink-3">
-          Open a pull request as an allowlisted author, or comment{" "}
+          Open a pull request as an allowed author, or comment{" "}
           <code className="text-ink-2">@{handle} review</code> on any PR.
         </p>
       </div>

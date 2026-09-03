@@ -118,7 +118,7 @@ function validate(form: Form): Partial<Record<ConfigKey, string>> {
   const t = form.timeout.trim();
   if (!t || !TIMEOUT_RE.test(t)) errors["run.timeout"] = "Use a length like 45m, 1h or 1h30m.";
   const h = form.handle.trim().replace(/^@/, "");
-  if (!/^[a-z0-9-]+$/i.test(h)) errors["comment.handle"] = "Letters, digits and hyphens only, like a GitHub App slug.";
+  if (!/^[a-z0-9-]+$/i.test(h)) errors["comment.handle"] = "Use letters, digits and hyphens only.";
   if (form.effort !== "") {
     const e = Number(form.effort);
     if (!(e >= 0 && e <= 1)) errors.effort = "Pick a rung.";
@@ -218,8 +218,8 @@ function SettingsPage() {
     >
       <h1 className="sr-only">Settings for {fullName(repo)}</h1>
 
-      <Group title="Repository" hint="The switch everything below depends on.">
-        <Row k="enabled" help="Off: webhooks are ignored and run-context refuses this repo. Every review stops.">
+      <Group title="Repository" hint="The switch that everything below depends on.">
+        <Row k="enabled" help="Off: the bot ignores this repo. Every review stops.">
           <EnabledControl value={form.enabled} onChange={(v) => set("enabled", v)} />
         </Row>
       </Group>
@@ -229,8 +229,8 @@ function SettingsPage() {
           k="review.authors"
           help={
             form.reviewAuthorsMode === "all"
-              ? "Every human-authored, non-draft PR is reviewed. Each one spends the subscription's rate budget."
-              : `Only PRs by these GitHub logins. ${allowlistCount === 0 ? "Empty list: nobody is reviewed automatically." : `${allowlistCount} allowed.`}`
+              ? "The bot reviews every non-draft PR that a person opens. Each review uses the ChatGPT usage limit."
+              : `The bot only reviews PRs from these GitHub logins. ${allowlistCount === 0 ? "The list is empty, so the bot reviews nobody automatically." : `${allowlistCount} allowed.`}`
           }
           control={(ids) => (
             <fieldset className="flex flex-col gap-2">
@@ -264,12 +264,12 @@ function SettingsPage() {
             </fieldset>
           )}
         />
-        <Row k="review.on_push" help="Review the new commits when a reviewed PR is pushed to (incremental review).">
+        <Row k="review.on_push" help="Review the new commits when someone pushes to a PR the bot already reviewed.">
           <Toggle checked={form.reviewOnSynchronize} onChange={(v) => set("reviewOnSynchronize", v)} label="re-review on push" />
         </Row>
         <Row
           k="comment.handle"
-          help={`Anyone with write access can comment @${form.handle || "…"} review on any PR.`}
+          help={`Anyone with write access can comment @${form.handle || "…"} review on any PR to get a review.`}
           error={errors["comment.handle"]}
           control={(ids) => (
             <span className="flex items-center gap-1">
@@ -293,17 +293,17 @@ function SettingsPage() {
         />
         <Row
           k="comment.signature"
-          help="Closes every review body on its own line. Leave empty for none."
+          help="The last line of every review. Leave empty for none."
           control={(ids) => (
             <input id={ids.control} aria-describedby={ids.help} className="field w-32" type="text" value={form.signature} onChange={(e) => set("signature", e.target.value)} />
           )}
         />
       </Group>
 
-      <Group title="Model" hint="What the agent runs on. The Codex chain in Credentials is what pays for it.">
+      <Group title="Model" hint="The AI model that writes the reviews. The ChatGPT login in Credentials pays for it.">
         <Row
           k="model"
-          help="A curated slug (gpt-sol) or a raw models.dev id (openai/gpt-5.6-sol). A typo fails at run time, in GitHub."
+          help="A short name (gpt-sol) or a full models.dev id (openai/gpt-5.6-sol). A typo only fails when a run starts, in GitHub."
           control={(ids) => (
             <>
               <input id={ids.control} aria-describedby={ids.help} className="field mono w-full sm:w-72" type="text" list="models" value={form.model} onChange={(e) => set("model", e.target.value)} spellCheck={false} autoCapitalize="off" autoCorrect="off" autoComplete="off" />
@@ -317,7 +317,7 @@ function SettingsPage() {
         />
         <Row
           k="effort"
-          help="Reasoning effort as a rung on the running model's own ladder, rounding down. Higher rungs cost more of the rate budget per review."
+          help="How hard the model thinks. Higher settings give more careful reviews and use more of the usage limit."
           error={errors.effort}
           control={(ids) => (
             <select id={ids.control} aria-describedby={ids.help} data-key="effort" className="field w-44" value={form.effort} onChange={(e) => set("effort", e.target.value)}>
@@ -329,15 +329,15 @@ function SettingsPage() {
             </select>
           )}
         />
-        <Row k="agent.codex" help="Run the native Codex CLI harness instead of OpenCode. Experimental upstream; no subagents.">
+        <Row k="agent.codex" help="Use the Codex CLI instead of OpenCode to run the model. Experimental, and it cannot use helper agents.">
           <Toggle checked={form.codexAgent} onChange={(v) => set("codexAgent", v)} label="native codex harness" />
         </Row>
       </Group>
 
-      <Group title="Run" hint="Limits and permissions handed to the action.">
+      <Group title="Run" hint="Limits and permissions for each run.">
         <Row
           k="run.timeout"
-          help="Maximum run length: 45m, 1h, 1h30m. Runs still open 15 minutes past it are marked failed."
+          help="The longest a run can take: 45m, 1h, 1h30m. If a run is still open 15 minutes after this, the bot marks it failed."
           error={errors["run.timeout"]}
           control={(ids) => (
             <input id={ids.control} aria-describedby={ids.help} aria-invalid={errors["run.timeout"] ? "true" : undefined} data-key="run.timeout" className="field mono w-28" type="text" value={form.timeout} onChange={(e) => set("timeout", e.target.value)} spellCheck={false} autoCapitalize="off" autoCorrect="off" autoComplete="off" />
@@ -345,30 +345,30 @@ function SettingsPage() {
         />
         <Row
           k="run.push"
-          help="disabled: read-only checkout. restricted: feature branches only. enabled: may push the default branch."
+          help="disabled: the bot cannot push. restricted: it can push to feature branches only. enabled: it can also push to the default branch."
           control={(ids) => <TierSelect id={ids.control} describedBy={ids.help} value={form.push} onChange={(v) => set("push", v)} />}
         />
         <Row
           k="run.shell"
-          help="disabled: no shell tool. restricted: secrets filtered out of the shell's environment. enabled: the full environment."
+          help="disabled: the bot cannot run shell commands. restricted: it can, but it cannot see secrets. enabled: it can, and it sees all secrets."
           control={(ids) => <TierSelect id={ids.control} describedBy={ids.help} value={form.shell} onChange={(v) => set("shell", v)} />}
         />
-        <Row k="run.checks" help="Post the pullfrog check-run on the PR while a run is in flight.">
+        <Row k="run.checks" help="Show a pullfrog status check on the PR while a run is in progress.">
           <Toggle checked={form.statusChecks} onChange={(v) => set("statusChecks", v)} label="status check" />
         </Row>
-        <Row k="run.progress_comments" help="Live task-list updates in the progress comment.">
+        <Row k="run.progress_comments" help="Update the progress comment on the PR while the run works.">
           <Toggle checked={form.progressComments} onChange={(v) => set("progressComments", v)} label="progress comments" />
         </Row>
         <Row
           k="run.setup"
-          help="Runs once after checkout, before the agent starts. Dependency installs go here."
+          help="Commands that run once after checkout, before the model starts. Put dependency installs here."
           control={(ids) => (
             <textarea id={ids.control} aria-describedby={ids.help} className="field mono min-h-[6rem] w-full" rows={5} value={form.setupScript} onChange={(e) => set("setupScript", e.target.value)} placeholder="cd dashboard && pnpm install --frozen-lockfile" spellCheck={false} autoCapitalize="off" autoCorrect="off" />
           )}
         />
         <Row
           k="run.post_checkout"
-          help="Runs after every branch checkout the agent performs."
+          help="Commands that run after each branch the bot checks out."
           control={(ids) => (
             <textarea id={ids.control} aria-describedby={ids.help} className="field mono min-h-[3.5rem] w-full" rows={2} value={form.postCheckoutScript} onChange={(e) => set("postCheckoutScript", e.target.value)} spellCheck={false} autoCapitalize="off" autoCorrect="off" />
           )}
@@ -377,8 +377,8 @@ function SettingsPage() {
 
       <p className="mt-8 text-sm text-ink-3">
         {repo.updatedBy ? `Last changed by ${repo.updatedBy} ${relative(repo.updatedAt, now)}.` : "Unchanged since setup."}{" "}
-        These keys are the config contract: <code className="text-ink-2">GET</code> or{" "}
-        <code className="text-ink-2">PATCH {siteUrl}/api/cli/config?owner={repo.owner}&repo={repo.name}</code> with your GitHub token accepts the same names.
+        The same keys work from the command line: <code className="text-ink-2">GET</code> or{" "}
+        <code className="text-ink-2">PATCH {siteUrl}/api/cli/config?owner={repo.owner}&repo={repo.name}</code> with your GitHub token.
       </p>
 
       {showBar && (
@@ -412,7 +412,7 @@ function SettingsPage() {
               </button>
               {conflicted ? (
                 <span className="text-sm text-ink">
-                  {repo.updatedBy ?? "Someone"} changed these settings {relative(repo.updatedAt, now)}, while you were editing.{" "}
+                  {repo.updatedBy ?? "Someone"} changed these settings {relative(repo.updatedAt, now)} while you were editing.{" "}
                   <button type="button" className="underline" onClick={() => { setForm(toForm(repo)); setSeed(repo); }}>
                     Take theirs
                   </button>{" "}
@@ -445,7 +445,7 @@ function EnabledControl({ value, onChange }: { value: boolean; onChange: (v: boo
   if (value) {
     return confirming ? (
       <span className="inline-flex flex-wrap items-center gap-2 pt-1 text-sm">
-        <span className="text-ink">Turn frogbot off for this repo?</span>
+        <span className="text-ink">Turn the bot off for this repo?</span>
         <button type="button" className="btn btn-danger" onClick={() => { onChange(false); setConfirming(false); }}>
           Turn off
         </button>

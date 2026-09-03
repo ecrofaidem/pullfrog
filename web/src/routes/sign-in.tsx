@@ -28,7 +28,7 @@ function SignIn() {
     <main className="mx-auto flex min-h-dvh w-full max-w-[72ch] flex-col justify-center px-5 py-16">
       <h1 className="text-xl font-semibold tracking-[-0.01em]">frogbot</h1>
       <p className="mt-3 max-w-[48ch] text-base text-ink-2">
-        Runs, review policy and the Codex credential for the ecrofaidem repos frogbot is
+        Runs, review policy and the ChatGPT login for the ecrofaidem repos the bot is
         installed on.
       </p>
       <div className="mt-8 flex flex-wrap items-center gap-3">
@@ -40,7 +40,7 @@ function SignIn() {
       </div>
       {error && (
         <p role="alert" className="mt-4 text-sm text-ink">
-          {error} If you are in the org, ask an owner to grant the OAuth app access.
+          {error} If you are a member, ask an org owner to allow the sign-in app.
         </p>
       )}
     </main>
