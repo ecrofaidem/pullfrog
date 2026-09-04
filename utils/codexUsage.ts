@@ -6,6 +6,7 @@
 // early and without blocking, so every footer built later can render it
 // synchronously. API-key runs have no chain and render nothing.
 
+import { log } from "./cli.ts";
 import { parseCodexAuthBody } from "./codexOAuth.ts";
 
 export interface CodexUsage {
@@ -23,7 +24,10 @@ let current: CodexUsage | null = null;
 /** start the read; safe to call more than once. */
 export function primeCodexUsage(): Promise<CodexUsage | null> {
   primed ??= fetchCodexUsage()
-    .catch(() => null)
+    .catch((err) => {
+      log.info(`» codex usage read failed: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    })
     .then((u) => {
       current = u;
       return u;
@@ -60,7 +64,10 @@ function accountIdFromToken(token: string): string | undefined {
 
 async function fetchCodexUsage(): Promise<CodexUsage | null> {
   const raw = process.env.CODEX_AUTH_JSON;
-  if (!raw) return null;
+  if (!raw) {
+    log.info("» codex usage: no CODEX_AUTH_JSON in env, skipping");
+    return null;
+  }
   const body = parseCodexAuthBody(raw);
   if (!body || body.refresh_rejected_at) return null;
   const accountId =
@@ -76,7 +83,10 @@ async function fetchCodexUsage(): Promise<CodexUsage | null> {
     },
     signal: AbortSignal.timeout(8_000),
   });
-  if (!response.ok) return null;
+  if (!response.ok && response.status !== 429) {
+    log.info(`» codex usage: ${response.status} from ${USAGE_URL}`);
+    return null;
+  }
   const data = (await response.json()) as {
     plan_type?: string;
     rate_limit?: { primary_window?: Window | null; secondary_window?: Window | null };
@@ -86,7 +96,10 @@ async function fetchCodexUsage(): Promise<CodexUsage | null> {
     (w): w is Window => !!w && typeof w.used_percent === "number" && typeof w.limit_window_seconds === "number"
   );
   const longest = windows.sort((a, b) => b.limit_window_seconds! - a.limit_window_seconds!)[0];
-  if (!longest) return null;
+  if (!longest) {
+    log.info("» codex usage: response carried no rate-limit window");
+    return null;
+  }
   return {
     plan: data.plan_type,
     usedPercent: Math.max(0, Math.min(100, Math.round(longest.used_percent!))),

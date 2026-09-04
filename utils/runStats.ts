@@ -2,17 +2,18 @@
 // numbers a reader glances at, and a collapsed block with the rest.
 //
 // Counters live at module level so the harness hooks can record events with
-// one call and every footer built later can read them synchronously. The
-// tokens come from the usage the harness already accumulates on toolState.
+// one call and every footer built later can read them synchronously.
 
 import type { DiffCoverageBreakdown } from "./diffCoverage.ts";
 import { getDiffCoverageBreakdown } from "./diffCoverage.ts";
-import { aggregateUsage } from "./patchWorkflowRunFields.ts";
 import type { ToolState } from "../toolState.ts";
 
 const startedAt = Date.now();
 const toolCalls = new Map<string, number>();
 const subagents: { label: string; seconds: number; status: string }[] = [];
+// footers are built mid-run, before the harness returns its final usage, so
+// the harnesses report token deltas here as the provider streams them.
+const live = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0, turns: 0 };
 
 export function recordToolUse(toolName: string): void {
   toolCalls.set(toolName, (toolCalls.get(toolName) ?? 0) + 1);
@@ -20,6 +21,21 @@ export function recordToolUse(toolName: string): void {
 
 export function recordSubagentFinish(label: string, seconds: number, status: string): void {
   subagents.push({ label, seconds, status });
+}
+
+export function recordTokens(delta: {
+  input?: number | undefined;
+  output?: number | undefined;
+  cacheRead?: number | undefined;
+  cacheWrite?: number | undefined;
+  costUsd?: number | undefined;
+}): void {
+  live.input += delta.input ?? 0;
+  live.output += delta.output ?? 0;
+  live.cacheRead += delta.cacheRead ?? 0;
+  live.cacheWrite += delta.cacheWrite ?? 0;
+  live.costUsd += delta.costUsd ?? 0;
+  live.turns += 1;
 }
 
 export interface ReviewStats {
@@ -62,10 +78,12 @@ function coverageOf(toolState: ToolState): DiffCoverageBreakdown | null {
 
 export function renderRunStats(input: RunStatsInput): RenderedRunStats | null {
   const { toolState, review } = input;
-  const usage = aggregateUsage(toolState.usageEntries);
-  const attempts = toolState.usageEntries.length;
+  const usage = { inputTokens: live.input, outputTokens: live.output, cacheReadTokens: live.cacheRead, costUsd: live.costUsd };
+  const attempts = toolState.usageEntries.length + 1;
   const elapsed = Date.now() - startedAt;
-  const coverage = coverageOf(toolState);
+  // the coverage tracker recognises read tools, which the Codex harness never
+  // uses (it reads through the shell), so there is nothing honest to show there
+  const coverage = toolState.agent === "codex" ? null : coverageOf(toolState);
   const totalTools = [...toolCalls.values()].reduce((a, b) => a + b, 0);
 
   const line: string[] = [fmtDuration(elapsed)];

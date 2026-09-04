@@ -102,7 +102,7 @@ import {
 import { buildReflectionPrompt, runPostRunRetryLoop } from "./postRun.ts";
 import { REVIEWER_AGENT_NAME } from "./reviewer.ts";
 import { formatWithLabel, ORCHESTRATOR_LABEL, SessionLabeler } from "./sessionLabeler.ts";
-import { recordSubagentFinish } from "../utils/runStats.ts";
+import { recordSubagentFinish, recordTokens } from "../utils/runStats.ts";
 import {
   type AgentResult,
   type AgentRunContext,
@@ -564,6 +564,13 @@ async function onPartUpdated(ctx: RunnerContext, part: Part): Promise<void> {
     // contribution (often the bulk of a Review-mode turn).
     if (!ctx.currentTurn) return;
     const t = part.tokens;
+    recordTokens({
+      input: t?.input || 0,
+      output: t?.output || 0,
+      cacheRead: t?.cache?.read || 0,
+      cacheWrite: t?.cache?.write || 0,
+      costUsd: typeof part.cost === "number" && Number.isFinite(part.cost) ? part.cost : 0,
+    }); // FORK: footer run stats
     if (t) {
       ctx.currentTurn.tokens.input += t.input || 0;
       ctx.currentTurn.tokens.output += t.output || 0;

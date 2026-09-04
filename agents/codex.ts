@@ -38,6 +38,7 @@ import * as core from "@actions/core";
 import type { ThreadEvent, ThreadItem } from "@openai/codex-sdk";
 import { pullfrogMcpName } from "../external.ts";
 import { getModelProvider, stripProviderPrefix } from "../models.ts";
+import { recordTokens } from "../utils/runStats.ts";
 import { AGENT_ACTIVITY_TIMEOUT_MS, getIdleMs, markActivity } from "../utils/activity.ts";
 import { log } from "../utils/cli.ts";
 import { installCodexHome } from "../utils/codexHome.ts";
@@ -678,6 +679,12 @@ async function runCodex(params: RunParams): Promise<CodexRunResult> {
         threadId = event.thread_id;
         return;
       case "turn.completed":
+        recordTokens({
+          input: event.usage.input_tokens ?? 0,
+          output: event.usage.output_tokens ?? 0,
+          cacheRead: event.usage.cached_input_tokens ?? 0,
+          cacheWrite: event.usage.cache_write_input_tokens ?? 0,
+        }); // FORK: footer run stats
         tokens.input += event.usage.input_tokens ?? 0;
         tokens.cacheRead += event.usage.cached_input_tokens ?? 0;
         // pricing only. deliberately NOT surfaced as `cacheWriteTokens`, which
