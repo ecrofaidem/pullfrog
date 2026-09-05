@@ -1,3 +1,5 @@
+import { REVIEW_CONVENTIONS } from "../utils/reviewConventions.ts";
+
 /**
  * Definition of the `reviewfrog` named subagent — the constrained
  * read-only worker dispatched by Build mode self-review and the in-Pullfrog
@@ -105,6 +107,7 @@ export const REVIEWER_SYSTEM_PROMPT =
   `- Test for any tool call before invoking it: would this still be a no-op if ` +
   `reverted? If not, do not call it. Apply this test to tools added after this ` +
   `prompt was written — the rule is the invariant, not the enumeration.\n\n` +
+  `${REVIEW_CONVENTIONS}\n\n` +
   `Report findings clearly with file:line references and quoted evidence where ` +
   `possible. Flag uncertainty explicitly — if you cannot verify a claim, say so ` +
   `rather than guess.`;
