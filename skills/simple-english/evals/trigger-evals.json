@@ -1,0 +1,163 @@
+[
+  {
+    "id": "trigger-01",
+    "split": "train",
+    "query": "Audit this aircraft maintenance instruction against ASD-STE100 Issue 9 and cite the applicable rules.",
+    "should_trigger": true,
+    "reason": "Explicit strict STE audit."
+  },
+  {
+    "id": "trigger-02",
+    "split": "train",
+    "query": "Rewrite this on-call runbook so engineers who speak English as a second language can follow it at 2 a.m. Keep every command exact.",
+    "should_trigger": true,
+    "reason": "Technical procedure for non-native readers with fixed literals."
+  },
+  {
+    "id": "trigger-03",
+    "split": "train",
+    "query": "Can you make these database error messages translation-ready and remove ambiguous wording? Do not guess the cause.",
+    "should_trigger": true,
+    "reason": "Technical interface messages and explicit anti-invention constraint."
+  },
+  {
+    "id": "trigger-04",
+    "split": "train",
+    "query": "Turn these API release notes into controlled technical English. Preserve endpoint names and status codes.",
+    "should_trigger": true,
+    "reason": "Controlled technical English for API documentation."
+  },
+  {
+    "id": "trigger-05",
+    "split": "train",
+    "query": "Under STE, should this if-clause go before the command? Please review the task order rather than moving it automatically.",
+    "should_trigger": true,
+    "reason": "Explicit STE rule interpretation."
+  },
+  {
+    "id": "trigger-06",
+    "split": "validation",
+    "query": "Check this installation procedure for 20-word steps, one instruction per sentence, and consistent component names.",
+    "should_trigger": true,
+    "reason": "Implicit STE structural audit of a procedure."
+  },
+  {
+    "id": "trigger-07",
+    "split": "validation",
+    "query": "Rewrite this incident report in clear technical English, but do not add a root cause, rollback, or follow-up action.",
+    "should_trigger": true,
+    "reason": "Technical incident artifact with semantic-fidelity constraints."
+  },
+  {
+    "id": "trigger-08",
+    "split": "validation",
+    "query": "I need a strict Simplified Technical English review of this medical-device service procedure. We have our approved terminology list.",
+    "should_trigger": true,
+    "reason": "Explicit strict STE with project glossary."
+  },
+  {
+    "id": "trigger-09",
+    "split": "validation",
+    "query": "Clean up this CLI troubleshooting guide for international users. Keep flags, paths, and quoted output unchanged.",
+    "should_trigger": true,
+    "reason": "Technical troubleshooting content for international readers."
+  },
+  {
+    "id": "trigger-10",
+    "split": "validation",
+    "query": "Review this agent operating procedure for controlled terminology and mandatory versus optional instructions.",
+    "should_trigger": true,
+    "reason": "Technical operating instructions with modality review."
+  },
+  {
+    "id": "trigger-11",
+    "split": "train",
+    "query": "Make this homepage copy simpler and more persuasive without losing our playful brand voice.",
+    "should_trigger": false,
+    "reason": "Marketing copy is outside the default scope."
+  },
+  {
+    "id": "trigger-12",
+    "split": "train",
+    "query": "Explain quantum entanglement to a ten-year-old in simple English.",
+    "should_trigger": false,
+    "reason": "General educational simplification, not technical documentation."
+  },
+  {
+    "id": "trigger-13",
+    "split": "train",
+    "query": "Write a short story with simple sentences and no difficult words.",
+    "should_trigger": false,
+    "reason": "Creative writing."
+  },
+  {
+    "id": "trigger-14",
+    "split": "train",
+    "query": "Rewrite this employment contract in plain language for employees.",
+    "should_trigger": false,
+    "reason": "Legal plain-language work is not automatically an STE task."
+  },
+  {
+    "id": "trigger-15",
+    "split": "train",
+    "query": "Can you make this email to my colleague easier for a non-native speaker to understand?",
+    "should_trigger": false,
+    "reason": "General correspondence is outside STE's default scope."
+  },
+  {
+    "id": "trigger-16",
+    "split": "validation",
+    "query": "Rewrite this article in the style used by Simple English Wikipedia.",
+    "should_trigger": false,
+    "reason": "Simple English Wikipedia is a different writing task."
+  },
+  {
+    "id": "trigger-17",
+    "split": "validation",
+    "query": "Refactor this function so the code is simpler and easier to read.",
+    "should_trigger": false,
+    "reason": "Code simplification, not technical prose."
+  },
+  {
+    "id": "trigger-18",
+    "split": "validation",
+    "query": "Fix the grammar in this personal blog post and keep my voice.",
+    "should_trigger": false,
+    "reason": "General prose editing."
+  },
+  {
+    "id": "trigger-19",
+    "split": "validation",
+    "query": "Draft a warm customer apology for a late delivery. Keep it human and empathetic.",
+    "should_trigger": false,
+    "reason": "Nontechnical customer communication with a voice requirement."
+  },
+  {
+    "id": "trigger-20",
+    "split": "validation",
+    "query": "What is ASD-STE100, and where did the standard originate?",
+    "should_trigger": false,
+    "reason": "An informational question about the standard, not a writing, rewriting, or audit task."
+  },
+  {
+    "id": "trigger-21",
+    "split": "validation",
+    "query": "Audit this HTML system walkthrough in Simplified Technical English. Ignore CSS, JavaScript, and SVG geometry, but review visible and accessibility text.",
+    "should_trigger": true,
+    "reason": "Explicit STE audit of structured technical documentation."
+  },
+  {
+    "id": "trigger-22",
+    "split": "validation",
+    "query": "Minify this stylesheet and optimize the SVG path data so the page renders faster.",
+    "should_trigger": false,
+    "reason": "Implementation optimization, not technical-language writing or review."
+  },
+  {
+    "id": "trigger-23",
+    "split": "validation",
+    "query": "Review the visible labels and accessibility description in this standalone SVG against STE, but do not lint the path data.",
+    "should_trigger": true,
+    "reason": "Explicit STE review of human-facing SVG language."
+  }
+]

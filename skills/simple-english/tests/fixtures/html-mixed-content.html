@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Service review</title>
+  <style>:root { --accent: red; } .panel { color: red; font-family: sans-serif; }</style>
+  <script>const message = "This isn't prose; it must not be checked.";</script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <div class="legend"><span>Validated: backed by a test run</span><span>Open: not yet validated</span></div>
+  <input type="submit" value="Run audit">
+  <h1>System overview</h1>
+  <p id="main-copy">Restart the worker after the health check is green.</p>
+  <ol><li><span>CLI</span><strong>capture</strong> reads the account.</li></ol>
+  <p>Open <a href="/status">the status page</a> now.</p>
+  <p>Run <code>deploy; this isn't prose</code> now.</p>
+  <p>English before <span lang="de">Dieser Text ist nicht Englisch.</span> English after.</p>
+  <p hidden>This hidden sentence should not be checked.</p>
+  <p style="display: none">This CSS-hidden sentence should not be checked.</p>
+  <div data-ste-ignore><p>This ignored sentence should not be checked.</p></div>
+  <pre>this isn't prose; keep it exact</pre>
+  <button aria-label="Save changes">Save changes</button>
+  <img alt="Diagram of the worker state" src="worker.png">
+  <div aria-description="This accessibility description contains a deliberately long sentence that has more than twenty-five words and therefore must reach the full descriptive prose profile for review."></div>
+  <table>
+    <tr><th>Status</th><td>Ready</td></tr>
+    <tr><th>Message</th><td>This complete sentence is visible to the reader.</td></tr>
+    <tr><th>German</th><td lang="de">Der Dienst ist bereit.</td></tr>
+  </table>
+  <svg viewBox="0 0 100 100" role="img" aria-labelledby="svg-title svg-desc">
+    <title id="svg-title">Worker state</title>
+    <desc id="svg-desc">This accessibility description has been written in passive voice and contains enough additional words to exceed the descriptive sentence limit during a strict mechanical review of this extracted accessibility content.</desc>
+    <style>.node { fill: red; stroke: black; }</style>
+    <defs><path id="shape" d="M0 0 L10 10"></path></defs>
+    <path class="node" d="M0 0 L90 90"></path>
+    <text>derive; seeded splits;</text>
+    <text>only when fully configured; live ingestion not yet validated</text>
+    <text data-ste-form="prose">Restart the worker; then record the result.</text>
+  </svg>
+</body>
+</html>
