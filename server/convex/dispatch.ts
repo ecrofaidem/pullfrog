@@ -9,6 +9,7 @@ import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { actionWorkflow, resolveActionVersion } from "./actionVersion";
 import { buildEnvelope, buildReviewEvent, type ReviewTrigger } from "./lib/envelope";
+import { isBot, shouldIgnorePullRequestEvent } from "./reviewPolicy";
 import {
   addReaction,
   collaboratorPermission,
@@ -92,11 +93,6 @@ async function handleInstallationRepositories(ctx: ActionCtx, payload: Json) {
 
 // ── review policy ────────────────────────────────────────────────────────────
 
-function isBot(user: Json | undefined): boolean {
-  if (!user) return true;
-  return user.type === "Bot" || String(user.login ?? "").endsWith("[bot]");
-}
-
 function authorAllowed(repo: Doc<"repos">, login: string): boolean {
   if (repo.reviewAuthorsMode === "all") return true;
   return repo.reviewAuthors.includes(login.toLowerCase());
@@ -134,7 +130,7 @@ async function handlePullRequest(ctx: ActionCtx, payload: Json) {
   if (!repo) return;
   const pr = payload.pull_request as Json;
   if (pr.draft) return;
-  if (isBot(pr.user)) return;
+  if (shouldIgnorePullRequestEvent(payload)) return;
   if (!authorAllowed(repo, String(pr.user.login))) return;
   if (trigger === "pull_request_synchronize" && !repo.reviewOnSynchronize) return;
 
