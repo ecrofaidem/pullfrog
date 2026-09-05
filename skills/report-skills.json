@@ -1,0 +1,54 @@
+{
+  "source": "~/.agents/skills",
+  "importedOn": "2026-09-05",
+  "excludedArtifacts": [
+    ".DS_Store",
+    "__pycache__",
+    "*.pyc"
+  ],
+  "skills": {
+    "write-good-docs": {
+      "version": "2.0.0",
+      "addedFiles": [
+        "ATTRIBUTION.md"
+      ],
+      "files": {
+        "ATTRIBUTION.md": "7369a4b01d6b4a2bf4403a52fc02ea35a5266ab27ecb17cd6de88ee6872c5489",
+        "SKILL.md": "b870f8a1da917cf148d6e9944116508212f9eedf506b91f88c1208a8913e2557",
+        "evals/quality-cases.md": "d1fe71aba0b94b8611c2dbc37c8018a232f38de17694ea41c21b7fbb80ca54da",
+        "evals/trigger-cases.md": "80dc3a5875ffb5d3a7d3524c915aa3716bdb223869c04993e4f2061bd9835dc6",
+        "references/clear-prose.md": "ce227a50cb0c95462525dd7d4b1410853b223b3b09f2eb725204bf2da7481879",
+        "references/document-shapes.md": "005c408803b80215421ff8e7cc5c44e3a7721dacae5d0ae82a6c6ee1703320ae",
+        "references/examples.md": "0c1d522938f98b311e3606d0b4531fe895329c65bdaa5593946c0d3fbe70badd",
+        "references/final-review.md": "dc4faa01812c4d13317e6808e02a8c15ea3fcfc4e2b3e669dac36f94200f0ebc",
+        "references/procedures-and-troubleshooting.md": "48a9de319e75c197cb835926985eb77787547bd7e2dc6f177dc9b58bda2defe8",
+        "references/source-map.md": "d0f9da370f583a7cc8ef980e1788fc88e70821c88de17a1d5eec9493ee6ee161",
+        "references/structure-and-accessibility.md": "2716637336f5f6820707115fd134b6dbf102f2fd97ca934f8ea2fd5094057ff5",
+        "references/style-reference.md": "41075c0c082c2a001f8226e7ea250fff7af7e7dbc657c79bebae13a33eba2385",
+        "references/technical-fidelity.md": "009a6eda7d041195c5de5505927596934ff54bd7d2b03bdf54edc172d45632d2"
+      }
+    },
+    "simple-english": {
+      "version": "3.0.0",
+      "addedFiles": [],
+      "files": {
+        "SKILL.md": "6e4f95c14d8f42a05f416dc04639e071cd352a7a69a2219e2d5a611acd39804b",
+        "evals/README.md": "c29f77e00842d580c2b898173190f3a429cd726f52cb7c38974b4fa529771bb5",
+        "evals/evals.json": "e871bd684390b43e77c16e46b2e1ca4af1b14fb7c796dc3ca24f017393ce7eb4",
+        "evals/trigger-evals.json": "e88510a4afbeef18583aff1eb5cd2f30043c62103738334adcb49bf9bd5ed7cf",
+        "references/audit-checklist.md": "f097aab067dc5fdf2563f555e46db9a240a72547e27d33821ec4b0f83c62726e",
+        "references/compliance-and-tools.md": "426e2afbe139893dfc8803a24813207d25ccd6b80507e5c5d2c8e15b80792357",
+        "references/meaning-and-modality.md": "c338311f480fe822679f4cc1f080c3e8b189eed7bd45d698119ba146aabbd3cd",
+        "references/source-format-handling.md": "280ac88869f01a12c52025c7d5159ce9b7a54ec642af36e40130c80e972b6e11",
+        "references/ste-application-guide.md": "cdb37af1e9dfcde63cd0a7e9281d2d5f63be2c64e4bce35a482897e1618fe7db",
+        "references/use-cases.md": "b6b45caf4f4dca56003aa7befe9979893836484c6c6b2e662b5d573f96de147d",
+        "scripts/ste_lint.py": "9c2c996fe9172d8e3080fd4b8bb21df865f442684e788e9e2bb54e22d202878a",
+        "scripts/validate_skill.py": "4b33217c426d1b40b3c8093a7ce10b83eaa9d2a935a47989ab85d81da7776498",
+        "tests/fixtures/html-mixed-content.html": "a5453460af09d9b03a33d4e4d8a24c4d6c855af75060c3528ff2771f2965ac8b",
+        "tests/test_html_extraction.py": "74a705f48a71c2b40f7092117f4b3018c13925eed16f4d6ceaf7d5283a3e66e1",
+        "tests/test_ste_lint.py": "a503633dd86d61dfcb675ee2aa0cb161d2462df266fb22af6c9d40b81d098deb",
+        "tests/test_validate_skill.py": "6738df8d08079a9626a296d622c529bbb9c7275c166d89e81c78e6df4e5009e7"
+      }
+    }
+  }
+}

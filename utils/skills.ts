@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,12 +9,12 @@ import { getDevDependencyVersion } from "./version.ts";
 const skillsVersion = getDevDependencyVersion("skills");
 
 /**
- * skills bundled with the action runtime. the SKILL.md files live in
- * `action/skills/<name>/SKILL.md` and are read at runtime — no esbuild loader,
+ * skills bundled with the action runtime. the complete skill directories live in
+ * `skills/<name>/` and are read at runtime — no esbuild loader,
  * no codegen. this matters because the preview / oss path runs `cli.ts` from
  * source (see `runCli.ts#runLocalCli`) where esbuild loaders don't apply.
  */
-const BUNDLED_SKILL_NAMES = ["git-archaeology"] as const;
+const BUNDLED_SKILL_NAMES = ["git-archaeology", "write-good-docs", "simple-english"] as const;
 
 /**
  * resolve the on-disk path of a bundled SKILL.md by checking the two locations
@@ -53,19 +53,18 @@ function resolveSkillPath(name: string): string {
 const SKILL_TARGET_DIRS = [".opencode/skills", ".claude/skills", ".agents/skills"] as const;
 
 /**
- * write all bundled skills into the fake HOME so OpenCode / Claude Code discover
+ * copy all bundled skills into the fake HOME so the agent harnesses discover
  * them via their auto-scan directories.
  *
  * called once per agent run from each agent's `run()`. cheap (small file
- * writes), no network, idempotent.
+ * copies), no network, idempotent. References and scripts retain their paths.
  */
 export function installBundledSkills(params: { home: string }): void {
   for (const name of BUNDLED_SKILL_NAMES) {
-    const content = readFileSync(resolveSkillPath(name), "utf8");
+    const sourceDir = dirname(resolveSkillPath(name));
     for (const targetDir of SKILL_TARGET_DIRS) {
       const skillDir = join(params.home, targetDir, name);
-      mkdirSync(skillDir, { recursive: true });
-      writeFileSync(join(skillDir, "SKILL.md"), content);
+      cpSync(sourceDir, skillDir, { recursive: true });
     }
   }
   log.success(`installed bundled skills: ${BUNDLED_SKILL_NAMES.join(", ")}`);

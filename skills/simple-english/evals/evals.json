@@ -1,0 +1,171 @@
+{
+  "skill_name": "simple-english",
+  "version": "3.0.0",
+  "evals": [
+    {
+      "id": "quality-01-no-invention",
+      "prompt": "Rewrite this incident update in STE-based technical English. Source facts: From 14:02 to 14:31 UTC, 12% of requests failed. The cause is unknown. Text: 'We have identified an issue that may have impacted users and our team has been working to restore service.'",
+      "expected_output": "A concise update that contains the supplied time, failure rate, and unknown cause. It must not add a deploy, cache issue, rollback, recovery time, apology, owner, or action item.",
+      "assertions": [
+        "Preserves 14:02, 14:31, and 12%.",
+        "States that the cause is unknown or omits any cause claim.",
+        "Adds no unsupported facts or commitments."
+      ]
+    },
+    {
+      "id": "quality-02-modal-ambiguity",
+      "prompt": "Strict STE rewrite: 'You should back up the database before the migration.' No other policy context is available.",
+      "expected_output": "The response identifies that the requirement level is ambiguous and does not silently convert the recommendation into a mandatory instruction or delete it. It can provide labeled mandatory and optional alternatives.",
+      "assertions": [
+        "Does not choose must versus optional without evidence.",
+        "Explains the required author decision concisely."
+      ]
+    },
+    {
+      "id": "quality-03-permission-versus-capability",
+      "prompt": "Audit this sentence: 'Administrators may reset another user's token.' Determine whether 'may' can be replaced with 'can'.",
+      "expected_output": "The response says that 'may' can express permission while 'can' can express capability or possibility. It requests or uses policy context before replacing the modal.",
+      "assertions": [
+        "Preserves the permission-capability distinction.",
+        "Does not make a blind substitution."
+      ]
+    },
+    {
+      "id": "quality-04-mixed-document",
+      "prompt": "Rewrite this mixed section in strict structural STE: 'The cache stores results for five minutes. To clear it, open Settings and click Clear cache. Note: Restart the app after this.'",
+      "expected_output": "The description remains descriptive, the actions become separate imperative steps, and the hidden instruction is removed from the note and made a step. The response does not classify the whole section as one text type.",
+      "assertions": [
+        "Uses block-level classification.",
+        "The note contains information only or is removed.",
+        "Separates independent actions."
+      ]
+    },
+    {
+      "id": "quality-05-condition-logic",
+      "prompt": "Audit: 'Record the response code when the request fails.' Do not move the condition unless Rule 5.4 requires it.",
+      "expected_output": "The response treats placement as a logic decision and does not call the trailing condition an automatic violation. It explains whether the reader needs the condition before the action.",
+      "assertions": [
+        "Does not apply a universal condition-first rule.",
+        "References reader task order."
+      ]
+    },
+    {
+      "id": "quality-06-fixed-literals",
+      "prompt": "Rewrite this CLI error message: 'Whoops, couldn't call /v2/users because E104 happened; try --force.' Preserve /v2/users, E104, and --force exactly. Do not add a cause.",
+      "expected_output": "A direct error message that preserves all three literals exactly, expands the contraction, removes the semicolon, and adds no cause. It can retain the retry instruction only because it is present in the source.",
+      "assertions": [
+        "Contains /v2/users, E104, and --force exactly.",
+        "Adds no unsupported cause.",
+        "Treats the message prose as editable."
+      ]
+    },
+    {
+      "id": "quality-07-strict-resource-limit",
+      "prompt": "Certify this paragraph as ASD-STE100 compliant. You do not have the official dictionary or our terminology database: 'The controller initializes the telemetry pipeline.'",
+      "expected_output": "The response refuses the certification claim without refusing the review. It can give a structural review, states that vocabulary was not verified, and does not claim ASD approval or guaranteed compliance.",
+      "assertions": [
+        "Provides useful structural analysis.",
+        "States that dictionary and glossary checks are missing.",
+        "Does not use certification language."
+      ]
+    },
+    {
+      "id": "quality-08-safety-fidelity",
+      "prompt": "Rewrite this warning for clarity without changing the risk level: 'CAUTION: Disconnect the cable before opening the cover. The energized connector can damage the test unit.'",
+      "expected_output": "A CAUTION that keeps the command before the supported damage result, preserves the cable, cover, connector, and test unit, and does not raise the warning to injury or death.",
+      "assertions": [
+        "Keeps CAUTION.",
+        "Does not invent injury or death.",
+        "Keeps the supported consequence."
+      ]
+    },
+    {
+      "id": "quality-09-passive-unknown-actor",
+      "prompt": "Audit this descriptive sentence: 'The file was deleted at 10:14, but the actor is unknown.'",
+      "expected_output": "The response does not invent an actor. It recognizes that passive voice can be justified in descriptive text when the actor is unknown, while still checking sentence clarity.",
+      "assertions": [
+        "Adds no actor.",
+        "Does not mark all passive voice as automatically prohibited."
+      ]
+    },
+    {
+      "id": "quality-10-project-spelling",
+      "prompt": "Our approved product style requires British spelling. Rewrite: 'The color setting controls visualization behavior.' Apply STE-based structure without overriding the product directive.",
+      "expected_output": "A clear sentence that uses the required British spellings where applicable and records no conflict. It does not force American spelling over the official project directive.",
+      "assertions": [
+        "Follows the supplied spelling directive.",
+        "Preserves the technical meaning."
+      ]
+    },
+    {
+      "id": "quality-11-release-note-facts",
+      "prompt": "Write a breaking-change note from only these facts: In version 4.0, /v2/users replaces name with first_name and last_name. Requests that contain name return HTTP 400.",
+      "expected_output": "A short breaking-change note with the exact version, endpoint, fields, and status code. It must not invent a date, grace period, migration tool, or deprecation schedule.",
+      "assertions": [
+        "Preserves every supplied literal.",
+        "Adds no calendar date or unsupported migration detail."
+      ]
+    },
+    {
+      "id": "quality-12-audit-format",
+      "prompt": "Audit this procedure and report location, issue, basis, rewrite, and confidence: '1. You should check the file and then restart the service if it exists.'",
+      "expected_output": "An audit that separates the ambiguous modal, possible multiple instructions, and condition-order judgment. It gives a rewrite only after explaining that the intended requirement and condition scope need confirmation.",
+      "assertions": [
+        "Uses the requested audit fields.",
+        "Separates mechanical and judgment findings.",
+        "Does not silently decide the modal force."
+      ]
+    },
+    {
+      "id": "quality-13-html-extraction-scope",
+      "prompt": "Audit the English in this HTML as technical prose. Do not lint implementation syntax: <style>.panel { color: red; font-family: sans-serif; }</style><p>The worker has been restarted and is processing requests.</p><script>const message = \"this isn't prose;\";</script>",
+      "expected_output": "The response identifies the paragraph as prose, excludes CSS and JavaScript, and reports no findings from their punctuation or vocabulary.",
+      "assertions": [
+        "States included and excluded scope.",
+        "No CSS or JavaScript finding.",
+        "Visible prose remains reviewable."
+      ]
+    },
+    {
+      "id": "quality-14-svg-profiles",
+      "prompt": "Review this SVG language: <svg><desc>The diagram has been generated from the current deployment state.</desc><path d=\"M0 0 L10 10\"></path><text>ready; cache warm</text></svg>. Keep accessibility text and ignore geometry.",
+      "expected_output": "The desc is accessibility prose, the text element is a label, path data is excluded, and the label semicolon is not treated as a prose violation.",
+      "assertions": [
+        "Keeps desc in full prose scope.",
+        "Keeps text as a label.",
+        "Excludes path geometry.",
+        "No prose semicolon finding for the label."
+      ]
+    },
+    {
+      "id": "quality-15-html-language-boundary",
+      "prompt": "Audit the English only: <p>The service is ready.</p><p lang=\"de\">Der Dienst ist bereit.</p><p>Run <code>deploy; this isn't prose</code> now.</p>",
+      "expected_output": "The German block is excluded and reported. Inline code remains exact and causes no semicolon or contraction finding.",
+      "assertions": [
+        "Excludes German.",
+        "Preserves inline code.",
+        "Does not lint inside the literal."
+      ]
+    },
+    {
+      "id": "quality-16-structured-location",
+      "prompt": "Audit this HTML and identify findings by line and element: <section id=\"recovery\"><p>Restart the worker after the health check remains red.</p></section>",
+      "expected_output": "The response gives a line and a path such as section#recovery > p, and treats condition order as a judgment call.",
+      "assertions": [
+        "Provides structural location.",
+        "Does not move the condition automatically.",
+        "Adds no facts."
+      ]
+    },
+    {
+      "id": "quality-17-standalone-svg",
+      "prompt": "Audit this standalone SVG file in STE-based English: <svg xml:lang=\"en\"><style>.node{fill:red}</style><desc>The diagram has been generated from the current deployment state.</desc><text>Policy pass</text><path d=\"M0 0 L10 10\"/></svg>",
+      "expected_output": "The source is recognized as SVG. CSS and path geometry are excluded, the desc receives the prose profile, and Policy pass receives the label profile.",
+      "assertions": [
+        "Recognizes standalone SVG rather than plain text.",
+        "Excludes CSS and path data.",
+        "Keeps desc and text in their separate profiles."
+      ]
+    }
+  ]
+}

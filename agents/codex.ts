@@ -47,6 +47,7 @@ import { installFromNpmTarball } from "../utils/install.ts";
 import { findProviderErrorMatch } from "../utils/providerErrors.ts";
 import { resolveRunEffort } from "../utils/runEffort.ts";
 import { filterEnv } from "../utils/secrets.ts";
+import { installBundledSkills } from "../utils/skills.ts";
 import {
   DEFAULT_MAX_RETAINED_BYTES,
   SPAWN_ACTIVITY_TIMEOUT_CODE,
@@ -845,6 +846,7 @@ export const codex = agent({
     const codexHomeAuth = installCodexHome();
     const codexHome = codexHomeAuth?.codexHome ?? join(ctx.tmpdir, ".codex");
     mkdirSync(codexHome, { recursive: true });
+    installBundledSkills({ home: ctx.tmpdir });
 
     const effort = resolveRunEffort(ctx);
     if (effort.rung && !CODEX_EFFORTS.includes(effort.rung)) {
@@ -884,6 +886,8 @@ export const codex = agent({
     const baseEnv = ctx.payload.shell === "enabled" ? process.env : filterEnv();
     const env: NodeJS.ProcessEnv = {
       ...baseEnv,
+      // Skills use HOME/.agents; credentials remain at the explicit CODEX_HOME.
+      HOME: ctx.tmpdir,
       CODEX_HOME: codexHome,
       PWD: process.cwd(),
     };
