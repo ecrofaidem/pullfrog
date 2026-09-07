@@ -4,11 +4,15 @@
 // Counters live at module level so the harness hooks can record events with
 // one call and every footer built later can read them synchronously.
 
+import { randomInt } from "node:crypto";
+import { frogFacts } from "./frogFacts.ts";
 import type { DiffCoverageBreakdown } from "./diffCoverage.ts";
 import { getDiffCoverageBreakdown } from "./diffCoverage.ts";
 import type { ToolState } from "../toolState.ts";
 
 const startedAt = Date.now();
+// Keep the same fact when a run posts or rebuilds more than one footer.
+const frogFact = frogFacts[randomInt(frogFacts.length)]!;
 const toolCalls = new Map<string, number>();
 const subagents: { label: string; seconds: number; status: string }[] = [];
 // footers are built mid-run, before the harness returns its final usage, so
@@ -131,6 +135,7 @@ export function renderRunStats(input: RunStatsInput): RenderedRunStats | null {
     rows.push(`- Review: ${review.inlineComments} inline comment${review.inlineComments === 1 ? "" : "s"}${dropped}`);
   }
 
-  const details = `<details><summary>Run stats</summary>\n\n${rows.join("\n")}\n\n</details>`;
+  const fact = `<sub><a href="${frogFact.source}">Frog fact</a>: ${frogFact.text}</sub>`;
+  const details = `<details><summary>Run stats</summary>\n\n${rows.join("\n")}\n\n${fact}\n\n</details>`;
   return { line: line.join(" · "), details };
 }
