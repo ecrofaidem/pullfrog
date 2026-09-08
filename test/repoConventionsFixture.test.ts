@@ -2,6 +2,9 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, readlinkSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { computeModes } from "../modes.ts";
+import { REVIEWER_SYSTEM_PROMPT } from "../agents/reviewer.ts";
+import { REVIEW_CONVENTIONS, UI_REUSE_REVIEW } from "../utils/reviewConventions.ts";
 import { describe, expect, it } from "vitest";
 import { expectedFindings, fixtureDirectory, guidance, repoSetup, scoreConventions, scoreEvaluationIsolation, type ReviewScope } from "./repoConventionsFixture.ts";
 
@@ -34,6 +37,8 @@ describe("repository convention scoring", () => {
     "automation/scripts/status.py",
     "dashboard/app/pages/legacy.ts",
     "dashboard/app/utils/format.ts",
+    "dashboard/app/components/QueueSummary.vue",
+    "dashboard/app/components/LatencyDistribution.vue",
     "unexpected/file.ts",
   ])("rejects a false positive on %s", (file) => {
     const output = review();
@@ -110,10 +115,27 @@ it("seeds symlinked guidance and excludes prior changes from the incremental dif
     const delta = readFileSync(join(root, "incremental.diff"), "utf8");
     for (const { file } of expectedFindings("full")) expect(full).toContain(`+++ b/${file}`);
     expect(full).not.toContain("legacy.ts");
-    expect(delta.match(/^diff --git /gm)).toHaveLength(1);
+    expect(delta.match(/^diff --git /gm)).toHaveLength(2);
+    expect(delta).toContain("+++ b/dashboard/app/pages/queue.vue");
+    expect(delta).not.toContain("health.vue");
     expect(delta).toContain("+++ b/dashboard/app/pages/report.ts");
     expect(delta).not.toContain("choose.py");
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+// Verify the production entry points, not just the isolated evaluation prompt.
+describe("review instruction wiring", () => {
+  it.each(["claude", "codex", "opencode"] as const)("includes the conventions pass in both %s review modes", (agent) => {
+    for (const name of ["Review", "IncrementalReview"]) {
+      const prompt = computeModes(agent).find((mode) => mode.name === name)?.prompt;
+      expect(prompt).toContain(REVIEW_CONVENTIONS);
+      expect(prompt).toContain(UI_REUSE_REVIEW);
+    }
+  });
+  it("includes the same pass in the read-only specialist", () => {
+    expect(REVIEWER_SYSTEM_PROMPT).toContain(REVIEW_CONVENTIONS);
+    expect(REVIEWER_SYSTEM_PROMPT).toContain(UI_REUSE_REVIEW);
+  });
 });
