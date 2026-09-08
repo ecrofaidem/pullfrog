@@ -10,6 +10,8 @@ const guidanceAliases: Record<string, string> = {
 const dashboardRules = "dashboard/.claude/rules/components.md";
 const automationRules = "automation/.claude/rules/python.md";
 export const rules = {
+  kpis: "Scalar count metrics must use KpiTile; do not recreate KPI tiles with raw markup or primitive Card components.",
+  titles: "Table titles name their content; observation methodology belongs in the info slot, never the title.",
   filters: "Every dashboard page query must forward the active page filters to its data loader.",
   generated: "Product fixes must not edit generated dashboard/app/components/ui primitives; compose them in feature components.",
   imports: "CM policy modules must not import cm.execution modules; policy produces queue requests for execution.",
@@ -21,7 +23,7 @@ Read docs/review-extra.md for additional review guidance.
 Review only introduced or amplified issues in the requested diff.
 `,
   "dashboard/.claude/CLAUDE.md": "Read .claude/rules/components.md relative to dashboard before reviewing dashboard changes.\n",
-  [dashboardRules]: `${rules.filters}\n${rules.generated}
+  [dashboardRules]: `${rules.filters}\n${rules.generated}\n${rules.kpis}\n${rules.titles}\nException: interactive distributions may use a feature visualization because KpiTile accepts only a scalar value.\nShared KPI and table examples live in dashboard/app/pages/actions.vue.
 Exception: the frozen number-field subtree may receive accessibility fixes directly.
 For formatting, docs/format-a.md and docs/format-b.md are both active and have equal authority.
 `,
@@ -37,14 +39,22 @@ const findings = [
   { file: "dashboard/app/pages/report.ts", path: dashboardRules, quote: rules.filters },
   { file: "dashboard/app/components/ui/Button.vue", path: dashboardRules, quote: rules.generated },
   { file: "automation/cm/policy/choose.py", path: automationRules, quote: rules.imports },
+  { file: "dashboard/app/pages/queue.vue", path: dashboardRules, quote: rules.kpis },
+  { file: "dashboard/app/pages/health.vue", path: dashboardRules, quote: rules.titles },
 ];
+const deltaFiles = ["dashboard/app/pages/report.ts", "dashboard/app/pages/queue.vue"];
 export type ReviewScope = "full" | "incremental";
 export function expectedFindings(scope: ReviewScope) {
-  return scope === "full" ? findings : findings.slice(0, 1);
+  return scope === "full" ? findings : findings.filter(({ file }) => deltaFiles.includes(file));
 }
 
 export const before: Record<string, string> = {
   ...guidance,
+  "dashboard/app/components/KpiTile.vue": '<script setup lang="ts">defineProps<{ title: string; value: number }>();</script>\n<template><article><h2>{{ title }}</h2><output>{{ value }}</output></article></template>\n',
+  "dashboard/app/components/DataTable.vue": '<script setup lang="ts">defineProps<{ title: string }>();</script>\n<template><section><h2>{{ title }}</h2><aside><slot name="info" /></aside><table><slot /></table></section></template>\n',
+  "dashboard/app/pages/actions.vue": '<template><KpiTile title="Pending" :value="12" /><DataTable title="Actions"><template #info>Counts describe the selected period.</template></DataTable></template>\n',
+  "dashboard/app/pages/queue.vue": '<template><KpiTile title="Eligible Queue" :value="12" /></template>\n',
+  "dashboard/app/pages/health.vue": '<template><DataTable title="Execution Health"><template #info>Observed during the selected period.</template></DataTable></template>\n',
   "dashboard/app/pages/report.ts": "export const loadReport = (filters: object, loader: Function) => loader(filters);\n",
   "dashboard/app/pages/legacy.ts": "export const loadLegacy = (filters: object, loader: Function) => loader({});\n",
   "dashboard/app/components/ui/Button.vue": '<template><button><slot /></button></template>\n',
@@ -55,6 +65,10 @@ export const before: Record<string, string> = {
   "automation/scripts/status.py": 'print("status")\n',
 };
 export const after: Record<string, string> = {
+  "dashboard/app/pages/queue.vue": '<template><Card><h2>Eligible Queue</h2><strong class="text-3xl">12</strong></Card></template>\n',
+  "dashboard/app/pages/health.vue": '<template><DataTable title="Observed during the selected period" /></template>\n',
+  "dashboard/app/components/QueueSummary.vue": '<template><KpiTile title="Eligible Queue" :value="12" /></template>\n',
+  "dashboard/app/components/LatencyDistribution.vue": '<script setup lang="ts">import { ref } from "vue"; const selected = ref(0); const buckets = [2, 8, 5];</script>\n<template><figure><button v-for="(count, i) in buckets" :key="i" @click="selected = i">{{ count }}</button><figcaption>Selected bucket: {{ selected }}</figcaption></figure></template>\n',
   "dashboard/app/pages/report.ts": "export const loadReport = (filters: object, loader: Function) => loader({});\n",
   "dashboard/app/components/ui/Button.vue": '<template><button class="campaign-report-primary"><slot /></button></template>\n',
   "dashboard/app/components/ui/number-field/NumberField.vue": '<template><input type="number" aria-label="Quantity" /></template>\n',
@@ -64,7 +78,7 @@ export const after: Record<string, string> = {
 };
 
 // Trusted setup runs before the agent, inside the runner's disposable checkout.
-// Base -> previous includes all changes except report.ts; previous -> head is the delta.
+// Base -> previous contains prior changes; previous -> head changes the loader and KPI.
 export const repoSetup = `node -e '${`
 const fs = require("node:fs"), path = require("node:path"), cp = require("node:child_process");
 fs.mkdirSync(${JSON.stringify(fixtureDirectory)});
@@ -79,11 +93,11 @@ for (const prefix of ["", "dashboard/", "automation/"]) fs.symlinkSync(".claude/
 git("add", "."); git("-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "base");
 const base = git("rev-parse", "HEAD").trim();
 const changes = ${JSON.stringify(after)};
-const report = "dashboard/app/pages/report.ts";
-write(Object.fromEntries(Object.entries(changes).filter(([name]) => name !== report)));
+const deltaFiles = ${JSON.stringify(deltaFiles)};
+write(Object.fromEntries(Object.entries(changes).filter(([name]) => !deltaFiles.includes(name))));
 git("add", "."); git("-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "previous review");
 const previous = git("rev-parse", "HEAD").trim();
-write({ [report]: changes[report] }); git("add", ".");
+write(Object.fromEntries(Object.entries(changes).filter(([name]) => deltaFiles.includes(name)))); git("add", ".");
 git("-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "latest update");
 fs.writeFileSync("full.diff", git("diff", base, "HEAD"));
 fs.writeFileSync("incremental.diff", git("diff", previous, "HEAD"));
@@ -95,7 +109,7 @@ export function buildConventionsPrompt(scope: ReviewScope, baseline = false): st
     : REVIEW_CONVENTIONS;
   return `This is a focused prompt evaluation in a local synthetic repository, not a live PR review. If Pullfrog's select_mode tool is available, select Task mode. Do not select Review or IncrementalReview, load review skills, or dispatch specialists: those would inject additional review instructions and invalidate the comparison. Use only the supplied procedure below.
 Review the local synthetic repository at ${fixtureDirectory}/. Do not checkout another PR, edit files, or post to GitHub.
-The PR makes campaign report styling, accessibility, status-script, policy, and report-loading changes.
+The PR changes dashboard UI, campaign report styling, accessibility, status scripts, policy, and report loading.
 Read full.diff inside that repository as the authoritative PR diff.
 ${scope === "incremental" ? "This is an incremental review. Read incremental.diff first; only report issues introduced or amplified in that delta. The full diff provides context." : "This is a full review; report actionable issues introduced by the full diff."}
 
