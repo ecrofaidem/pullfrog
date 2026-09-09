@@ -20,7 +20,9 @@ import {
   findRepoInstallation,
   getPullRequest,
   getWorkflowRun,
+  type WorkflowRunInfo,
 } from "./lib/github";
+import { selectWebhook } from "./lib/webhookEvent";
 
 /** the check-run name the action finalizes; it is also what branch protection matches on. */
 const RUN_STATUS_CHECK_NAME = "pullfrog";
@@ -28,8 +30,13 @@ const RUN_STATUS_CHECK_NAME = "pullfrog";
 type Json = Record<string, any>;
 
 export const handleEvent = internalAction({
-  args: { event: v.string(), delivery: v.string(), payload: v.any() },
-  handler: async (ctx, args) => {
+  args: {
+    event: v.string(),
+    delivery: v.string(),
+    payload: v.any(),
+    retry: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<void> => {
     const payload = args.payload as Json;
     switch (args.event) {
       case "installation":
@@ -41,7 +48,23 @@ export const handleEvent = internalAction({
       case "issue_comment":
         return handleIssueComment(ctx, payload);
       case "workflow_run":
-        return handleWorkflowRun(ctx, payload);
+        try {
+          await handleWorkflowRun(ctx, payload);
+        } catch (error) {
+          const retry = args.retry ?? 0;
+          if (retry >= 2) throw error;
+          const selected = selectWebhook(args.event, payload, actionWorkflow());
+          if (!selected) return;
+          // Lifecycle reconciliation is idempotent. Review dispatch and
+          // installation deltas deliberately do not enter this retry path.
+          await ctx.scheduler.runAfter(5_000 * 6 ** retry, internal.dispatch.handleEvent, {
+            ...args,
+            payload: selected.payload,
+            retry: retry + 1,
+          });
+          console.warn(`Retrying workflow state for delivery ${args.delivery}: ${String(error)}`);
+        }
+        return;
       default:
         return;
     }
@@ -170,7 +193,8 @@ async function handleIssueComment(ctx: ActionCtx, payload: Json) {
 
   const installation = await findRepoInstallation(repo.owner, repo.name);
   if (!installation) return;
-  const token = (await createInstallationToken(installation.id, { repositories: [repo.name] })).token;
+  const token = (await createInstallationToken(installation.id, { repositories: [repo.name] }))
+    .token;
 
   const commenter = String(comment.user.login);
   const permission = await collaboratorPermission({
@@ -331,15 +355,18 @@ async function dispatchReview(ctx: ActionCtx, params: DispatchReviewParams) {
 
 const DISPATCH_ID_RE = /· ([a-z0-9]{8})$/;
 
-async function resolveRunTitle(owner: string, repo: string, runId: number): Promise<string | null> {
+async function resolveWorkflowRun(
+  owner: string,
+  repo: string,
+  runId: number,
+): Promise<WorkflowRunInfo | null> {
   try {
     const installation = await findRepoInstallation(owner, repo);
     if (!installation) return null;
     const token = (await createInstallationToken(installation.id, { repositories: [repo] })).token;
-    const info = await getWorkflowRun({ token, owner, repo, runId });
-    return info?.display_title ?? null;
+    return await getWorkflowRun({ token, owner, repo, runId });
   } catch (err) {
-    console.warn(`could not resolve run title for ${owner}/${repo}#${runId}: ${String(err)}`);
+    console.warn(`could not resolve run for ${owner}/${repo}#${runId}: ${String(err)}`);
     return null;
   }
 }
@@ -352,29 +379,32 @@ export const relinkOrphans = internalAction({
     let relinked = 0;
     let unresolved = 0;
     for (const row of orphans) {
-      const title = await resolveRunTitle(args.owner, args.repo, row.githubRunId!);
-      const dispatchId = title ? DISPATCH_ID_RE.exec(title)?.[1] : undefined;
-      if (!dispatchId) {
+      const current = await resolveWorkflowRun(args.owner, args.repo, row.githubRunId!);
+      const dispatchId = current ? DISPATCH_ID_RE.exec(current.display_title)?.[1] : undefined;
+      if (!current || !dispatchId || !Number.isInteger(current.run_attempt)) {
         unresolved += 1;
         continue;
       }
-      await ctx.runMutation(internal.runs.observeWorkflowRun, {
-        owner: args.owner,
-        repo: args.repo,
-        dispatchId,
-        githubRunId: row.githubRunId!,
-        htmlUrl: row.htmlUrl ?? "",
-        title: title!,
-        status: row.status,
-        ...(row.conclusion ? { conclusion: row.conclusion } : {}),
-      });
+      await handleWorkflowRun(
+        ctx,
+        {
+          repository: { name: args.repo, owner: { login: args.owner } },
+          action: current.status,
+          workflow_run: { ...current, path: `.github/workflows/${actionWorkflow()}` },
+        },
+        true,
+      );
       relinked += 1;
     }
     return { relinked, unresolved };
   },
 });
 
-async function handleWorkflowRun(ctx: ActionCtx, payload: Json) {
+async function handleWorkflowRun(
+  ctx: ActionCtx,
+  payload: Json,
+  currentAttemptVerified = false,
+): Promise<void> {
   const run = payload.workflow_run as Json;
   const path = String(run?.path ?? "");
   if (!path.endsWith(`/${actionWorkflow()}`)) return;
@@ -384,12 +414,13 @@ async function handleWorkflowRun(ctx: ActionCtx, payload: Json) {
   const name = String(repository.name ?? "");
   let title = String(run.display_title ?? run.name ?? "");
   let dispatchId = DISPATCH_ID_RE.exec(title)?.[1];
+  let current: WorkflowRunInfo | null = null;
   // the webhook's display_title is the workflow name for a workflow_dispatch
   // run; the API has the real run-name, which carries our dispatch id.
-  if (!dispatchId) {
-    const resolved = await resolveRunTitle(owner, name, Number(run.id));
-    if (resolved) {
-      title = resolved;
+  if (!dispatchId && !currentAttemptVerified) {
+    current = await resolveWorkflowRun(owner, name, Number(run.id));
+    if (current) {
+      title = current.display_title;
       dispatchId = DISPATCH_ID_RE.exec(title)?.[1];
     }
   }
@@ -407,14 +438,31 @@ async function handleWorkflowRun(ctx: ActionCtx, payload: Json) {
         ? "in_progress"
         : "queued";
 
-  await ctx.runMutation(internal.runs.observeWorkflowRun, {
+  const observed = await ctx.runMutation(internal.runs.observeWorkflowRun, {
     owner,
     repo: name,
     ...(dispatchId ? { dispatchId } : {}),
     githubRunId: Number(run.id),
+    githubRunAttempt: Number(run.run_attempt ?? 1),
+    currentAttemptVerified,
     htmlUrl: String(run.html_url ?? ""),
     title,
     status,
     ...(conclusion ? { conclusion } : {}),
   });
+  if (observed === null) {
+    current ??= await resolveWorkflowRun(owner, name, Number(run.id));
+    if (!current || !Number.isInteger(current.run_attempt)) {
+      throw new Error(`Cannot establish the current GitHub attempt for ${owner}/${name}#${run.id}`);
+    }
+    await handleWorkflowRun(
+      ctx,
+      {
+        repository,
+        action: current.status,
+        workflow_run: { ...current, path },
+      },
+      true,
+    );
+  }
 }

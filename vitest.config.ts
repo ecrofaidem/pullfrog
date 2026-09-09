@@ -8,6 +8,8 @@ export default defineConfig({
       "**/node_modules/**",
       "**/.temp/**",
       "**/.pnpm-store/**",
+      // The Convex backend has its own dependencies and edge-runtime test configuration.
+      "server/tests/**",
       // *.main.test.ts files run only on main (e.g. catalog drift against
       // models.dev + OpenRouter). run them via `pnpm test:catalog`, which
       // points at vitest.main.config.ts.

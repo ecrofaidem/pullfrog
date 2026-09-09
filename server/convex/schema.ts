@@ -88,6 +88,7 @@ export default defineSchema({
     /** short id we bake into the run-name so workflow_run webhooks can find us */
     dispatchId: v.optional(v.string()),
     githubRunId: v.optional(v.number()),
+    githubRunAttempt: v.optional(v.number()),
     htmlUrl: v.optional(v.string()),
     kind: v.string(),
     trigger: v.string(),
@@ -118,6 +119,7 @@ export default defineSchema({
     completedAt: v.optional(v.number()),
   })
     .index("by_repo", ["owner", "repo", "createdAt"])
+    .index("by_repo_status", ["owner", "repo", "status", "createdAt"])
     .index("by_github_run", ["githubRunId"])
     .index("by_dispatch", ["dispatchId"]),
 
@@ -131,7 +133,7 @@ export default defineSchema({
     fetchedAt: v.number(),
   }).index("by_secret", ["secretId"]),
 
-  /** GitHub redelivers on any non-2xx; this makes a redelivery a no-op. */
+  /** Deduplication for manual or automated webhook redeliveries. Expires after seven days. */
   webhookDeliveries: defineTable({
     deliveryId: v.string(),
     receivedAt: v.number(),

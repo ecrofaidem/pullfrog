@@ -14,7 +14,7 @@ What it does:
   curl -X PATCH -H "Authorization: Bearer $(gh auth token)" -H "content-type: application/json" \
     -d '{"owner":"ecrofaidem","repo":"monorepo","set":{"review.on_push":true}}' https://<site>/api/cli/config
   ```
-- **Dispatcher.** `POST /webhooks/github` receives the App's webhooks and dispatches `pullfrog.yml` with the JSON envelope the action expects. Review policy lives in `convex/dispatch.ts`.
+- **Dispatcher.** A Cloudflare Worker receives the App's webhooks, verifies their signatures, and rejects unrelated events before they reach Convex. Convex applies the same filter, atomically deduplicates and schedules compact events, then dispatches `pullfrog.yml`. Repository review policy and permission checks remain in `convex/dispatch.ts`.
 
 ## Layout
 
@@ -30,6 +30,8 @@ convex/
   configKeys.ts      the settings contract (dashboard labels = CLI keys)
   crons.ts           sweep stale runs every 5 minutes
   actionVersion.ts   envelope version tracks the fork's package.json
+  webhooks.ts        atomic delivery acceptance, seven-day delivery ID expiry
+  webhookRecovery.ts bounded recovery of transient delivery failures
   auth.ts            Better Auth, GitHub sign-in, org gate
   lib/               jwt, oidc, crypto, github client, codex refresh
 ```
@@ -60,7 +62,7 @@ Set with `npx convex env set NAME value` on the target deployment.
 
 Create it at `https://github.com/organizations/ecrofaidem/settings/apps/new`.
 
-- Name `frogbot`. Webhook URL `https://<deployment>.convex.site/webhooks/github`, with the secret above.
+- Name `frogbot`. Webhook URL `https://<webhook-worker>/webhooks/github`, with the secret above. Deploy and configure the Worker before changing this URL.
 - Repository permissions: actions **write**, checks **write**, contents **write**, issues **write**, pull requests **write**, workflows **write**, metadata **read**.
 - Subscribe to events: installation, installation repositories, pull request, issue comment, workflow run.
 - Install it on the org, selected repositories only.
@@ -82,6 +84,7 @@ env:
 ```
 pnpm dev        # local dev deployment, live push on save
 pnpm deploy     # production
+pnpm test       # Convex and webhook Worker regression tests
 pnpm typecheck
 ```
 
@@ -92,3 +95,54 @@ PULLFROG_API_URL=https://<deployment>.convex.site npx pullfrog auth codex
 ```
 
 Re-run the same command to switch the credential to a different ChatGPT account.
+
+## Deploy the webhook filter
+
+Run these commands from `server/`. The dashboard and action continue to use the
+Convex site URL; only the GitHub App's webhook URL changes.
+
+1. Set `CONVEX_WEBHOOK_URL` and `ACTION_WORKFLOW` in `wrangler.jsonc` for the
+   target deployment. Keep `ACTION_WORKFLOW` equal to the Convex environment
+   value. Both receivers use the same event selector.
+2. Run `pnpm test` and `pnpm typecheck`, then `pnpm deploy` to deploy the backend.
+3. Run `pnpm deploy:webhook`. This deploys the separate `prfrog-webhooks` Worker.
+4. Run `pnpm exec wrangler secret put GITHUB_WEBHOOK_SECRET` and enter the same
+   signing secret used by GitHub and Convex. Do not put it in `wrangler.jsonc`.
+5. Check the Worker's `/healthz` endpoint, then change the GitHub App's webhook
+   URL to the Worker's `/webhooks/github` endpoint. Keep JSON payloads and TLS
+   verification enabled.
+6. Verify an unrelated workflow receives `200` without a Convex call, and a
+   prfrog workflow receives `202` and updates its existing run. A duplicate
+   delivery receives `200` without scheduling another event.
+
+The Worker forwards accepted requests with their original signed bodies and
+waits for Convex acceptance before acknowledging GitHub. Its sampled logs contain
+event names, outcomes, and status codes, never payloads or credentials. Use Worker
+request metrics and Convex's per-function usage breakdown to measure traffic.
+
+For rollback, restore the App's webhook URL to the Convex site's
+`/webhooks/github` endpoint. The backend still filters and compacts events, but
+incoming HTTP calls count toward Convex usage again.
+
+## Retention and delivery recovery
+
+Completed scheduled records remain in Convex for seven days. This means old,
+large payloads do not disappear immediately after deployment. Delivery IDs also
+expire after seven days, in batches of 500; review history remains stored.
+
+GitHub does not automatically retry failed deliveries. A five-minute recovery
+cron scans up to 1,000 recent delivery attempts and retries transport or 5xx
+failures at most twice within a 30-minute window. Each pass retries at most 20
+events. It skips accepted deliveries, irrelevant events, closed/draft PRs, and
+superseded PR heads. Failed installation changes require reconciliation against
+GitHub's current membership; replaying an old removal could undo a newer addition.
+Older failures and a scan-limit warning also require operator review.
+
+Workflow-state reconciliation retries failures twice, after 5 and 30 seconds.
+Existing run rows with an unknown attempt number are reconciled against GitHub
+before an event can update them. Review dispatch itself is not automatically
+retried: an ambiguous dispatch response must not launch duplicate reviews.
+
+Monitor scheduled action failures separately. After a longer outage, inspect
+missed review requests before redelivering them rather than replaying an entire
+webhook backlog.

@@ -33,11 +33,16 @@ import type * as lib_jwt from "../lib/jwt.js";
 import type * as lib_oauthShared from "../lib/oauthShared.js";
 import type * as lib_oidc from "../lib/oidc.js";
 import type * as lib_runToken from "../lib/runToken.js";
+import type * as lib_webhookEvent from "../lib/webhookEvent.js";
+import type * as lib_webhookRecovery from "../lib/webhookRecovery.js";
 import type * as me from "../me.js";
 import type * as repos from "../repos.js";
+import type * as reviewPolicy from "../reviewPolicy.js";
 import type * as runs from "../runs.js";
 import type * as secrets from "../secrets.js";
 import type * as usage from "../usage.js";
+import type * as webhookRecovery from "../webhookRecovery.js";
+import type * as webhooks from "../webhooks.js";
 
 import type {
   ApiFromModules,
@@ -71,11 +76,16 @@ declare const fullApi: ApiFromModules<{
   "lib/oauthShared": typeof lib_oauthShared;
   "lib/oidc": typeof lib_oidc;
   "lib/runToken": typeof lib_runToken;
+  "lib/webhookEvent": typeof lib_webhookEvent;
+  "lib/webhookRecovery": typeof lib_webhookRecovery;
   me: typeof me;
   repos: typeof repos;
+  reviewPolicy: typeof reviewPolicy;
   runs: typeof runs;
   secrets: typeof secrets;
   usage: typeof usage;
+  webhookRecovery: typeof webhookRecovery;
+  webhooks: typeof webhooks;
 }>;
 
 /**

@@ -145,6 +145,7 @@ export interface WorkflowRunInfo {
   html_url: string;
   status: string | null;
   conclusion: string | null;
+  run_attempt: number;
 }
 
 /** the run as the API sees it; the webhook payload's title is only the workflow name. */
@@ -226,6 +227,7 @@ export async function getPullRequest(params: {
   repo: string;
   number: number;
 }): Promise<{
+  state: string;
   number: number;
   title: string;
   body: string | null;

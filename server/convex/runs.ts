@@ -52,6 +52,8 @@ export const observeWorkflowRun = internalMutation({
     repo: v.string(),
     dispatchId: v.optional(v.string()),
     githubRunId: v.number(),
+    githubRunAttempt: v.optional(v.number()),
+    currentAttemptVerified: v.optional(v.boolean()),
     htmlUrl: v.string(),
     title: v.string(),
     status: runStatus,
@@ -70,14 +72,22 @@ export const observeWorkflowRun = internalMutation({
             .withIndex("by_dispatch", (q) => q.eq("dispatchId", args.dispatchId))
             .unique()
         : null) ?? byRun;
-    const terminal = args.status === "completed" || args.status === "failed" || args.status === "cancelled";
+    // Older rows (and callbacks arriving before the first webhook) do not tell
+    // us which attempt they represent. Ask the action for current GitHub state.
+    if (byDispatch && byDispatch.githubRunAttempt === undefined && !args.currentAttemptVerified) {
+      return null;
+    }
+    const attempt = args.githubRunAttempt ?? 1;
+    const previousAttempt = byDispatch?.githubRunAttempt ?? 1;
+    if (attempt < previousAttempt) return byDispatch!._id;
+    const terminal =
+      args.status === "completed" || args.status === "failed" || args.status === "cancelled";
     const patch = {
       githubRunId: args.githubRunId,
+      githubRunAttempt: attempt,
       htmlUrl: args.htmlUrl,
       status: args.status,
-      ...(args.conclusion ? { conclusion: args.conclusion } : {}),
-      updatedAt: now,
-      ...(terminal ? { completedAt: now } : {}),
+      ...(terminal ? { conclusion: args.conclusion } : {}),
     };
     if (byDispatch) {
       // the action's PATCHes may have landed on a row keyed only by GitHub run
@@ -92,8 +102,36 @@ export const observeWorkflowRun = internalMutation({
         await ctx.db.delete(byRun._id);
       }
       // never regress a terminal row back to in_progress from a late webhook.
-      if (byDispatch.completedAt && !terminal) return byDispatch._id;
-      await ctx.db.patch(byDispatch._id, patch);
+      if (attempt === previousAttempt && byDispatch.completedAt && !terminal) return byDispatch._id;
+      const next = {
+        ...patch,
+        ...(attempt > previousAttempt
+          ? {
+              conclusion: args.conclusion,
+              completedAt: undefined,
+              error: undefined,
+              createdAt: now,
+            }
+          : {}),
+      };
+      if (
+        Object.entries(next).some(
+          ([key, value]) => byDispatch[key as keyof typeof byDispatch] !== value,
+        )
+      ) {
+        await ctx.db.patch(byDispatch._id, {
+          ...next,
+          updatedAt: now,
+          ...(terminal
+            ? {
+                completedAt:
+                  byDispatch.completedAt && attempt === previousAttempt
+                    ? byDispatch.completedAt
+                    : now,
+              }
+            : {}),
+        });
+      }
       return byDispatch._id;
     }
     // a run we did not dispatch (manual workflow_dispatch from the Actions tab).
@@ -105,11 +143,11 @@ export const observeWorkflowRun = internalMutation({
       title: args.title,
       createdAt: now,
       ...patch,
+      updatedAt: now,
+      ...(terminal ? { completedAt: now } : {}),
     });
   },
 });
-
-
 
 /** PATCH /api/workflow-run/:id from the action. upserts by GitHub run id. */
 export const patchFromAction = internalMutation({
@@ -131,7 +169,13 @@ export const patchFromAction = internalMutation({
       .withIndex("by_github_run", (q) => q.eq("githubRunId", args.githubRunId))
       .unique();
     if (existing) {
-      await ctx.db.patch(existing._id, { ...patch, updatedAt: now });
+      if (
+        Object.entries(patch).some(
+          ([key, value]) => existing[key as keyof typeof existing] !== value,
+        )
+      ) {
+        await ctx.db.patch(existing._id, { ...patch, updatedAt: now });
+      }
       return existing._id;
     }
     return ctx.db.insert("runs", {
@@ -161,20 +205,6 @@ export const markDispatchFailed = internalMutation({
   },
 });
 
-/** true the first time a delivery id is seen; false on GitHub's redeliveries. */
-export const claimDelivery = internalMutation({
-  args: { deliveryId: v.string() },
-  handler: async (ctx, args): Promise<boolean> => {
-    const seen = await ctx.db
-      .query("webhookDeliveries")
-      .withIndex("by_delivery", (q) => q.eq("deliveryId", args.deliveryId))
-      .unique();
-    if (seen) return false;
-    await ctx.db.insert("webhookDeliveries", { deliveryId: args.deliveryId, receivedAt: Date.now() });
-    return true;
-  },
-});
-
 const OPEN: Doc<"runs">["status"][] = ["dispatched", "queued", "in_progress"];
 const STALE_GRACE_MS = 15 * 60 * 1000;
 
@@ -194,13 +224,22 @@ export const sweepStale = internalMutation({
     let swept = 0;
     for (const repo of repos) {
       const cutoff = now - timeoutMs(repo.timeout) - STALE_GRACE_MS;
-      const open = await ctx.db
-        .query("runs")
-        .withIndex("by_repo", (q) =>
-          q.eq("owner", repo.owner).eq("repo", repo.name).lt("createdAt", cutoff)
+      const open = (
+        await Promise.all(
+          OPEN.map((status) =>
+            ctx.db
+              .query("runs")
+              .withIndex("by_repo_status", (q) =>
+                q
+                  .eq("owner", repo.owner)
+                  .eq("repo", repo.name)
+                  .eq("status", status)
+                  .lt("createdAt", cutoff),
+              )
+              .take(100),
+          ),
         )
-        .filter((q) => q.or(...OPEN.map((s) => q.eq(q.field("status"), s))))
-        .collect();
+      ).flat();
       for (const run of open) {
         await ctx.db.patch(run._id, {
           status: "failed",
