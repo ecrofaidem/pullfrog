@@ -1,4 +1,4 @@
-// Turns GitHub webhook events into action runs. Review policy lives here:
+// Turns GitHub webhook events into action runs. Dispatch policy lives here:
 // which PRs get reviewed, who may summon the bot by comment, and what the
 // action is told about the event.
 
@@ -8,7 +8,7 @@ import { internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { actionWorkflow, resolveActionVersion } from "./actionVersion";
-import { buildEnvelope, buildReviewEvent, type ReviewTrigger } from "./lib/envelope";
+import { buildEnvelope, buildRunEvent, type RunTrigger } from "./lib/envelope";
 import { isBot, shouldIgnorePullRequestEvent } from "./reviewPolicy";
 import {
   addReaction,
@@ -123,7 +123,7 @@ function authorAllowed(repo: Doc<"repos">, login: string): boolean {
 
 function mentionRegex(handle: string): RegExp {
   const escaped = handle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(^|\\s)@${escaped}\\s+review\\b`, "i");
+  return new RegExp(`(^|\\s)@${escaped}\\s+(\\S[\\s\\S]*)`, "i");
 }
 
 async function repoFor(ctx: ActionCtx, payload: Json): Promise<Doc<"repos"> | null> {
@@ -141,7 +141,7 @@ async function repoFor(ctx: ActionCtx, payload: Json): Promise<Doc<"repos"> | nu
 
 async function handlePullRequest(ctx: ActionCtx, payload: Json) {
   const action = String(payload.action);
-  const triggers: Record<string, ReviewTrigger> = {
+  const triggers: Record<string, RunTrigger> = {
     opened: "pull_request_opened",
     ready_for_review: "pull_request_ready_for_review",
     synchronize: "pull_request_synchronize",
@@ -163,14 +163,16 @@ async function handlePullRequest(ctx: ActionCtx, payload: Json) {
       ? `New commits were pushed to pull request #${number}. Review the changes since the previous review.`
       : `Review pull request #${number}.`;
 
-  await dispatchReview(ctx, {
+  await dispatchRun(ctx, {
     repo,
     trigger,
     kind: trigger === "pull_request_synchronize" ? "incremental_review" : "review",
-    pr: {
+    issue: {
       number,
       title: String(pr.title ?? ""),
       body: (pr.body as string | null) ?? null,
+    },
+    pr: {
       headRef: String(pr.head?.ref ?? ""),
       headSha: String(pr.head?.sha ?? ""),
     },
@@ -183,13 +185,16 @@ async function handlePullRequest(ctx: ActionCtx, payload: Json) {
 async function handleIssueComment(ctx: ActionCtx, payload: Json) {
   if (payload.action !== "created") return;
   const issue = payload.issue as Json;
-  if (!issue?.pull_request) return;
+  if (!issue) return;
   const comment = payload.comment as Json;
   if (isBot(comment.user)) return;
 
   const repo = await repoFor(ctx, payload);
   if (!repo) return;
-  if (!mentionRegex(repo.handle).test(String(comment.body ?? ""))) return;
+  const body = String(comment.body ?? "");
+  const mention = mentionRegex(repo.handle).exec(body);
+  if (!mention) return;
+  const review = Boolean(issue.pull_request) && /^review\b/i.test(mention[2]!);
 
   const installation = await findRepoInstallation(repo.owner, repo.name);
   if (!installation) return;
@@ -206,8 +211,16 @@ async function handleIssueComment(ctx: ActionCtx, payload: Json) {
   if (!["admin", "maintain", "write"].includes(permission)) return;
 
   const number = Number(issue.number);
-  const pr = await getPullRequest({ token, owner: repo.owner, repo: repo.name, number });
-  if (pr.draft) return;
+  const pr = issue.pull_request
+    ? await getPullRequest({ token, owner: repo.owner, repo: repo.name, number })
+    : undefined;
+  if (review && pr?.draft) return;
+
+  const target = pr ? `pull request #${number}` : `issue #${number}`;
+  const branchInstruction =
+    pr && pr.state !== "open"
+      ? " If changes are requested, open a follow-up PR from the default branch because this PR is closed."
+      : "";
 
   await addReaction({
     token,
@@ -217,19 +230,20 @@ async function handleIssueComment(ctx: ActionCtx, payload: Json) {
     content: "eyes",
   }).catch(() => undefined);
 
-  await dispatchReview(ctx, {
+  await dispatchRun(ctx, {
     repo,
     trigger: "issue_comment_created",
-    kind: "review",
-    pr: {
+    kind: review ? "review" : "task",
+    issue: {
       number,
-      title: pr.title,
-      body: pr.body,
-      headRef: pr.head.ref,
-      headSha: pr.head.sha,
+      title: pr?.title ?? String(issue.title ?? ""),
+      body: pr ? pr.body : (issue.body as string | null) ?? null,
     },
+    ...(pr ? { pr: { headRef: pr.head.ref, headSha: pr.head.sha } } : {}),
     triggerer: commenter,
-    prompt: `Review pull request #${number}, as requested in the comment below.\n\n${String(comment.body ?? "")}`,
+    prompt: review
+      ? `Review pull request #${number}, as requested in the comment below.\n\n${body}`
+      : `Handle the request below for ${target}.${branchInstruction}\n\n${body}`,
     commentId: Number(comment.id),
     token,
     authorPermission: permission,
@@ -238,11 +252,12 @@ async function handleIssueComment(ctx: ActionCtx, payload: Json) {
 
 // ── dispatch ─────────────────────────────────────────────────────────────────
 
-interface DispatchReviewParams {
+interface DispatchRunParams {
   repo: Doc<"repos">;
-  trigger: ReviewTrigger;
+  trigger: RunTrigger;
   kind: string;
-  pr: { number: number; title: string; body: string | null; headRef: string; headSha: string };
+  issue: { number: number; title: string; body: string | null };
+  pr?: { headRef: string; headSha: string };
   triggerer: string;
   prompt: string;
   beforeSha?: string;
@@ -252,8 +267,8 @@ interface DispatchReviewParams {
   authorPermission?: Awaited<ReturnType<typeof collaboratorPermission>>;
 }
 
-async function dispatchReview(ctx: ActionCtx, params: DispatchReviewParams) {
-  const { repo, pr } = params;
+async function dispatchRun(ctx: ActionCtx, params: DispatchRunParams) {
+  const { repo, issue, pr } = params;
   let token = params.token;
   if (!token) {
     const installation = await findRepoInstallation(repo.owner, repo.name);
@@ -273,10 +288,11 @@ async function dispatchReview(ctx: ActionCtx, params: DispatchReviewParams) {
     }));
 
   const dispatchId = crypto.randomUUID().replace(/-/g, "").slice(0, 8);
-  const title = `${repo.handle}: review #${pr.number} · ${dispatchId}`;
+  const kind = params.kind === "task" ? "task" : "review";
+  const title = `${repo.handle}: ${kind} ${pr ? "" : "issue "}#${issue.number} · ${dispatchId}`;
 
   let checkRunId: number | undefined;
-  if (repo.statusChecks && pr.headSha) {
+  if (repo.statusChecks && pr?.headSha) {
     try {
       checkRunId = (
         await createCheckRun({
@@ -293,12 +309,12 @@ async function dispatchReview(ctx: ActionCtx, params: DispatchReviewParams) {
   }
 
   const version = await resolveActionVersion(ctx);
-  const event = buildReviewEvent({
+  const event = buildRunEvent({
     trigger: params.trigger,
-    prNumber: pr.number,
-    title: pr.title,
-    body: pr.body,
-    branch: pr.headRef,
+    issueNumber: issue.number,
+    title: issue.title,
+    body: issue.body,
+    ...(pr ? { branch: pr.headRef } : {}),
     authorPermission,
     ...(params.beforeSha !== undefined ? { beforeSha: params.beforeSha } : {}),
     ...(params.commentId !== undefined ? { commentId: params.commentId } : {}),
@@ -318,8 +334,7 @@ async function dispatchReview(ctx: ActionCtx, params: DispatchReviewParams) {
     dispatchId,
     kind: params.kind,
     trigger: params.trigger,
-    prNumber: pr.number,
-    prTitle: pr.title,
+    ...(pr ? { prNumber: issue.number, prTitle: issue.title } : {}),
     triggerer: params.triggerer,
     title,
     ...(checkRunId !== undefined ? { checkRunId } : {}),

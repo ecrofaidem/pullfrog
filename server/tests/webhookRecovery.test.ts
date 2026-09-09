@@ -1,5 +1,6 @@
 import { convexTest } from "convex-test";
 import { afterEach, expect, it, vi } from "vitest";
+import { getPullRequest } from "../convex/lib/github";
 import schema from "../convex/schema";
 import { internal } from "../convex/_generated/api";
 import { parseDeliveries, retryableDeliveries, type Delivery } from "../convex/lib/webhookRecovery";
@@ -22,9 +23,60 @@ function delivery(id: number, patch: Partial<Delivery> = {}): Delivery {
   };
 }
 afterEach(() => {
+  vi.clearAllMocks();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
+
+it.each([false, true])(
+  "recovers a general comment without treating it as an automatic PR review (PR: %s)",
+  async (isPr) => {
+    vi.stubEnv("ACTION_WORKFLOW", "pullfrog.yml");
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input, init) => {
+        const path = new URL(String(input)).pathname;
+        calls.push(`${init?.method} ${path}`);
+        if (path === "/app/hook/deliveries") return Response.json([delivery(1)]);
+        if (path === "/app/hook/deliveries/1")
+          return Response.json({
+            event: "issue_comment",
+            request: {
+              payload: {
+                action: "created",
+                repository: { name: "repo", owner: { login: "owner" } },
+                issue: {
+                  number: 42,
+                  title: "Docs",
+                  body: "Context",
+                  ...(isPr ? { pull_request: {} } : {}),
+                },
+                comment: {
+                  id: 24,
+                  body: "@prfrog please fix the docs",
+                  user: { login: "alice", type: "User" },
+                },
+              },
+            },
+          });
+        if (path === "/app/hook/deliveries/1/attempts") return new Response(null, { status: 202 });
+        throw new Error(`Unexpected request ${path}`);
+      }),
+    );
+    const t = convexTest(schema, import.meta.glob("../convex/**/*.ts"));
+    expect(await t.action(internal.webhookRecovery.redeliverFailed, {})).toEqual({
+      inspected: 1,
+      retried: 1,
+      skipped: 0,
+      complete: true,
+    });
+    expect(getPullRequest).not.toHaveBeenCalled();
+    expect(calls.filter((c) => c.startsWith("POST"))).toEqual([
+      "POST /app/hook/deliveries/1/attempts",
+    ]);
+  },
+);
 
 it.each(["installation", "installation_repositories"])(
   "does not replay a stale %s transition",

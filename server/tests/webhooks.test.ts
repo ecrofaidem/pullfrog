@@ -19,6 +19,7 @@ vi.mock("../convex/lib/github", async (original) => ({
     number: 42,
     title: "PR",
     body: "Full PR text",
+    state: "open",
     draft: false,
     head: { ref: "branch", sha: "head" },
   })),
@@ -77,7 +78,7 @@ function comment(body = "@custom-handle review this") {
   return {
     action: "created",
     repository,
-    issue: { number: 42, pull_request: { url: "unused" } },
+    issue: { number: 42, title: "Issue title", body: "Issue context", pull_request: { url: "unused" } },
     comment: { id: 24, body, user: human },
   };
 }
@@ -105,7 +106,7 @@ beforeEach(() => {
       throw new Error("Unexpected external request");
     }),
   );
-  vi.clearAllMocks();
+  vi.resetAllMocks();
 });
 afterEach(() => {
   vi.clearAllTimers();
@@ -130,8 +131,10 @@ describe("webhook ingestion", () => {
     ],
     ["issue_comment", { ...comment(), action: "edited" }],
     ["issue_comment", comment("Normal discussion")],
+    ["issue_comment", comment("mail@custom-handle please fix this")],
+    ["issue_comment", comment("@custom-handle   ")],
     ["issue_comment", { ...comment(), comment: { ...comment().comment, user: bot } }],
-    ["issue_comment", { ...comment(), issue: { number: 42 } }],
+    ["pull_request_review_comment", comment()],
     ["push", {}],
   ])("ignores %s before any upstream call or database write", async (event, payload) => {
     const t = convexTest(schema, modules);
@@ -286,6 +289,197 @@ describe("webhook ingestion", () => {
       ...selectWebhook("issue_comment", comment("@another review"), "pullfrog.yml")!,
     });
     expect(github.dispatchWorkflow).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    {
+      body: "@custom-handle please fix the docs for this",
+      isPr: true,
+      draft: false,
+    },
+    { body: "@custom-handle explain this change", isPr: true, draft: true },
+    { body: "@custom-handle implement this issue", isPr: false, draft: false },
+  ])(
+    "dispatches a general request ($isPr PR, $draft draft) through both receivers",
+    async ({ body, isPr, draft }) => {
+      const t = convexTest(schema, modules);
+      const id = (
+        await t.mutation(internal.repos.ensure, {
+          owner: "owner",
+          name: "repo",
+        })
+      )._id;
+      await t.run((ctx) => ctx.db.patch(id, { handle: "custom-handle", reviewAuthors: [] }));
+      await t.mutation(internal.actionVersion.set, {
+        repo: "ecrofaidem/pullfrog@main",
+        version: "0.1.67",
+      });
+      if (draft)
+        vi.mocked(github.getPullRequest).mockResolvedValueOnce({
+          number: 42,
+          title: "Draft PR",
+          body: "Draft context",
+          state: "open",
+          draft: true,
+          head: { ref: "draft-branch", sha: "draft-head" },
+        });
+      const payload = comment(body);
+      const event = isPr
+        ? payload
+        : {
+            ...payload,
+            issue: { number: 42, title: "Issue title", body: "Issue context" },
+          };
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (_url, init) => t.fetch("/webhooks/github", init)),
+      );
+      const req = await request("issue_comment", event);
+      expect((await worker.fetch(req.clone(), env)).status).toBe(202);
+      expect((await worker.fetch(req.clone(), env)).status).toBe(200);
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+      expect(github.dispatchWorkflow).toHaveBeenCalledTimes(1);
+      const args = vi.mocked(github.dispatchWorkflow).mock.calls[0]![0];
+      const envelope = JSON.parse(args.inputs.prompt);
+      expect(args.ref).toBe("main");
+      expect(args.inputs.name).toContain("task");
+      expect(envelope.prompt).toContain(body);
+      expect(envelope.prompt).not.toContain("Review pull request");
+      expect(envelope.event).toMatchObject({
+        trigger: "issue_comment_created",
+        issue_number: 42,
+        comment_id: 24,
+        comment_type: "issue",
+        authorPermission: "write",
+      });
+      if (isPr) {
+        expect(envelope.event).toMatchObject({
+          is_pr: true,
+          branch: draft ? "draft-branch" : "branch",
+        });
+      } else {
+        expect(envelope.event).toMatchObject({
+          title: "Issue title",
+          body: "Issue context",
+        });
+        expect(envelope.event).not.toHaveProperty("is_pr");
+        expect(envelope.event).not.toHaveProperty("branch");
+        expect(github.getPullRequest).not.toHaveBeenCalled();
+        expect(github.createCheckRun).not.toHaveBeenCalled();
+      }
+      expect(github.addReaction).toHaveBeenCalledTimes(1);
+      const runs = await t.run((ctx) => ctx.db.query("runs").collect());
+      expect(runs).toHaveLength(1);
+      expect(runs[0]).toMatchObject({ kind: "task", triggerer: "alice" });
+      expect(runs[0]?.prNumber).toBe(isPr ? 42 : undefined);
+    },
+  );
+
+  it.each(["@custom-handle review", "@CUSTOM-HANDLE review the docs"])(
+    "preserves the explicit review command %s",
+    async (body) => {
+      const t = convexTest(schema, modules);
+      const id = (
+        await t.mutation(internal.repos.ensure, {
+          owner: "owner",
+          name: "repo",
+        })
+      )._id;
+      await t.run((ctx) => ctx.db.patch(id, { handle: "custom-handle" }));
+      await t.mutation(internal.actionVersion.set, {
+        repo: "ecrofaidem/pullfrog@main",
+        version: "0.1.67",
+      });
+      await t.action(internal.dispatch.handleEvent, {
+        delivery: "review",
+        event: "issue_comment",
+        payload: comment(body),
+      });
+      const args = vi.mocked(github.dispatchWorkflow).mock.calls[0]![0];
+      expect(JSON.parse(args.inputs.prompt).prompt).toBe(
+        `Review pull request #42, as requested in the comment below.\n\n${body}`,
+      );
+      expect((await t.run((ctx) => ctx.db.query("runs").collect()))[0]?.kind).toBe("review");
+    },
+  );
+
+  it.each([
+    { body: "@custom-handle please fix this", permission: "read" },
+    { body: "@custom-handle please fix this", permission: "triage" },
+    { body: "@custom-handle please fix this", permission: "none" },
+    { body: "@another please fix this", permission: "write" },
+    { body: "@custom-handle-extra please fix this", permission: "write" },
+    { body: "mail@custom-handle please fix this", permission: "write" },
+    { body: "@custom-handle   ", permission: "write" },
+  ] as const)(
+    "does not dispatch an unauthorized or unmatched request: $body ($permission)",
+    async ({ body, permission }) => {
+      const t = convexTest(schema, modules);
+      const id = (
+        await t.mutation(internal.repos.ensure, {
+          owner: "owner",
+          name: "repo",
+        })
+      )._id;
+      await t.run((ctx) => ctx.db.patch(id, { handle: "custom-handle" }));
+      vi.mocked(github.collaboratorPermission).mockResolvedValueOnce(permission);
+      await t.action(internal.dispatch.handleEvent, {
+        delivery: "ignored",
+        event: "issue_comment",
+        payload: comment(body),
+      });
+      expect(github.dispatchWorkflow).not.toHaveBeenCalled();
+      expect(github.addReaction).not.toHaveBeenCalled();
+      expect(await t.run((ctx) => ctx.db.query("runs").collect())).toEqual([]);
+    },
+  );
+
+  it("still skips explicit reviews of draft PRs", async () => {
+    const t = convexTest(schema, modules);
+    const id = (await t.mutation(internal.repos.ensure, { owner: "owner", name: "repo" }))._id;
+    await t.run((ctx) => ctx.db.patch(id, { handle: "custom-handle" }));
+    vi.mocked(github.getPullRequest).mockResolvedValueOnce({
+      number: 42,
+      title: "Draft",
+      body: null,
+      state: "open",
+      draft: true,
+      head: { ref: "branch", sha: "head" },
+    });
+    await t.action(internal.dispatch.handleEvent, {
+      delivery: "draft-review",
+      event: "issue_comment",
+      payload: comment(),
+    });
+    expect(github.dispatchWorkflow).not.toHaveBeenCalled();
+  });
+
+  it("directs changes requested on a closed PR into a follow-up PR", async () => {
+    const t = convexTest(schema, modules);
+    const id = (await t.mutation(internal.repos.ensure, { owner: "owner", name: "repo" }))._id;
+    await t.run((ctx) => ctx.db.patch(id, { handle: "custom-handle" }));
+    await t.mutation(internal.actionVersion.set, {
+      repo: "ecrofaidem/pullfrog@main",
+      version: "0.1.67",
+    });
+    vi.mocked(github.getPullRequest).mockResolvedValueOnce({
+      number: 42,
+      title: "Closed PR",
+      body: null,
+      state: "closed",
+      draft: false,
+      head: { ref: "branch", sha: "head" },
+    });
+    await t.action(internal.dispatch.handleEvent, {
+      delivery: "closed-task",
+      event: "issue_comment",
+      payload: comment("@custom-handle please fix the docs"),
+    });
+    const args = vi.mocked(github.dispatchWorkflow).mock.calls[0]![0];
+    expect(JSON.parse(args.inputs.prompt).prompt).toContain(
+      "open a follow-up PR from the default branch because this PR is closed",
+    );
+    expect((await t.run((ctx) => ctx.db.query("runs").collect()))[0]?.kind).toBe("task");
   });
 
   it("preserves installation and repository membership changes", async () => {
