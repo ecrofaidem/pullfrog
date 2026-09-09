@@ -280,11 +280,11 @@ export async function configureRepoGit(params: ConfigureRepoGitParams): Promise<
       !currentEmail || currentEmail === "github-actions[bot]@users.noreply.github.com";
 
     if (shouldSetDefaults) {
-      execSync('git config --local user.email "226033991+pullfrog[bot]@users.noreply.github.com"', {
+      execSync('git config --local user.email "324102319+prfrog[bot]@users.noreply.github.com"', {
         cwd: repoDir,
         stdio: "pipe",
       });
-      execSync('git config --local user.name "pullfrog[bot]"', {
+      execSync('git config --local user.name "prfrog[bot]"', {
         cwd: repoDir,
         stdio: "pipe",
       });
