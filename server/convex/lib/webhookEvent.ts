@@ -34,7 +34,12 @@ export type WebhookEvent =
       payload: {
         action: string;
         repository: Repository;
-        issue: { number: number; pull_request: Record<string, never> };
+        issue: {
+          number: number;
+          title?: string;
+          body?: string | null;
+          pull_request?: Record<string, never>;
+        };
         comment: { id: number; body: string; user: User };
       };
     }
@@ -134,22 +139,25 @@ export function selectWebhook(
     case "issue_comment": {
       const issue = object(p.issue);
       const comment = object(p.comment);
-      if (
-        action !== "created" ||
-        !issue.pull_request ||
-        isBot(comment.user ? object(comment.user) : undefined)
-      )
+      if (action !== "created" || isBot(comment.user ? object(comment.user) : undefined))
         return null;
       // A broad candidate check supports every configurable handle. Exact matching and
       // collaborator authorization remain in dispatch.handleIssueComment.
-      if (!text(comment.body).includes("@") || !/\s+review\b/i.test(text(comment.body)))
-        return null;
+      if (!/(^|\s)@\S+\s+\S/.test(text(comment.body))) return null;
       return {
         event,
         payload: {
           action,
           repository,
-          issue: { number: Number(issue.number), pull_request: {} },
+          issue: {
+            number: Number(issue.number),
+            ...(issue.pull_request
+              ? { pull_request: {} }
+              : {
+                  title: text(issue.title),
+                  body: issue.body == null ? null : text(issue.body),
+                }),
+          },
           comment: { id: Number(comment.id), body: text(comment.body), user: user(comment.user) },
         },
       };

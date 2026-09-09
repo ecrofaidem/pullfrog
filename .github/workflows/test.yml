@@ -19,6 +19,8 @@ jobs:
       - run: pnpm test
 
   agents:
+    # Forks opt in after configuring provider credentials and test-repo access.
+    if: github.repository == 'pullfrog/pullfrog' || vars.PULLFROG_AGENT_TESTS == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -54,6 +56,8 @@ jobs:
           - agent: codex
             test: skill-invoke-opencode
           - agent: claude
+            test: codex-auth
+          - agent: codex
             test: codex-auth
           - agent: opencode
             test: skill-invoke-claude
@@ -104,9 +108,14 @@ jobs:
           cache: "pnpm"
 
       - run: pnpm install --frozen-lockfile
+      - uses: nubjs/setup-nub@v0
+        with:
+          nub-version: "0.9.0"
       - run: pnpm runtest ${{ matrix.test }} ${{ matrix.agent }}
 
   agnostic:
+    # Forks opt in after configuring provider credentials and test-repo access.
+    if: github.repository == 'pullfrog/pullfrog' || vars.PULLFROG_AGENT_TESTS == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -138,4 +147,7 @@ jobs:
           cache: "pnpm"
 
       - run: pnpm install --frozen-lockfile
+      - uses: nubjs/setup-nub@v0
+        with:
+          nub-version: "0.9.0"
       - run: pnpm runtest ${{ matrix.test }}

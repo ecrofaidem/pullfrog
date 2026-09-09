@@ -78,7 +78,9 @@ export const redeliverFailed = internalAction({
         skipped++;
         continue;
       }
-      if (selected.event === "pull_request" || selected.event === "issue_comment") {
+      // Automatic reviews describe a particular open PR head. Comment requests
+      // are re-authorized by the dispatcher and can target issues or draft PRs.
+      if (selected.event === "pull_request") {
         const p = selected.payload;
         const owner = p.repository.owner.login;
         const repo = p.repository.name;
@@ -88,17 +90,13 @@ export const redeliverFailed = internalAction({
           continue;
         }
         const auth = await createInstallationToken(installation.id, { repositories: [repo] });
-        const number =
-          selected.event === "pull_request"
-            ? selected.payload.pull_request.number
-            : selected.payload.issue.number;
+        const number = p.pull_request.number;
         const current = await getPullRequest({ token: auth.token, owner, repo, number });
         // A delayed event must not review a closed/draft PR or an obsolete head.
         if (
           current.state !== "open" ||
           current.draft ||
-          (selected.event === "pull_request" &&
-            current.head.sha !== selected.payload.pull_request.head.sha)
+          current.head.sha !== p.pull_request.head.sha
         ) {
           skipped++;
           continue;

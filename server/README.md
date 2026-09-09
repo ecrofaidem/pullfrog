@@ -16,13 +16,32 @@ What it does:
   ```
 - **Dispatcher.** A Cloudflare Worker receives the App's webhooks, verifies their signatures, and rejects unrelated events before they reach Convex. Convex applies the same filter, atomically deduplicates and schedules compact events, then dispatches `pullfrog.yml`. Repository review policy and permission checks remain in `convex/dispatch.ts`.
 
+## Comment requests
+
+Mention the repository's configured handle in a new issue or PR conversation
+comment, followed by a request. For example, `@prfrog please fix the docs for
+this` asks the agent to make the requested changes. You must have write,
+maintain, or admin access to the repository. Bot comments, edited comments,
+bare mentions, and inline PR review comments do not trigger runs.
+
+`@prfrog review` on a PR keeps the explicit review behavior and skips drafts.
+Other requests can run on draft PRs and ordinary issues, regardless of the
+automatic review author allowlist. For changes requested on a closed PR, the
+agent is instructed to open a follow-up PR from the default branch. Repository
+shell and push permissions still apply; restricted push permits feature
+branches and blocks direct pushes to the default branch.
+
+General requests use the existing action's modes and appear as `task` runs.
+Deploy both the Convex backend and webhook Worker to enable them. The existing
+`issue_comment` App subscription and consumer action pin support these requests.
+
 ## Layout
 
 ```
 convex/
   http.ts            route table
   handlers/          one file per endpoint
-  dispatch.ts        webhook → review policy → workflow_dispatch
+  dispatch.ts        webhook → request policy → workflow_dispatch
   repos.ts           settings, installations, RepoSettings mapping
   secrets.ts         encrypted store + refresh lease
   runs.ts            run rows for the dashboard, stale-run sweep
@@ -133,8 +152,10 @@ expire after seven days, in batches of 500; review history remains stored.
 GitHub does not automatically retry failed deliveries. A five-minute recovery
 cron scans up to 1,000 recent delivery attempts and retries transport or 5xx
 failures at most twice within a 30-minute window. Each pass retries at most 20
-events. It skips accepted deliveries, irrelevant events, closed/draft PRs, and
-superseded PR heads. Failed installation changes require reconciliation against
+events. It skips accepted deliveries, irrelevant events, and automatic reviews
+of closed/draft PRs or superseded PR heads. Comment requests pass through the
+dispatcher's current repository and commenter permission checks. Failed
+installation changes require reconciliation against
 GitHub's current membership; replaying an old removal could undo a newer addition.
 Older failures and a scan-limit warning also require operator review.
 
