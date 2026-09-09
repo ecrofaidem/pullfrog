@@ -51,7 +51,7 @@ export default {
       const response = await fetch(env.CONVEX_WEBHOOK_URL, {
         method: "POST",
         body: raw,
-        redirect: "error",
+        redirect: "manual",
         signal: AbortSignal.timeout(8_000),
         headers: {
           "content-type": "application/json",
@@ -60,6 +60,11 @@ export default {
           "x-github-delivery": delivery,
         },
       });
+      // Workers does not implement redirect: "error". Never send GitHub's
+      // signed payload to a redirect target or report a redirect as acceptance.
+      if (response.status >= 300 && response.status < 400) {
+        throw new Error("webhook backend returned a redirect");
+      }
       console.log(JSON.stringify({ event, outcome: "forwarded", status: response.status }));
       return response;
     } catch {

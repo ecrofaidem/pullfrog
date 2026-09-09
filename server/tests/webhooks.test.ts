@@ -164,7 +164,7 @@ describe("webhook ingestion", () => {
     expect((await worker.fetch(req.clone(), env)).status).toBe(200);
     expect(fetch).toHaveBeenCalledWith(
       env.CONVEX_WEBHOOK_URL,
-      expect.objectContaining({ body: raw, redirect: "error" }),
+      expect.objectContaining({ body: raw, redirect: "manual" }),
     );
     const scheduled = await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect());
     expect(scheduled).toHaveLength(1);
@@ -200,6 +200,18 @@ describe("webhook ingestion", () => {
     expect((await worker.fetch(await request("workflow_run", workflow()), env)).status).toBe(503);
     vi.mocked(fetch).mockRejectedValueOnce(new Error("timeout"));
     expect((await worker.fetch(await request("workflow_run", workflow()), env)).status).toBe(503);
+  });
+
+  it("rejects upstream redirects without forwarding the signed body elsewhere", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(null, { status: 307, headers: { location: "https://other.example" } }),
+    );
+    expect((await worker.fetch(await request("workflow_run", workflow()), env)).status).toBe(503);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledWith(
+      env.CONVEX_WEBHOOK_URL,
+      expect.objectContaining({ redirect: "manual" }),
+    );
   });
 
   it("preserves long review text and custom handles without truncation", () => {
