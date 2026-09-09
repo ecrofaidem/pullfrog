@@ -10,6 +10,7 @@ import { countLines, createDiffCoverageState } from "../utils/diffCoverage.ts";
 import { $git, $gitFetchWithDeepen, DEEPEN_RETRY_DEPTH } from "../utils/gitAuth.ts";
 import { executeLifecycleHook } from "../utils/lifecycle.ts";
 import { computeIncrementalDiff } from "../utils/rangeDiff.ts";
+import { createReviewCoverage } from "../utils/reviewCoverage.ts";
 import { $ } from "../utils/shell.ts";
 import * as yes from "../yes/index.ts";
 import { rejectIfLeadingDash } from "./git.ts";
@@ -157,6 +158,8 @@ export type CheckoutPrResult = {
   url: string;
   headRepo: string;
   diffPath: string;
+  changedFilesPath?: string | undefined;
+  reviewId?: string | undefined;
   impactPath?: string | undefined;
   incrementalDiffPath?: string | undefined;
   toc: string;
@@ -778,10 +781,30 @@ export function CheckoutPrTool(ctx: ToolContext) {
 
     // fetch PR files and format with line numbers
     const formatResult = await fetchAndFormatPrDiff(ctx, pull_number);
+    if (ctx.agentId === "codex") {
+      const latest = (await ctx.octokit.rest.pulls.get({ owner: ctx.repo.owner, repo: ctx.repo.name, pull_number })).data;
+      if (latest.head.sha !== checkoutSha || latest.base.sha !== prResponse.data.base.sha) {
+        primary.reviewCoverage = undefined;
+        throw new Error("PR revision changed while reading the diff. Retry checkout_pr before reviewing.");
+      }
+    }
     const diffPreview = formatResult.content.split("\n").slice(0, 100).join("\n");
     log.debug(`formatted diff preview (first 100 lines):\n${diffPreview}`);
     const diffPath = join(tempDir, `pr-${pull_number}-${headShort}.diff`);
     writeFileSync(diffPath, formatResult.content);
+    if (ctx.agentId === "codex") {
+      const coverage = createReviewCoverage({
+        pullNumber: pull_number,
+        headSha: checkoutSha,
+        baseSha: prResponse.data.base.sha,
+        beforeSha: primary.beforeSha,
+        changedFiles: formatResult.files.flatMap(file => file.previous_filename ? [file.previous_filename, file.filename] : [file.filename]),
+        changedFilesPath: join(tempDir, `pr-${pull_number}-${headShort}-changed-files.txt`),
+        diffPath,
+        incrementalDiffPath,
+      });
+      if (primary.reviewCoverage?.scope.id !== coverage.scope.id) primary.reviewCoverage = coverage;
+    }
     log.debug(`wrote diff to ${diffPath} (${formatResult.content.length} bytes)`);
     primary.diffCoverage = createDiffCoverageState({
       diffPath,
@@ -926,6 +949,8 @@ export function CheckoutPrTool(ctx: ToolContext) {
       headRepo: pr.headRepoFullName,
       diffPath,
       impactPath,
+      changedFilesPath: primary.reviewCoverage?.scope.changedFilesPath,
+      reviewId: primary.reviewCoverage?.scope.id,
       incrementalDiffPath,
       toc: formatResult.toc,
       commitCount,

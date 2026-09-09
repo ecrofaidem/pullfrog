@@ -16,6 +16,48 @@ Deliberate divergences from upstream in the action tree (expect a merge conflict
 - `skills/write-good-docs/`, `skills/simple-english/`, `utils/skills.ts`, `utils/instructions.ts`, and `agents/codex.ts` — all three harnesses load the complete writing skills before drafting review comments or final reports. The installer copies references and scripts into the agent's temporary home. Codex reads the skill files; OpenCode and Claude use their native skill tools. Source versions and SHA-256 hashes are recorded in `skills/report-skills.json`; supplied skill files remain unchanged. The added `write-good-docs/ATTRIBUTION.md` documents the missing source notice. To update a skill, replace its complete directory from the source, update its manifest entry, and run `pnpm exec vitest run utils/skills.test.ts` plus the report-writing agent smoke test.
 - `utils/reviewConventions.ts`, `modes.ts`, and `agents/reviewer.ts` — full reviews, incremental reviews, and review specialists read applicable repository guidance before assessing conventions. Findings cite written requirements, account for exceptions, and use severity based on consequences. UI changes also require an internal map of existing composed components and inspected callers, including inline UI. Findings must identify a written rule, a suitable existing component or compatible extension, and a concrete consequence. Valid feature wrappers and documented exceptions remain permitted. The agent records consulted guidance in its internal run logs. This is prompt guidance, not a machine-enforced read-coverage gate or persistent learning.
 
+## Single-session Codex reviews
+
+Native Codex Review and IncrementalReview run baseline correctness, conventions,
+documentation, and verification passes, plus applicable lenses for control,
+propagation, data, frontend state, executable procedures, and lifecycle recovery.
+Other harnesses retain their specialist dispatch flow. Codex subagents remain
+disabled.
+
+`checkout_pr` exports `changedFilesPath` with the full PR's old and new rename
+paths, and `reviewId` identifying the revision and diff artifacts. A repository
+with a governance provider builds its manifest from that file. The
+`review_checkpoint` tool imports manifest version 2: `changed_files`,
+`instruction_files` with SHA-256 hashes, and `mechanical_checks` with `id`,
+`source`, `class`, `applies_to_diff`, and `enforced_by` for invariants. The
+provider owns rule discovery and applicability. Repositories without a provider
+record where the agent checked; their baseline and lens passes still apply.
+
+The checkpoint requires a decision for every lens and evidence for each selected
+pass and applicable sweep. Invariants, procedures, and excluded checks are
+accounted for without asking the reviewer to rerun CI or judge author behavior.
+Full-PR manifest scope is conservative; incremental findings still require a
+causal link to the new delta. Repository guidance supplies domain-specific checks.
+
+Review submission and incremental acknowledgement reject incomplete coverage
+unless the session explicitly declares a limitation. Such reports cannot approve
+and use a harness-generated incomplete summary, with verified findings in inline
+comments. Publication also rechecks the remote head and base revision. The completion
+loop resumes unfinished coverage work. A new revision, altered diff artifact,
+or changed guidance invalidates its prior evidence. Evidence structure is
+validated; source comprehension and finding correctness still require judgment.
+Detailed records stay in the run transcript, with only actionable findings and
+material limitations in the posted review.
+
+Implementation: `utils/reviewLenses.ts`, `utils/reviewCoverage.ts`,
+`mcp/reviewCheckpoint.ts`, and their checkout, publication, and completion hooks.
+The unit tests exercise invalid manifests, rename scope, stale revisions,
+failed sweeps, missing evidence, and both review modes:
+
+```bash
+pnpm exec vitest run utils/reviewCoverage.test.ts
+```
+
 ## Repository conventions evaluation
 
 The opt-in synthetic evaluation covers full and incremental review scopes,
