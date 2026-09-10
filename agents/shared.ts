@@ -49,7 +49,6 @@ export interface SummaryStale {
 }
 
 export interface PostRunIssues {
-  reviewCoverage?: string;
   stopHook?: StopHookFailure;
   dirtyTree?: string;
   /** populated when the rolling PR summary file is byte-identical to its
@@ -71,7 +70,6 @@ export interface PostRunIssues {
 
 export function hasPostRunIssues(issues: PostRunIssues): boolean {
   return (
-    issues.reviewCoverage !== undefined ||
     issues.stopHook !== undefined ||
     issues.dirtyTree !== undefined ||
     issues.summaryStale !== undefined ||

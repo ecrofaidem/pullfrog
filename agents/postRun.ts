@@ -3,7 +3,6 @@ import { LIFECYCLE_HOOK_TIMEOUT_MS } from "../lifecycle.ts";
 import { NON_COMMITTING_MODES } from "../modes.ts";
 import type { ToolState } from "../toolState.ts";
 import { log } from "../utils/cli.ts";
-import { incompleteReviewIssue } from "../utils/reviewCoverage.ts";
 import {
   SPAWN_ACTIVITY_TIMEOUT_CODE,
   SPAWN_TIMEOUT_CODE,
@@ -220,8 +219,6 @@ export async function collectPostRunIssues(
   options: { skipSummaryStale?: boolean } = {}
 ): Promise<PostRunIssues> {
   const issues: PostRunIssues = {};
-  const coverageIssue = await incompleteReviewIssue(ctx.toolState);
-  if (coverageIssue) issues.reviewCoverage = coverageIssue;
   // stop hook is disabled — production audit (May 2026) showed 8/9 configured
   // scripts are foot-guns (duplicates of prepushScript, run on non-committing
   // modes against unchanged trees) burning the retry budget on un-fixable
@@ -265,7 +262,6 @@ export function buildPostRunPrompt(issues: PostRunIssues): string {
   // both hard-fail gates first (`stopHook` → `unsubmittedReview`), then the
   // soft gates (`dirtyTree` → `summaryStale`).
   const parts: string[] = [];
-  if (issues.reviewCoverage) parts.push(issues.reviewCoverage);
   if (issues.stopHook) parts.push(buildStopHookPrompt(issues.stopHook));
   if (issues.unsubmittedReview) {
     parts.push(buildUnsubmittedReviewPrompt(issues.unsubmittedReview));
@@ -290,7 +286,6 @@ export async function finalizeAgentResult<R extends AgentResult>(params: {
 }): Promise<R> {
   if (!params.result.success) return params.result;
   const issues = await collectPostRunIssues(params.ctx, { skipSummaryStale: true });
-  if (issues.reviewCoverage) return { ...params.result, success: false, error: issues.reviewCoverage };
   if (issues.stopHook) {
     return {
       ...params.result,
@@ -547,8 +542,6 @@ export async function runPostRunRetryLoop<R extends AgentResult>(params: {
     // write on its own, so no further coordination is needed here.
     const onlySummaryStale =
       issues.summaryStale !== undefined &&
-      issues.reviewCoverage === undefined &&
-      issues.unsubmittedReview === undefined &&
       issues.stopHook === undefined &&
       issues.dirtyTree === undefined;
     const preResume = result;
@@ -581,10 +574,6 @@ export async function runPostRunRetryLoop<R extends AgentResult>(params: {
     // a still-unchanged file at this point is the agent's deliberate
     // choice.
     finalIssues = await collectPostRunIssues(params.ctx, { skipSummaryStale: true });
-  }
-
-  if (result.success && finalIssues.reviewCoverage) {
-    return { ...result, success: false, error: finalIssues.reviewCoverage, usage: aggregatedUsage };
   }
 
   if (result.success && finalIssues.stopHook) {

@@ -9,7 +9,6 @@ import { countLinesInRanges, getDiffCoverageBreakdown } from "../utils/diffCover
 import { fixDoubleEscapedString } from "../utils/fixDoubleEscapedString.ts";
 import { isPullfrog } from "../utils/isPullfrog.ts";
 import { patchWorkflowRunFields } from "../utils/patchWorkflowRunFields.ts";
-import { reviewPublicationBody } from "../utils/reviewCoverage.ts";
 import * as yes from "../yes/index.ts";
 import { deleteProgressComment } from "./comment.ts";
 import type { ToolContext } from "./server.ts";
@@ -637,7 +636,6 @@ export function CreatePullRequestReviewTool(ctx: ToolContext) {
           );
         }
         if (body) body = fixDoubleEscapedString(body);
-        body = await reviewPublicationBody(ctx, body, pull_number, approved === true);
 
         // a review posts permanently and cannot be retracted by any tool we
         // expose, so a placeholder probe is unrecoverable. see
