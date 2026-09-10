@@ -20,7 +20,11 @@ import {
   DEFAULT_ACTIVITY_CHECK_INTERVAL_MS,
 } from "./utils/activity.ts";
 import { resolveAgent, resolveModel } from "./utils/agent.ts";
-import { buildRejectedCredentialError, validateAgentApiKey } from "./utils/apiKeys.ts";
+import {
+  buildRejectedCredentialError,
+  NoUsableCredentialError,
+  validateAgentApiKey,
+} from "./utils/apiKeys.ts";
 import { formatCommercialGateSummary } from "./utils/billingErrors.ts";
 import { resolveBody } from "./utils/body.ts";
 import { log } from "./utils/cli.ts";
@@ -61,10 +65,10 @@ import {
 } from "./utils/packageManager.ts";
 import { aggregateUsage, patchWorkflowRunFields } from "./utils/patchWorkflowRunFields.ts";
 import { resolveOutputSchema, resolvePayload, resolvePromptInput } from "./utils/payload.ts";
-import { runProxyResolution } from "./utils/proxy.ts";
+import { resolveTrialFallback, runProxyResolution } from "./utils/proxy.ts";
 import { fetchPreviousSnapshot, persistSummary, seedSummaryFile } from "./utils/prSummary.ts";
 import { handleAgentResult } from "./utils/run.ts";
-import { isActionPinnedToSha, resolveRunContextData } from "./utils/runContextData.ts";
+import { resolveRunContextData } from "./utils/runContextData.ts";
 import { ossEffortFloor } from "./utils/runEffort.ts";
 import { renderRunError } from "./utils/runErrorRenderer.ts";
 import {
@@ -145,7 +149,11 @@ export async function main(): Promise<MainResult> {
   // get job token for initial API calls
   const jobToken = getJobToken();
   const initialOctokit = createOctokit(jobToken);
-  const runContext = await resolveRunContextData({ octokit: initialOctokit, token: jobToken });
+  const runContext = await resolveRunContextData({
+    octokit: initialOctokit,
+    token: jobToken,
+    runType: typeof resolvedPromptInput === "string" ? undefined : resolvedPromptInput.type,
+  });
   timer.checkpoint("runContextData");
 
   const payload = resolvePayload(resolvedPromptInput, runContext.repoSettings);
@@ -161,7 +169,6 @@ export async function main(): Promise<MainResult> {
   });
   toolState.model = payload.model;
   toolState.oss = runContext.oss;
-  toolState.shaPinned = isActionPinnedToSha();
   // seed the comment target before every terminal branch. `reportErrorToComment`
   // reads only toolState, so silent triggers otherwise have nowhere to post.
   if (payload.event.issue_number !== undefined) {
@@ -464,7 +471,7 @@ export async function main(): Promise<MainResult> {
 
     vertexCredentials = materializeVertexCredentials({ model: resolvedModel });
 
-    const agent = resolveAgent({
+    let agent = resolveAgent({
       model: resolvedModel,
       proxyModel: payload.proxyModel,
       // the account opt-in and the canary arm are both admissions to codex, so
@@ -505,15 +512,53 @@ export async function main(): Promise<MainResult> {
     // set was captured BEFORE the proxy mint, so it doesn't see the
     // openrouter slug — validating would spuriously throw.
     if (!payload.proxyModel) {
-      validateAgentApiKey({
-        agent,
-        model: effectiveModel,
-        authorized: getAuthorizedModels(),
-        owner: runContext.repo.owner,
-        name: runContext.repo.name,
-        secretsUnavailable: runContext.secretsUnavailable,
-        routerUnfunded: runContext.routerUnfunded,
-      });
+      try {
+        validateAgentApiKey({
+          agent,
+          model: effectiveModel,
+          authorized: getAuthorizedModels(),
+          owner: runContext.repo.owner,
+          name: runContext.repo.name,
+          secretsUnavailable: runContext.secretsUnavailable,
+          routerUnfunded: runContext.routerUnfunded,
+        });
+      } catch (missingKey) {
+        // the trial fallback fires HERE and nowhere earlier: this is the first
+        // moment anything knows that no credential could pay for the run.
+        // `validateAgentApiKey` has just searched everything the server cannot
+        // see — workflow `env:`, GitHub Actions secrets, the harness-specific
+        // shapes — so an earlier mint would have downgraded accounts that were
+        // fine. the server only granted permission; the verdict is here.
+        //
+        // and only THAT verdict: the same function also throws when opencode
+        // could not start, when a Bedrock/Vertex/Azure/OpenAI-compatible setup
+        // is half-wired, and when we could not read our own stored secrets.
+        // every one of those means the user HAS brought a credential, so
+        // falling back would swap their model for a cheap one and swallow the
+        // message that says what to fix.
+        const funded =
+          runContext.trialFallback && missingKey instanceof NoUsableCredentialError
+            ? await resolveTrialFallback({
+                payload,
+                configuredModel: effectiveModel,
+                oidcCredentials,
+                repo: runContext.repo,
+                toolState,
+              })
+            : false;
+        if (!funded) throw missingKey;
+        // the run is now Router-served, and only opencode speaks that provider —
+        // the harness picked above was chosen for a credential that does not
+        // exist. re-resolving is not optional bookkeeping: leaving `agent` alone
+        // sends a proxy run to claude-code or codex, which then dies on the same
+        // missing key this branch just worked around.
+        agent = resolveAgent({
+          model: resolvedModel,
+          proxyModel: payload.proxyModel,
+          codexAgent: runContext.repoSettings.codexAgent || payload.codexArm === true,
+        });
+        toolState.agent = agent.name;
+      }
     }
 
     await setupGit({

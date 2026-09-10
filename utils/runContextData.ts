@@ -30,36 +30,20 @@ export interface RunContextData {
   /** the Router was declined because the wallet is empty. see
    * `RunContext.routerUnfunded`. */
   routerUnfunded?: boolean | undefined;
+  /** the account is inside its no-card trial and nothing else could fund this
+   * run, so the runner MAY mint a subsidized key on the efficient tier if its
+   * own key search comes up dry. a permission, not a routing decision — the
+   * server cannot see workflow `env:` keys. see `RunContext.trialFallback`. */
+  trialFallback?: boolean | undefined;
 }
 
 interface ResolveRunContextDataParams {
   octokit: OctokitWithPlugins;
   token: string;
-}
-
-/**
- * true when the action is pinned to a full commit SHA (vs the moving `@v0`
- * tag or a branch). GitHub runs the action's `post:` hook (and reads
- * `action.yml`) straight from the checked-out action ref, so a SHA pin freezes
- * that checkout forever: the main agent still floats to the latest `^semver`
- * via the npm bootstrap (this code is proof — it ran), but the post-run
- * cleanup step keeps executing the pinned commit's source and never receives
- * fixes. surfaced in the log and PR footers to nudge repos back to `@v0`.
- */
-export function isActionPinnedToSha(): boolean {
-  const ref = process.env.GITHUB_ACTION_REF;
-  return !!ref && /^[0-9a-f]{40}$/i.test(ref);
-}
-
-function warnIfPinnedToSha(): void {
-  if (isActionPinnedToSha()) {
-    log.warning(
-      `» pinned to a commit SHA (${process.env.GITHUB_ACTION_REF}); the post-run cleanup step is ` +
-        "frozen at that commit and won't receive fixes. keep the SHA fresh with Dependabot, or " +
-        "pin to `pullfrog/pullfrog@v0` if your org doesn't require full-SHA action pinning — " +
-        "see https://docs.pullfrog.com/versioning"
-    );
-  }
+  /** the dispatch payload's run type, read before the payload is resolved
+   * because run-context is fetched first and needs it to pick this trigger's
+   * model override. */
+  runType?: string | undefined;
 }
 
 /**
@@ -76,7 +60,6 @@ export async function resolveRunContextData(
   log.info(
     `» running Pullfrog v${packageJson.version}${actionRef ? ` (ref: ${actionRef})` : ""}...`
   );
-  warnIfPinnedToSha();
 
   const repoContext = parseRepoContext();
 
@@ -106,7 +89,7 @@ export async function resolveRunContextData(
       retries: [100, 500],
       bail: (error) => !isTransientOctokitError(error),
     })(),
-    fetchRunContext({ token: params.token, repoContext, oidcToken }),
+    fetchRunContext({ token: params.token, repoContext, oidcToken, runType: params.runType }),
   ]);
 
   return {
@@ -128,5 +111,6 @@ export async function resolveRunContextData(
       runContext.secretsUnavailable ||
       (!!process.env.ACTIONS_ID_TOKEN_REQUEST_URL && oidcToken === undefined),
     routerUnfunded: runContext.routerUnfunded,
+    trialFallback: runContext.trialFallback,
   };
 }

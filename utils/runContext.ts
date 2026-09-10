@@ -111,6 +111,10 @@ export interface RunContext {
    * funding state. see wiki/billing.md.
    */
   routerUnfunded?: boolean | undefined;
+  /** the account is inside its no-card trial and nothing else could fund this
+   * run — the runner may mint a subsidized efficient-tier key if, and only if,
+   * its own key search comes up dry. see the run-context route. */
+  trialFallback?: boolean | undefined;
 }
 
 const defaultSettings: RepoSettings = {
@@ -168,6 +172,9 @@ export async function fetchRunContext(params: {
   token: string;
   repoContext: RepoContext;
   oidcToken?: string | undefined;
+  /** `payload.type` — lets the server apply this repo's per-trigger model
+   * override, which it cannot derive from owner/repo alone. */
+  runType?: string | undefined;
 }): Promise<RunContext> {
   const timeoutMs = 30000;
   const controller = new AbortController();
@@ -181,8 +188,9 @@ export async function fetchRunContext(params: {
       headers["X-GitHub-OIDC-Token"] = params.oidcToken;
     }
 
+    const query = params.runType ? `?type=${encodeURIComponent(params.runType)}` : "";
     const response = await apiFetch({
-      path: `/api/repo/${params.repoContext.owner}/${params.repoContext.name}/run-context`,
+      path: `/api/repo/${params.repoContext.owner}/${params.repoContext.name}/run-context${query}`,
       headers,
       signal: controller.signal,
     });
@@ -220,6 +228,7 @@ export async function fetchRunContext(params: {
       dbSecrets?: Record<string, string>;
       secretsUnavailable?: boolean;
       routerUnfunded?: boolean;
+      trialFallback?: boolean;
     } | null;
 
     if (data === null) {
@@ -247,6 +256,7 @@ export async function fetchRunContext(params: {
       dbSecrets: data.dbSecrets,
       secretsUnavailable: data.secretsUnavailable,
       routerUnfunded: data.routerUnfunded,
+      trialFallback: data.trialFallback,
     };
   } catch {
     // network drop, abort at the 30s timeout, or an unparseable body — we never

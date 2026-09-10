@@ -44,6 +44,7 @@ import { log } from "../utils/cli.ts";
 import { installCodexHome } from "../utils/codexHome.ts";
 import type { OAuthWriteback } from "../utils/codexRefreshDetect.ts";
 import { installFromNpmTarball } from "../utils/install.ts";
+import { OAUTH_WRITEBACK_STATE } from "../utils/oauthWriteback.ts";
 import { findProviderErrorMatch } from "../utils/providerErrors.ts";
 import { resolveRunEffort } from "../utils/runEffort.ts";
 import { filterEnv } from "../utils/secrets.ts";
@@ -551,6 +552,7 @@ const CODEX_MODEL_PRICING: Record<
   string,
   { input: number; cacheRead: number; cacheWrite: number; output: number }
 > = {
+  "gpt-6-astra": { input: 10, cacheRead: 1, cacheWrite: 12.5, output: 50 },
   "gpt-5.6-sol": { input: 5, cacheRead: 0.5, cacheWrite: 6.25, output: 30 },
   "gpt-5.6-luna": { input: 0.2, cacheRead: 0.02, cacheWrite: 0.25, output: 1.2 },
   "gpt-5.6-terra": { input: 2, cacheRead: 0.2, cacheWrite: 2.5, output: 12 },
@@ -864,7 +866,7 @@ export const codex = agent({
       // hook diffs it and PUTs the new blob back to Pullfrog. see
       // wiki/codex-auth.md — a rotation we fail to persist expires in ~1h.
       core.saveState(
-        "oauth_writeback",
+        OAUTH_WRITEBACK_STATE,
         JSON.stringify({
           apiToken: ctx.apiToken,
           entries: [

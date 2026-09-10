@@ -30,9 +30,9 @@ function buildPrBodyWithFooter(ctx: ToolContext, body: string): string {
     fallbackFrom: ctx.toolState.modelFallback?.from,
     clamped: ctx.toolState.modelClamped,
     unselectedProxyDefault: ctx.toolState.unselectedProxyDefault,
-    shaPinned: ctx.toolState.shaPinned,
     oss: ctx.oss,
     toolState: ctx.toolState,
+    owner: ctx.repo.owner,
   });
 
   const bodyWithoutFooter = stripExistingFooter(fixDoubleEscapedString(body));
