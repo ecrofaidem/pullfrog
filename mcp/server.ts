@@ -43,7 +43,6 @@ import { SetOutputTool } from "./output.ts";
 import { CreatePullRequestTool, UpdatePullRequestBodyTool } from "./pr.ts";
 import { PullRequestInfoTool } from "./prInfo.ts";
 import { CreatePullRequestReviewTool } from "./review.ts";
-import { ReviewCheckpointTool } from "./reviewCheckpoint.ts";
 import {
   GetReviewCommentsTool,
   ListPullRequestReviewsTool,
@@ -186,7 +185,6 @@ function buildCommonTools(ctx: ToolContext, outputSchema?: JsonSchema): Pullfrog
   }
 
   const isStandalone = ctx.payload.event.trigger === "unknown";
-  if (ctx.agentId === "codex") tools.push(ReviewCheckpointTool(ctx));
   if (isStandalone || outputSchema) {
     tools.push(SetOutputTool(ctx, outputSchema));
   }
