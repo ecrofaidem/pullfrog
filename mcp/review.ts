@@ -1236,10 +1236,10 @@ export async function createAndSubmitWithFooter(
       fallbackFrom: ctx.toolState.modelFallback?.from,
       clamped: ctx.toolState.modelClamped,
       unselectedProxyDefault: ctx.toolState.unselectedProxyDefault,
-      shaPinned: ctx.toolState.shaPinned,
       oss: ctx.oss,
       toolState: ctx.toolState,
       review: { inlineComments: opts.inlineComments ?? 0, droppedComments: opts.droppedComments ?? 0 },
+      owner: ctx.repo.owner,
     });
 
     return await ctx.octokit.rest.pulls.submitReview({

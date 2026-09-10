@@ -45,4 +45,27 @@ describe("frog facts in run stats", () => {
     expect(comment).toContain(smallText);
     expect(stripExistingFooter(comment)).toBe(body);
   });
+
+  it("keeps trial disclosure and fork stats together without restoring hosted action links", () => {
+    const toolState = initToolState({
+      owner: "ecrofaidem", name: "monorepo", dir: "/tmp/monorepo", progressComment: undefined,
+    });
+    toolState.agent = "codex";
+    const body = "Review complete.";
+    const footer = buildPullfrogFooter({
+      owner: "ecrofaidem",
+      model: "openai/gpt-astra",
+      clamped: { from: "openai/gpt-astra", reason: "trial" },
+      toolState,
+      review: { inlineComments: 2, droppedComments: 1 },
+      customParts: ["[Fix all](https://pullfrog.com/trigger)"],
+    });
+    expect(footer).toContain("Pullfrog covered this run's model usage.");
+    expect(footer).toContain("https://pullfrog.com/console/ecrofaidem");
+    expect(footer).toContain("<details><summary>Run stats</summary>");
+    expect(footer).toContain("- Review: 2 inline comments (1 dropped: outside the diff)");
+    expect(footer.match(/Frog fact/g)).toHaveLength(1);
+    expect(footer).not.toContain("https://pullfrog.com/trigger");
+    expect(stripExistingFooter(body + footer)).toBe(body);
+  });
 });

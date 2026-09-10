@@ -46,9 +46,9 @@ export async function reportErrorToComment(ctx: ReportErrorParams): Promise<void
     fallbackFrom: ctx.toolState.modelFallback?.from,
     clamped: ctx.toolState.modelClamped,
     unselectedProxyDefault: ctx.toolState.unselectedProxyDefault,
-    shaPinned: ctx.toolState.shaPinned,
     oss: ctx.toolState.oss,
     toolState: ctx.toolState,
+    owner: repoContext.owner,
   });
 
   const body = `${formattedError}${footer}`;
