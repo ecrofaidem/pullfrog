@@ -6,19 +6,10 @@ import { isFreshCodexQuota } from "../../utils/codexQuota";
 import type { CodexPoolStatus } from "../../utils/codexPoolProtocol";
 import { internalMutation, internalQuery, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { timingSafeEqual } from "./lib/crypto";
 
 const scope = { owner: v.string(), repo: v.union(v.string(), v.null()) };
 const repository = { owner: v.string(), repo: v.string() };
 const sealedAuth = { providerAccountId: v.string(), ciphertext: v.string(), iv: v.string() };
-const credentialFence = {
-  accountId: v.id("codexAccounts"),
-  generation: v.number(),
-  credentialVersion: v.number(),
-  assignmentId: v.string(),
-  ownershipToken: v.string(),
-};
-
 function normalizeScope<T extends { owner: string; repo: string | null }>(args: T): T {
   const owner = args.owner.trim().toLowerCase();
   const repo = args.repo === null ? null : args.repo.trim().toLowerCase();
@@ -52,18 +43,6 @@ async function scopedAccount(
     throw new Error("Account does not belong to this scope");
   }
   return row;
-}
-
-function ownsCredentials(
-  row: Doc<"codexAccounts"> | null,
-  args: { generation: number; credentialVersion: number; assignmentId: string; ownershipToken: string },
-): row is Doc<"codexAccounts"> {
-  return row !== null &&
-    row.generation === args.generation &&
-    row.credentialVersion === args.credentialVersion &&
-    row.activeAssignmentId === args.assignmentId &&
-    row.activeOwnershipToken !== undefined &&
-    timingSafeEqual(row.activeOwnershipToken, args.ownershipToken);
 }
 
 export const enroll = internalMutation({
@@ -193,51 +172,5 @@ export const getPool = internalQuery({
     return ctx.db.query("codexPools")
       .withIndex("by_repo", (q) => q.eq("owner", args.owner).eq("repo", args.repo))
       .unique();
-  },
-});
-
-/** Internal preflight input only. Never expose all these ciphertexts to a runner. */
-export const getPoolAccounts = internalQuery({
-  args: repository,
-  handler: async (ctx, input): Promise<Doc<"codexAccounts">[]> => {
-    const args = normalizeScope(input);
-    const pool = await ctx.db.query("codexPools")
-      .withIndex("by_repo", (q) => q.eq("owner", args.owner).eq("repo", args.repo))
-      .unique();
-    if (!pool?.enabled) return [];
-    const rows: Doc<"codexAccounts">[] = [];
-    for (const id of pool.accountIds) {
-      const row = await ctx.db.get(id);
-      if (!row || row.owner !== args.owner || (row.repo !== null && row.repo !== args.repo)) {
-        throw new Error("Pool member does not belong to this repository scope");
-      }
-      rows.push(row);
-    }
-    return rows;
-  },
-});
-
-/** A runner-owned chain can advance only under its exact credential version. */
-export const updateCredentials = internalMutation({
-  args: { ...credentialFence, ...sealedAuth },
-  handler: async (ctx, args): Promise<boolean> => {
-    const row = await ctx.db.get(args.accountId);
-    if (!ownsCredentials(row, args) || row.providerAccountId !== args.providerAccountId) return false;
-    await ctx.db.patch(row._id, {
-      ciphertext: args.ciphertext, iv: args.iv, credentialVersion: row.credentialVersion + 1,
-      authState: "ready", updatedAt: Date.now(),
-    });
-    return true;
-  },
-});
-
-/** Delayed provider failures must not poison replacement or refreshed credentials. */
-export const markAuthState = internalMutation({
-  args: { ...credentialFence, authState: v.union(v.literal("rejected"), v.literal("uncertain")) },
-  handler: async (ctx, args): Promise<boolean> => {
-    const row = await ctx.db.get(args.accountId);
-    if (!ownsCredentials(row, args)) return false;
-    await ctx.db.patch(row._id, { authState: args.authState, credentialVersion: row.credentialVersion + 1, updatedAt: Date.now() });
-    return true;
   },
 });

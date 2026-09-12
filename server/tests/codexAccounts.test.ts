@@ -49,14 +49,10 @@ describe("named Codex accounts", () => {
   it("requires explicit membership and defaults new pools to disabled", async () => {
     const t = convexTest(schema, modules);
     const id = await t.mutation(internal.codexAccounts.enroll, account);
-    expect(await t.query(internal.codexAccounts.getPoolAccounts, { owner: "owner", repo: "repo" })).toEqual([]);
     expect(await t.query(internal.codexAccounts.list, { owner: "owner", repo: "repo" })).toEqual([]);
     await t.mutation(internal.codexAccounts.configurePool, { owner: "owner", repo: "repo", accountIds: [id] });
     expect(await t.query(internal.codexAccounts.getPool, { owner: "owner", repo: "repo" })).toMatchObject({ enabled: false, accountIds: [id] });
-    expect(await t.query(internal.codexAccounts.getPoolAccounts, { owner: "owner", repo: "repo" })).toEqual([]);
     await t.mutation(internal.codexAccounts.configurePool, { owner: "owner", repo: "repo", accountIds: [id], enabled: true });
-    expect(await t.query(internal.codexAccounts.getPoolAccounts, { owner: "owner", repo: "repo" })).toMatchObject([{ _id: id }]);
-    expect(await t.query(internal.codexAccounts.getPoolAccounts, { owner: "owner", repo: "other" })).toEqual([]);
   });
 
   it("serializes concurrent enrollment of the same subscription", async () => {
@@ -88,58 +84,18 @@ describe("named Codex accounts", () => {
     const first = await t.mutation(internal.codexAccounts.enroll, account);
     const second = await t.mutation(internal.codexAccounts.enroll, { ...account, providerAccountId: "subscription-two", label: "Secondary" });
     await t.mutation(internal.codexAccounts.configurePool, { owner: "owner", repo: "repo", accountIds: [second, first], enabled: true });
-    const rows = await t.query(internal.codexAccounts.getPoolAccounts, { owner: "owner", repo: "repo" });
-    expect(rows.map((row) => row._id)).toEqual([second, first]);
     await t.mutation(internal.codexAccounts.configurePool, { owner: "owner", repo: "repo", accountIds: [first, second] });
     expect(await t.query(internal.codexAccounts.getPool, { owner: "owner", repo: "repo" })).toMatchObject({ enabled: true, accountIds: [first, second] });
   });
 
-  it("reenrolls without freeing an occupied account and fences stale writes", async () => {
+  it("reenrolls without freeing an occupied account", async () => {
     const t = convexTest(schema, modules);
     const id = await t.mutation(internal.codexAccounts.enroll, account);
     await t.run((ctx) => ctx.db.patch(id, { activeAssignmentId: "assignment-one", activeOwnershipToken: "token-one" }));
-    const fence = { accountId: id, generation: 1, credentialVersion: 1, assignmentId: "assignment-one", ownershipToken: "token-one" };
     await t.mutation(internal.codexAccounts.setEnabled, { ...scope, accountId: id, enabled: false });
     await t.mutation(internal.codexAccounts.replace, { ...scope, accountId: id, providerAccountId: account.providerAccountId, ciphertext: "replacement", iv: "new-iv" });
     expect(await t.run((ctx) => ctx.db.get(id))).toMatchObject({ generation: 2, credentialVersion: 1, enabled: false, activeAssignmentId: "assignment-one", activeOwnershipToken: "token-one", ciphertext: "replacement" });
-    expect(await t.mutation(internal.codexAccounts.updateCredentials, { ...fence, providerAccountId: account.providerAccountId, ciphertext: "stale", iv: "stale" })).toBe(false);
-    expect(await t.mutation(internal.codexAccounts.markAuthState, { ...fence, authState: "rejected" })).toBe(false);
     expect(await t.run((ctx) => ctx.db.get(id))).toMatchObject({ authState: "ready", ciphertext: "replacement", activeAssignmentId: "assignment-one" });
-  });
-
-  it("rejects ownership, credential-version, and provider mismatches without changing either account", async () => {
-    const t = convexTest(schema, modules);
-    const first = await t.mutation(internal.codexAccounts.enroll, account);
-    const second = await t.mutation(internal.codexAccounts.enroll, { ...account, providerAccountId: "subscription-two" });
-    await t.run((ctx) => ctx.db.patch(first, { activeAssignmentId: "assignment-one", activeOwnershipToken: "token-one" }));
-    const fence = { accountId: first, generation: 1, credentialVersion: 1, assignmentId: "assignment-one", ownershipToken: "token-one" };
-    const write = { ...fence, providerAccountId: account.providerAccountId, ciphertext: "updated", iv: "updated-iv" };
-    for (const mismatch of [{ accountId: second }, { ownershipToken: "token-two" }, { assignmentId: "assignment-two" }, { credentialVersion: 0 }, { providerAccountId: "subscription-two" }]) {
-      expect(await t.mutation(internal.codexAccounts.updateCredentials, { ...write, ...mismatch })).toBe(false);
-    }
-    expect(await t.mutation(internal.codexAccounts.updateCredentials, write)).toBe(true);
-    expect(await t.mutation(internal.codexAccounts.markAuthState, { ...fence, authState: "uncertain" })).toBe(false);
-    expect(await t.run((ctx) => ctx.db.get(second))).toMatchObject({ ciphertext: "sealed-one", credentialVersion: 1 });
-    expect(await t.run((ctx) => ctx.db.get(first))).toMatchObject({ ciphertext: "updated", credentialVersion: 2, authState: "ready" });
-  });
-
-  it("allows disabled active accounts to persist their final credentials", async () => {
-    const t = convexTest(schema, modules);
-    const id = await t.mutation(internal.codexAccounts.enroll, account);
-    await t.run((ctx) => ctx.db.patch(id, { activeAssignmentId: "assignment-one", activeOwnershipToken: "token-one" }));
-    await t.mutation(internal.codexAccounts.setEnabled, { ...scope, accountId: id, enabled: false });
-    expect(await t.mutation(internal.codexAccounts.updateCredentials, { accountId: id, generation: 1, credentialVersion: 1, assignmentId: "assignment-one", ownershipToken: "token-one", providerAccountId: account.providerAccountId, ciphertext: "final", iv: "final-iv" })).toBe(true);
-    expect(await t.run((ctx) => ctx.db.get(id))).toMatchObject({ enabled: false, ciphertext: "final", activeAssignmentId: "assignment-one" });
-  });
-
-  it.each(["uncertain", "rejected"] as const)("fences refresh results after marking a chain %s", async (authState) => {
-    const t = convexTest(schema, modules);
-    const id = await t.mutation(internal.codexAccounts.enroll, account);
-    await t.run((ctx) => ctx.db.patch(id, { activeAssignmentId: "assignment-one", activeOwnershipToken: "token-one" }));
-    const fence = { accountId: id, generation: 1, credentialVersion: 1, assignmentId: "assignment-one", ownershipToken: "token-one" };
-    expect(await t.mutation(internal.codexAccounts.markAuthState, { ...fence, authState })).toBe(true);
-    expect(await t.mutation(internal.codexAccounts.updateCredentials, { ...fence, providerAccountId: account.providerAccountId, ciphertext: "delayed-success", iv: "new" })).toBe(false);
-    expect(await t.run((ctx) => ctx.db.get(id))).toMatchObject({ authState, credentialVersion: 2, ciphertext: "sealed-one", activeAssignmentId: "assignment-one" });
   });
 
   it("rejects replacement identity changes and mutations from another scope", async () => {

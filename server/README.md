@@ -1,12 +1,13 @@
 # frogbot server
 
-Convex backend that stands in for the closed Pullfrog server. The forked action at the repo root talks to it over the same HTTP contract Pullfrog's hosted service exposes, so the action tree stays byte-identical to upstream.
+Convex backend for the forked Pullfrog action and its internal dashboard. It
+implements the action's HTTP endpoints and the named Codex account extension.
 
 What it does:
 
 - **Installation tokens.** `POST /api/github/installation-token` verifies the GitHub Actions OIDC token and mints an App installation token for the calling repo. This is why the action's pushes trigger downstream workflows.
-- **Run context.** `GET /api/repo/:owner/:repo/run-context` returns the repo's settings, a per-run bearer, and the stored secrets. The Codex chain is refreshed under a lease so concurrent runs never race the rotation.
-- **Write-back.** `PUT /api/runtime/secret` accepts the rotated Codex chain from the action's post step. `PATCH /api/workflow-run/:id` records model, tokens and artifact ids.
+- **Run context.** `GET /api/repo/:owner/:repo/run-context` returns settings and secrets. An enabled Codex pool reserves one account for the whole native process; the legacy single-secret path uses its existing refresh lease.
+- **Write-back.** `POST /api/runtime/codex-pool` commits the selected account's final auth and releases its assignment. `PUT /api/runtime/secret` handles legacy secrets. `PATCH /api/workflow-run/:id` records model, tokens, and artifact IDs.
 - **CLI.** `/api/cli/secrets` is what `npx pullfrog auth codex` talks to, unmodified, when `PULLFROG_API_URL` points here. `/api/cli/config` reads and patches a repo's settings with the same dotted keys the dashboard shows (`convex/configKeys.ts`), authenticated with the user's `gh auth token`:
 
   ```
@@ -44,6 +45,9 @@ convex/
   dispatch.ts        webhook → request policy → workflow_dispatch
   repos.ts           settings, installations, RepoSettings mapping
   secrets.ts         encrypted store + refresh lease
+  codexAccounts.ts   encrypted named accounts and ordered repository pools
+  codexAssignments.ts exclusive run ownership, finalization, terminal recovery
+  codexQuota.ts      versioned weekly usage observations; idle reads only
   runs.ts            run rows for the dashboard, stale-run sweep
   health.ts          the one HEAD sentence's data, shared by every view
   configKeys.ts      the settings contract (dashboard labels = CLI keys)
@@ -93,9 +97,10 @@ The dashboard sign-in uses a separate OAuth App, because a GitHub App's user tok
 The consuming repo needs `.github/workflows/pullfrog.yml` (see the root README) with:
 
 ```yaml
-uses: ecrofaidem/pullfrog@main
+uses: ecrofaidem/pullfrog@<full-compatible-commit-sha>
 env:
   API_URL: https://<deployment>.convex.site
+  PULLFROG_FORCE_LOCAL_CLI: "1"
 ```
 
 ## Commands
@@ -114,6 +119,81 @@ PULLFROG_API_URL=https://<deployment>.convex.site npx pullfrog auth codex
 ```
 
 Re-run the same command to switch the credential to a different ChatGPT account.
+
+## Named Codex accounts
+
+A repository can use an ordered pool of dedicated ChatGPT accounts. A run takes
+the first enabled, authenticated, idle account with fresh weekly usage below
+100%. The provider must identify a seven-day window; missing or unavailable
+evidence stops startup. Display rounding does not decide eligibility.
+
+Each account has at most one native Codex process across its repository
+memberships. Two accounts therefore support at most two concurrent runs. A
+running review keeps its account until completion; it never switches accounts
+or replays work when a limit is reached. Busy, exhausted, authentication,
+configuration, and unknown-usage failures stop before the agent starts.
+
+Build the compatible fork with `pnpm install --frozen-lockfile` and `pnpm build`.
+The published npm CLI does not necessarily include these commands. From the
+consuming repository, use that build:
+
+```bash
+export PULLFROG_API_URL="https://<deployment>.convex.site"
+PULLFROG_CLI=/absolute/path/to/pullfrog/dist/cli.mjs
+node "$PULLFROG_CLI" auth codex enroll Primary
+node "$PULLFROG_CLI" auth codex enroll Secondary
+node "$PULLFROG_CLI" auth codex list
+node "$PULLFROG_CLI" auth codex pool <primary-id> <secondary-id>
+```
+
+Sign in to two distinct accounts. Enrollment uses an isolated Codex home; do not
+share the resulting refresh chain with a desktop CLI or another service. Pool
+configuration preserves its enabled state and starts disabled. Repository scope
+is the default. `--scope account` shares an account across explicitly configured
+repositories and requires owner administration; granting that account to a pool
+also requires owner administration. Repository accounts require push access.
+
+Use `auth codex disable <id>` to stop new assignments and `auth codex enable <id>`
+to permit them. A disabled account can still have a run finishing. Use
+`auth codex replace <id>` to sign in again to the same account. Replacement
+preserves occupancy until the old run stops. Add `--scope account` when managing
+an owner-scoped account. The private **Credentials** page shows account labels,
+pool positions, usage, and occupancy; public run output uses neutral aliases.
+
+## Activate or roll back a pool
+
+Activation is an operator action separate from merging the implementation and
+consumer pin. Use this order:
+
+1. Deploy the compatible Convex backend with pools disabled. Deploy the matching
+   dashboard, then pin the compatible action with
+   `PULLFROG_FORCE_LOCAL_CLI: "1"`. Verify ordinary legacy runs still work.
+2. Pause dispatch and drain every workflow using either account, including other
+   repositories and desktop clients. Enroll the two dedicated accounts and set
+   their order. Confirm native Codex is selected and remove externally supplied
+   `CODEX_AUTH_JSON`, `CODEX_API_KEY`, and `OPENAI_API_KEY` credentials.
+3. While dispatch remains paused, run
+   `auth codex pool <primary-id> <secondary-id> --enable` and set
+   `PULLFROG_CODEX_POOL_REQUIRED: "1"` on the action step. Both sides must agree;
+   an enabled pool rejects older clients and a required-pool client refuses a
+   disabled or incompatible backend.
+4. Run a controlled canary. Verify the selected alias, finalization receipt,
+   cleared occupancy, and reuse of the updated chain on the next run. Verify
+   secondary selection with simulated exhausted usage in tests, not by burning
+   the primary's allowance. Resume dispatch after these checks pass.
+
+The post hook reads final auth only after the native child closes. If cleanup is
+lost, the existing five-minute cron checks GitHub's exact workflow run attempt.
+Only a completed attempt permits occupancy recovery. Unknown final tokens
+quarantine the account until reenrollment; elapsed time alone never makes it
+available. Inspect **Credentials** and the failed run before retrying.
+
+For rollback, pause and drain all affected runs first. Restore a current legacy
+login with `auth codex` using the compatible CLI, disable the pool with
+`auth codex pool <primary-id> <secondary-id> --disable`, and remove the required
+flag. Verify one legacy run before resuming dispatch. Never restore a saved old
+auth blob: its refresh token may have been consumed. Keep the finalization
+endpoint deployed until every old assignment is terminal.
 
 ## Deploy the webhook filter
 

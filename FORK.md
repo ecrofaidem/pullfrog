@@ -9,6 +9,13 @@ Consumers pin `uses: ecrofaidem/pullfrog@<sha>` with `API_URL` pointing at the C
 
 Deliberate divergences from upstream in the action tree (expect a merge conflict here, keep ours):
 
+- `utils/codexPool*.ts`, `utils/runContext.ts`, `main.ts`, `agents/codex.ts`,
+  `utils/oauthWriteback.ts`, and the close callback in `utils/subprocess.ts` —
+  opt-in selection from named Codex accounts, exclusive native-process
+  ownership, and fenced final auth write-back. An enabled pool requires
+  `PULLFROG_CODEX_POOL_REQUIRED: "1"` and native Codex; startup failures cannot
+  fall back to API billing. Pool-disabled runs retain the legacy path. See
+  [account setup and activation](server/README.md#named-codex-accounts).
 - `utils/buildPullfrogFooter.ts` — the comment footer is the workflow-run link, the model, and the subscription's remaining limit. Upstream's logo, X link, SHA-pin nudge and Fix-all links are dropped; the fix links pointed at a hosted `/trigger` endpoint this server does not have.
 - `utils/runStats.ts` (new), one `recordToolUse()` line in `main.ts`, `recordTokens()`/`recordSubagentFinish()` lines where `agents/opencode.ts` and `agents/codex.ts` accumulate usage, and a `toolState`/`review` argument at the four footer call sites — time, tokens, subagents, tool calls, diff coverage and inline-comment counts in the footer, with the breakdown in a collapsed block.
 - `utils/codexUsage.ts` (new) and one `primeCodexUsage()` line in `main.ts` — reads `GET https://chatgpt.com/backend-api/wham/usage` with the run's chain, the same call the Codex CLI's status screen makes.

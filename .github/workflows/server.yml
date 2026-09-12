@@ -2,10 +2,10 @@ name: Frogbot server
 
 on:
   pull_request:
-    paths: ["server/**", ".github/workflows/server.yml"]
+    paths: ["server/**", "utils/codexQuota.ts", "utils/codexPoolProtocol.ts", ".github/workflows/server.yml"]
   push:
     branches: [main]
-    paths: ["server/**", ".github/workflows/server.yml"]
+    paths: ["server/**", "utils/codexQuota.ts", "utils/codexPoolProtocol.ts", ".github/workflows/server.yml"]
 
 permissions:
   contents: read
