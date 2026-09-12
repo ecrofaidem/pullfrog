@@ -1,5 +1,8 @@
 import type { PushPermission, ShellPermission } from "../external.ts";
 import { apiFetch } from "./apiFetch.ts";
+import { codexPoolRuntimeInstance, decodeCodexPool, hasExternalCodexAuth, rememberCodexPoolAssignment } from "./codexPool.ts";
+import { CODEX_POOL_VERSION, type CodexPoolAssignment, type CodexPoolDenial } from "./codexPoolProtocol.ts";
+import { parseCodexAuthBody } from "./codexOAuth.ts";
 import type { RepoContext } from "./github.ts";
 
 export interface Mode {
@@ -89,6 +92,8 @@ export type CommercialRefusal = "commercial" | "subscription_unpaid";
 export interface RunContext {
   settings: RepoSettings;
   apiToken: string;
+  codexPool?: CodexPoolAssignment | undefined;
+  codexPoolRefused?: CodexPoolDenial | undefined;
   oss: boolean;
   plan: AccountPlan;
   proxyModel?: string | undefined;
@@ -176,33 +181,72 @@ export async function fetchRunContext(params: {
    * override, which it cannot derive from owner/repo alone. */
   runType?: string | undefined;
 }): Promise<RunContext> {
-  const timeoutMs = 30000;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const poolRequired = process.env.PULLFROG_CODEX_POOL_REQUIRED === "1";
+  const instance = codexPoolRuntimeInstance();
+  const refused = (reason: CodexPoolDenial["reason"]): RunContext => ({
+    ...defaultRunContext, codexPoolRefused: { status: "denied", reason },
+  });
 
   try {
     const headers: Record<string, string> = {
       Authorization: `Bearer ${params.token}`,
+      "X-Pullfrog-Codex-Pool": CODEX_POOL_VERSION,
+      "X-Pullfrog-Run-Instance": instance,
     };
+    if (poolRequired) headers["X-Pullfrog-Codex-Pool-Required"] = "1";
+    if (process.env.PULLFROG_AGENT?.trim()) headers["X-Pullfrog-Agent"] = process.env.PULLFROG_AGENT.trim();
+    if (hasExternalCodexAuth()) headers["X-Pullfrog-Codex-External-Auth"] = "1";
     if (params.oidcToken) {
       headers["X-GitHub-OIDC-Token"] = params.oidcToken;
     }
 
     const query = params.runType ? `?type=${encodeURIComponent(params.runType)}` : "";
-    const response = await apiFetch({
-      path: `/api/repo/${params.repoContext.owner}/${params.repoContext.name}/run-context${query}`,
-      headers,
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeoutId);
+    const read = async () => {
+      const response = await apiFetch({
+        path: `/api/repo/${params.repoContext.owner}/${params.repoContext.name}/run-context${query}`,
+        headers,
+        signal: AbortSignal.timeout(30_000),
+      });
+      let body: unknown;
+      try { body = await response.json(); }
+      catch (err) {
+        if (response.ok || poolRequired) throw err;
+        body = null;
+      }
+      return { response, body };
+    };
+    // One transport retry can recover a lost assignment response. Reuse the
+    // same instance, so the server never rotates or assigns a second chain.
+    let received: Awaited<ReturnType<typeof read>>;
+    try { received = await read(); }
+    catch (err) {
+      if (!poolRequired) throw err;
+      received = await read();
+    }
+    const { response, body } = received;
+    const envelope = body !== null && typeof body === "object" && !Array.isArray(body)
+      ? body as Record<string, unknown> : null;
+    let assignment: CodexPoolAssignment | undefined;
+    if (envelope && "codexPool" in envelope) {
+      const pool = decodeCodexPool(envelope.codexPool, instance);
+      if (!pool) return refused("configuration");
+      if (pool.status === "denied") return { ...defaultRunContext, codexPoolRefused: pool };
+      assignment = pool;
+      rememberCodexPoolAssignment(pool, typeof envelope.apiToken === "string" ? envelope.apiToken : "");
+      const secrets = envelope.dbSecrets as Record<string, unknown> | undefined;
+      if (!response.ok || typeof envelope.apiToken !== "string" || !envelope.apiToken ||
+          typeof secrets?.CODEX_AUTH_JSON !== "string" || !parseCodexAuthBody(secrets.CODEX_AUTH_JSON)) {
+        return refused("configuration");
+      }
+    } else if (poolRequired) {
+      return refused(!response.ok || !envelope ? "unknown" : "configuration");
+    }
 
     // commercial gate refusal (billing model v2): a 402 means the org's Pro
     // plan is paused/unpaid. Surface it so main.ts stops the run — every
     // other non-ok still degrades to defaults (transient server blip must not
     // block runs).
     if (response.status === 402) {
-      const body: unknown = await response.json().catch(() => null);
       const reason: CommercialRefusal =
         typeof body === "object" &&
         body !== null &&
@@ -219,7 +263,7 @@ export async function fetchRunContext(params: {
       return response.status >= 500 ? unknownSecretsRunContext : defaultRunContext;
     }
 
-    const data = (await response.json()) as {
+    const data = envelope as {
       settings: RepoSettings | null;
       apiToken: string;
       oss?: boolean;
@@ -250,6 +294,7 @@ export async function fetchRunContext(params: {
         xrepoLearningsHeadings: data.settings?.xrepoLearningsHeadings ?? [],
       },
       apiToken: data.apiToken,
+      codexPool: assignment,
       oss: data.oss ?? false,
       plan: data.plan ?? "none",
       proxyModel: data.proxyModel,
@@ -261,7 +306,6 @@ export async function fetchRunContext(params: {
   } catch {
     // network drop, abort at the 30s timeout, or an unparseable body — we never
     // learned anything about this repo's stored secrets.
-    clearTimeout(timeoutId);
-    return unknownSecretsRunContext;
+    return poolRequired ? refused("unknown") : unknownSecretsRunContext;
   }
 }

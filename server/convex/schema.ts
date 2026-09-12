@@ -30,6 +30,8 @@ export const codexQuotaResult = v.union(
   ) }),
 );
 
+export const codexDenialReason = v.union(v.literal("busy"), v.literal("exhausted"), v.literal("authentication"), v.literal("configuration"), v.literal("unknown"));
+
 export default defineSchema({
   /** one row per GitHub account the App is installed on. */
   installations: defineTable({
@@ -113,6 +115,17 @@ export default defineSchema({
   })
     .index("by_owner_provider", ["owner", "providerAccountId"])
     .index("by_scope", ["owner", "repo"]),
+
+  /** Durable attempt ownership; elapsed time never authorizes another native run. */
+  codexAssignments: defineTable({
+    owner: v.string(), repo: v.string(), runId: v.string(), runAttempt: v.string(),
+    runtimeInstance: v.string(), accountId: v.id("codexAccounts"),
+    generation: v.number(), credentialVersion: v.number(), ownershipToken: v.string(),
+    accountAlias: v.string(),
+    phase: v.union(v.literal("reserved"), v.literal("refreshing"), v.literal("active"), v.literal("released"), v.literal("quarantined")),
+    denialReason: v.optional(codexDenialReason), retryAt: v.optional(v.number()),
+    createdAt: v.number(), updatedAt: v.number(),
+  }).index("by_attempt", ["owner", "repo", "runId", "runAttempt"]),
 
   /** Latest observation only; generation and credential version are part of its validity. */
   codexQuotaObservations: defineTable({
