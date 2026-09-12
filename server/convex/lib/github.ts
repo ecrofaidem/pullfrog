@@ -154,9 +154,10 @@ export async function getWorkflowRun(params: {
   owner: string;
   repo: string;
   runId: number;
+  runAttempt?: number;
 }): Promise<WorkflowRunInfo | null> {
   return gh<WorkflowRunInfo | null>(
-    `/repos/${params.owner}/${params.repo}/actions/runs/${params.runId}`,
+    `/repos/${params.owner}/${params.repo}/actions/runs/${params.runId}${params.runAttempt === undefined ? "" : `/attempts/${params.runAttempt}`}`,
     { token: params.token, tolerate: [404] }
   );
 }

@@ -1,9 +1,11 @@
 import { v } from "convex/values";
-import { internalMutation, type MutationCtx } from "./_generated/server";
+import { internalAction, internalQuery, internalMutation, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { timingSafeEqual } from "./lib/crypto";
 import { isFreshCodexQuota } from "../../utils/codexQuota";
 import { codexDenialReason } from "./schema";
+import { internal } from "./_generated/api";
+import { createInstallationToken, findRepoInstallation, getWorkflowRun } from "./lib/github";
 
 export type Denial = { status: "denied"; reason: "busy" | "exhausted" | "authentication" | "configuration" | "unknown"; retryAt?: number };
 type Reservation = Denial | { status: "reserved" | "active"; assignment: Doc<"codexAssignments">; account: Doc<"codexAccounts"> };
@@ -38,6 +40,7 @@ export const reserve = internalMutation({
     const existing = await ctx.db.query("codexAssignments").withIndex("by_attempt", (q) =>
       q.eq("owner", args.owner).eq("repo", args.repo).eq("runId", args.runId).eq("runAttempt", args.runAttempt)).unique();
     if (existing) {
+      if (existing.finalizationStatus) return { status: "denied", reason: "configuration" };
       if (existing.runtimeInstance !== args.runtimeInstance) return { status: "denied", reason: "configuration" };
       if (existing.phase === "active") {
         const account = await ctx.db.get(existing.accountId);
@@ -152,6 +155,112 @@ export const abandon = internalMutation({
       if (account?.activeAssignmentId === assignment._id && account.activeOwnershipToken === args.ownershipToken) {
         await ctx.db.patch(account._id, { activeAssignmentId: undefined, activeOwnershipToken: undefined, updatedAt: now });
       }
+    }
+  },
+});
+
+const capabilityArgs = { assignmentId: v.string(), ownershipToken: v.string() };
+type Receipt = { status: "released" | "quarantined" | "stale" };
+
+/** Capability lookup is internal: the runtime receives only the final receipt. */
+export const finalizationState = internalQuery({
+  args: capabilityArgs,
+  handler: async (ctx, args) => {
+    const id = ctx.db.normalizeId("codexAssignments", args.assignmentId);
+    const assignment = id ? await ctx.db.get(id) : null;
+    if (!assignment || !timingSafeEqual(assignment.ownershipToken, args.ownershipToken)) return null;
+    return { assignment, account: await ctx.db.get(assignment.accountId) };
+  },
+});
+
+/** Commit the last token state and release occupancy in the same transaction. */
+async function finish(ctx: MutationCtx, assignment: Doc<"codexAssignments">, auth:
+  | { kind: "snapshot"; ciphertext: string; iv: string; providerAccountId: string }
+  | { kind: "unchanged" }
+  | { kind: "uncertain" },
+): Promise<Receipt> {
+  if (assignment.finalizationStatus) return { status: assignment.finalizationStatus };
+  const account = await ctx.db.get(assignment.accountId);
+  const occupies = account?.activeAssignmentId === assignment._id && !!account.activeOwnershipToken &&
+    timingSafeEqual(account.activeOwnershipToken, assignment.ownershipToken);
+  const current = occupies && account.generation === assignment.generation;
+  const valid = current && account.credentialVersion === assignment.credentialVersion && account.authState === "ready" &&
+    (auth.kind === "unchanged" || auth.kind === "snapshot" && auth.providerAccountId === account.providerAccountId);
+  const status = !current ? "stale" : valid ? "released" : "quarantined";
+  const now = Date.now();
+  if (occupies) {
+    await ctx.db.patch(account._id, {
+      activeAssignmentId: undefined, activeOwnershipToken: undefined,
+      ...(current ? {
+        credentialVersion: account.credentialVersion + 1,
+        authState: valid ? "ready" as const : "uncertain" as const,
+        ...(valid && auth.kind === "snapshot" ? { ciphertext: auth.ciphertext, iv: auth.iv } : {}),
+      } : {}),
+      updatedAt: now,
+    });
+  }
+  await ctx.db.patch(assignment._id, {
+    phase: status === "quarantined" ? "quarantined" : "released", finalizationStatus: status,
+    ...(current ? { credentialVersion: account.credentialVersion + 1 } : {}), updatedAt: now,
+  });
+  return { status };
+}
+
+export const finalize = internalMutation({
+  args: { ...fence, auth: v.union(
+    v.object({ kind: v.literal("snapshot"), ciphertext: v.string(), iv: v.string(), providerAccountId: v.string() }),
+    v.object({ kind: v.literal("unchanged") }), v.object({ kind: v.literal("uncertain") }),
+  ) },
+  handler: async (ctx, args): Promise<Receipt | null> => {
+    const assignment = await ctx.db.get(args.assignmentId);
+    if (!assignment || !timingSafeEqual(assignment.ownershipToken, args.ownershipToken)) return null;
+    if (assignment.finalizationStatus) return { status: assignment.finalizationStatus };
+    if (assignment.phase !== "active" || assignment.generation !== args.generation || assignment.credentialVersion !== args.credentialVersion) return null;
+    return finish(ctx, assignment, args.auth);
+  },
+});
+
+export const unfinished = internalQuery({
+  args: {},
+  handler: async (ctx) => ctx.db.query("codexAssignments").withIndex("by_finalization", (q) => q.eq("finalizationStatus", undefined)).collect(),
+});
+
+/** Only reconcile supplies terminal proof; do not expose this to runtime callers. */
+export const terminal = internalMutation({
+  args: { ...fence, accountId: v.id("codexAccounts") },
+  handler: async (ctx, args): Promise<Receipt | null> => {
+    const assignment = await ctx.db.get(args.assignmentId);
+    if (!assignment || !timingSafeEqual(assignment.ownershipToken, args.ownershipToken)) return null;
+    if (assignment.finalizationStatus) return { status: assignment.finalizationStatus };
+    if (assignment.accountId !== args.accountId || assignment.generation !== args.generation || assignment.credentialVersion !== args.credentialVersion) return null;
+    // A safe preflight skip already cleared occupancy. Close its retry window.
+    if (assignment.phase === "released") {
+      await ctx.db.patch(assignment._id, { finalizationStatus: "released", updatedAt: Date.now() });
+      return { status: "released" };
+    }
+    return finish(ctx, assignment, { kind: assignment.phase === "reserved" ? "unchanged" : "uncertain" });
+  },
+});
+
+/** Time only schedules inspection. GitHub's exact terminal attempt proves stop. */
+export const reconcile = internalAction({
+  args: {},
+  handler: async (ctx): Promise<void> => {
+    const assignments = await ctx.runQuery(internal.codexAssignments.unfinished, {});
+    for (const assignment of assignments) {
+      try {
+        const runId = Number(assignment.runId), runAttempt = Number(assignment.runAttempt);
+        if (!Number.isSafeInteger(runId) || runId < 1 || !Number.isSafeInteger(runAttempt) || runAttempt < 1) continue;
+        const installation = await findRepoInstallation(assignment.owner, assignment.repo);
+        if (!installation || installation.suspended_at) continue;
+        const { token } = await createInstallationToken(installation.id, { repositories: [assignment.repo], permissions: { actions: "read" } });
+        const run = await getWorkflowRun({ token, owner: assignment.owner, repo: assignment.repo, runId, runAttempt });
+        if (!run || run.id !== runId || run.run_attempt !== runAttempt || run.status !== "completed") continue;
+        await ctx.runMutation(internal.codexAssignments.terminal, {
+          assignmentId: assignment._id, accountId: assignment.accountId, ownershipToken: assignment.ownershipToken,
+          generation: assignment.generation, credentialVersion: assignment.credentialVersion,
+        });
+      } catch { /* Missing or unavailable GitHub evidence must retain occupancy. */ }
     }
   },
 });

@@ -2,6 +2,9 @@ import { existsSync, readFileSync } from "node:fs";
 import * as core from "@actions/core";
 import { apiFetch } from "./apiFetch.ts";
 import { detectCodexRefresh, detectXaiRefresh, type OAuthWriteback } from "./codexRefreshDetect.ts";
+import { parseCodexAuthBody } from "./codexOAuth.ts";
+import type { CodexPoolCleanup } from "./codexPool.ts";
+import type { CodexPoolFinalAuth, CodexPoolFinalization } from "./codexPoolProtocol.ts";
 
 /** GHA state key the agent harnesses write their pending write-backs to.
  *
@@ -39,11 +42,15 @@ export async function runOAuthWriteback(): Promise<void> {
     return;
   }
 
-  let state: { apiToken: string; entries: OAuthWriteback[] };
+  let state: { apiToken: string; entries: OAuthWriteback[]; codexPool?: CodexPoolCleanup };
   try {
     state = JSON.parse(raw) as typeof state;
   } catch (err) {
     core.warning(`oauth post-hook: malformed writeback state — ${err}`);
+    return;
+  }
+  if (state.codexPool) {
+    await finalizeCodexPool(state.codexPool);
     return;
   }
   if (!state.apiToken || !Array.isArray(state.entries)) {
@@ -54,6 +61,47 @@ export async function runOAuthWriteback(): Promise<void> {
   for (const entry of state.entries) {
     await writeBackEntry(state.apiToken, entry);
   }
+}
+
+async function finalizeCodexPool(cleanup: CodexPoolCleanup): Promise<void> {
+  if (cleanup.childState !== "not_started" && cleanup.childState !== "stopped") {
+    core.warning("Codex pool cleanup: child closure unconfirmed; account remains occupied until run reconciliation.");
+    return;
+  }
+  let auth: CodexPoolFinalAuth = { kind: "unchanged" };
+  if (cleanup.childState === "stopped") {
+    auth = { kind: "uncertain" };
+    try {
+      const value = readFileSync(cleanup.authPath ?? "", "utf8");
+      if (parseCodexAuthBody(value)) auth = { kind: "snapshot", value };
+    } catch {
+      // The last tokens are unknown. The server quarantines this chain.
+    }
+  }
+  const body = JSON.stringify({
+    assignmentId: cleanup.assignment.assignmentId, childStopped: true, auth,
+  } satisfies CodexPoolFinalization);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const response = await apiFetch({
+        path: "/api/runtime/codex-pool", method: "POST",
+        headers: { authorization: `Bearer ${cleanup.assignment.capability}`, "content-type": "application/json" },
+        body, signal: AbortSignal.timeout(15_000),
+      });
+      if (response.ok) {
+        const receipt = await response.json() as { status?: string };
+        if (["released", "quarantined", "stale"].includes(receipt.status ?? "")) {
+          core.info(`Codex pool cleanup: ${receipt.status}.`);
+          return;
+        }
+      } else if (response.status < 500) {
+        break;
+      }
+    } catch {
+      // A lost acknowledgement is safe to retry with the identical request.
+    }
+  }
+  core.warning("Codex pool cleanup was not acknowledged; account remains held for run reconciliation.");
 }
 
 /** Persist one provider's rotated chain. Each entry is independent — a

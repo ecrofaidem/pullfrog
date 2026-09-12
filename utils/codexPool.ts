@@ -5,6 +5,7 @@ import { OAUTH_WRITEBACK_STATE } from "./oauthWriteback.ts";
 
 const UUID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
 let runtimeInstance: string | undefined;
+let cleanup: { apiToken: string; entries: []; codexPool: CodexPoolCleanup } | undefined;
 
 export function codexPoolRuntimeInstance(): string {
   const saved = process.env.STATE_codex_pool_instance;
@@ -55,7 +56,26 @@ export function rememberCodexPoolAssignment(assignment: CodexPoolAssignment, api
   core.setSecret(assignment.capability);
   if (apiToken) core.setSecret(apiToken);
   const codexPool: CodexPoolCleanup = { assignment, childState: "not_started" };
-  core.saveState(OAUTH_WRITEBACK_STATE, JSON.stringify({ apiToken, entries: [], codexPool }));
+  cleanup = { apiToken, entries: [], codexPool };
+  core.saveState(OAUTH_WRITEBACK_STATE, JSON.stringify(cleanup));
+}
+
+/** Retain the isolated native auth file for the existing GHA post hook. */
+export function registerCodexPoolAuth(authPath?: string): boolean {
+  if (!cleanup) return false;
+  if (!authPath) throw new Error("Codex pool auth installation failed");
+  cleanup.codexPool.authPath = authPath;
+  core.saveState(OAUTH_WRITEBACK_STATE, JSON.stringify(cleanup));
+  return true;
+}
+
+export function markCodexPoolChild(state: "running" | "stopped"): void {
+  if (!cleanup) return;
+  if (state === "running" && cleanup.codexPool.childState === "running") {
+    throw new Error("The previous Codex pool child has not closed");
+  }
+  cleanup.codexPool.childState = state;
+  core.saveState(OAUTH_WRITEBACK_STATE, JSON.stringify(cleanup));
 }
 
 export function describeCodexPoolDenial(denial: CodexPoolDenial): string {

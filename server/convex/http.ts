@@ -6,6 +6,7 @@
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { authComponent, createAuth } from "./auth";
+import { codexPoolPost } from "./handlers/codexPool";
 import { cliConfigGet, cliConfigPatch } from "./handlers/cliConfig";
 import { cliSecretsGet, cliSecretsPost } from "./handlers/cliSecrets";
 import { installationToken } from "./handlers/installationToken";
@@ -23,6 +24,7 @@ http.route({ path: "/healthz", method: "GET", handler: httpAction(async () => js
 
 http.route({ path: "/api/github/installation-token", method: "POST", handler: installationToken });
 http.route({ pathPrefix: "/api/repo/", method: "GET", handler: runContext });
+http.route({ path: "/api/runtime/codex-pool", method: "POST", handler: codexPoolPost });
 http.route({ path: "/api/runtime/secret", method: "PUT", handler: runtimeSecretPut });
 http.route({ pathPrefix: "/api/workflow-run/", method: "PATCH", handler: workflowRunPatch });
 http.route({ path: "/api/cli/secrets", method: "GET", handler: cliSecretsGet });

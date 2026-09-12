@@ -124,8 +124,11 @@ export default defineSchema({
     accountAlias: v.string(),
     phase: v.union(v.literal("reserved"), v.literal("refreshing"), v.literal("active"), v.literal("released"), v.literal("quarantined")),
     denialReason: v.optional(codexDenialReason), retryAt: v.optional(v.number()),
+    /** Permanent receipt distinguishes completion from a retryable preflight skip. */
+    finalizationStatus: v.optional(v.union(v.literal("released"), v.literal("quarantined"), v.literal("stale"))),
     createdAt: v.number(), updatedAt: v.number(),
-  }).index("by_attempt", ["owner", "repo", "runId", "runAttempt"]),
+  }).index("by_attempt", ["owner", "repo", "runId", "runAttempt"])
+    .index("by_finalization", ["finalizationStatus"]),
 
   /** Latest observation only; generation and credential version are part of its validity. */
   codexQuotaObservations: defineTable({

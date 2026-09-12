@@ -28,3 +28,18 @@ export interface CodexPoolDenial {
 }
 
 export type CodexPoolResponse = CodexPoolAssignment | CodexPoolDenial;
+
+export type CodexPoolFinalAuth =
+  | { kind: "snapshot"; value: string }
+  | { kind: "unchanged" }
+  | { kind: "uncertain" };
+
+export interface CodexPoolFinalization {
+  assignmentId: string;
+  childStopped: true;
+  auth: CodexPoolFinalAuth;
+}
+
+export interface CodexPoolFinalizationReceipt {
+  status: "released" | "quarantined" | "stale";
+}

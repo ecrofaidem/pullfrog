@@ -6,6 +6,7 @@ import type { CodexPoolResponse } from "../../../utils/codexPoolProtocol";
 import { probeCodexQuota } from "../../../utils/codexQuota";
 import { codexNeedsRefresh, OAuthInvalidGrantError, parseCodexAuthBody, refreshCodexAuthBody, stringifyCodexAuthBody, type CodexAuthBody } from "./codexOAuth";
 import { open, seal } from "./crypto";
+import { getCodexProviderAccountId } from "./codexIdentity";
 import { parseOAuthErrorBody } from "./oauthShared";
 
 type Assigned = Extract<CodexPoolResponse, { status: "assigned" }>;
@@ -48,10 +49,10 @@ export async function startCodexPool(ctx: ActionCtx, identity: {
     try { raw = await open(account); body = parseCodexAuthBody(raw); }
     catch { raw = ""; body = null; }
     if (reservation.status === "active") {
-      return body && body.tokens.account_id === account.providerAccountId && !body.refresh_rejected_at
+      return body && getCodexProviderAccountId(raw) === account.providerAccountId && !body.refresh_rejected_at
         ? assigned(assignment, raw) : { status: "denied", reason: "authentication" };
     }
-    if (!body || body.tokens.account_id !== account.providerAccountId || body.refresh_rejected_at) {
+    if (!body || getCodexProviderAccountId(raw) !== account.providerAccountId || body.refresh_rejected_at) {
       await ctx.runMutation(internal.codexAssignments.abandon, { ...fence, reason: "authentication", rejected: true });
       excludedIds.push(account._id); continue;
     }
@@ -63,7 +64,7 @@ export async function startCodexPool(ctx: ActionCtx, identity: {
       try {
         const rotated = await refreshBefore(body, deadline);
         const text = stringifyCodexAuthBody(rotated);
-        if (!parseCodexAuthBody(text) || rotated.tokens.account_id !== account.providerAccountId) throw new Error("invalid rotated auth");
+        if (!parseCodexAuthBody(text) || getCodexProviderAccountId(text) !== account.providerAccountId) throw new Error("invalid rotated auth");
         if (!await ctx.runMutation(internal.codexAssignments.commitRefresh, { ...fence, providerAccountId: account.providerAccountId, ...await seal(text) })) {
           await ctx.runMutation(internal.codexAssignments.abandon, { ...fence, reason: "configuration" });
           return { status: "denied", reason: "configuration" };

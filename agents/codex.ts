@@ -45,6 +45,7 @@ import { installCodexHome } from "../utils/codexHome.ts";
 import type { OAuthWriteback } from "../utils/codexRefreshDetect.ts";
 import { installFromNpmTarball } from "../utils/install.ts";
 import { OAUTH_WRITEBACK_STATE } from "../utils/oauthWriteback.ts";
+import { markCodexPoolChild, registerCodexPoolAuth } from "../utils/codexPool.ts";
 import { findProviderErrorMatch } from "../utils/providerErrors.ts";
 import { resolveRunEffort } from "../utils/runEffort.ts";
 import { filterEnv } from "../utils/secrets.ts";
@@ -721,6 +722,7 @@ async function runCodex(params: RunParams): Promise<CodexRunResult> {
   }
 
   try {
+    markCodexPoolChild("running");
     const result = await spawn({
       cmd: params.cliPath,
       args: params.args,
@@ -728,6 +730,7 @@ async function runCodex(params: RunParams): Promise<CodexRunResult> {
       env: params.env,
       activityTimeout: AGENT_ACTIVITY_TIMEOUT_MS,
       onActivityTimeout: params.onActivityTimeout,
+      onClose: () => markCodexPoolChild("stopped"),
       // stdin MUST be `ignore`: codex reads a piped stdin as an extra `<stdin>`
       // prompt block and blocks on EOF, so an inherited pipe hangs the run
       // before the first model call.
@@ -846,6 +849,7 @@ export const codex = agent({
     warnIfNativeEditsUnavailable(ctx);
 
     const codexHomeAuth = installCodexHome();
+    const pooled = registerCodexPoolAuth(codexHomeAuth?.authPath);
     const codexHome = codexHomeAuth?.codexHome ?? join(ctx.tmpdir, ".codex");
     mkdirSync(codexHome, { recursive: true });
     installBundledSkills({ home: ctx.tmpdir });
@@ -861,7 +865,7 @@ export const codex = agent({
       effortRung: effort.rung && CODEX_EFFORTS.includes(effort.rung) ? effort.rung : undefined,
     });
 
-    if (codexHomeAuth) {
+    if (codexHomeAuth && !pooled) {
       // the CLI rewrites auth.json in place when the chain rotates; the post
       // hook diffs it and PUTs the new blob back to Pullfrog. see
       // wiki/codex-auth.md — a rotation we fail to persist expires in ~1h.
