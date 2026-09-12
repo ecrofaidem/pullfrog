@@ -4,6 +4,7 @@ import * as yes from "../yes/index.ts";
 import { log } from "./cli.ts";
 import { mintIdToken, type OctokitWithPlugins, parseRepoContext } from "./github.ts";
 import { isTransientOctokitError } from "./isTransientNetworkError.ts";
+import type { CodexPoolAssignment, CodexPoolDenial } from "./codexPoolProtocol.ts";
 import {
   type AccountPlan,
   type CommercialRefusal,
@@ -19,6 +20,8 @@ export interface RunContextData {
   };
   repoSettings: RepoSettings;
   apiToken: string;
+  codexPool?: CodexPoolAssignment | undefined;
+  codexPoolRefused?: CodexPoolDenial | undefined;
   oss: boolean;
   plan: AccountPlan;
   proxyModel?: string | undefined;
@@ -100,6 +103,8 @@ export async function resolveRunContextData(
     },
     repoSettings: runContext.settings,
     apiToken: runContext.apiToken,
+    codexPool: runContext.codexPool,
+    codexPoolRefused: runContext.codexPoolRefused,
     oss: runContext.oss,
     plan: runContext.plan,
     proxyModel: runContext.proxyModel,

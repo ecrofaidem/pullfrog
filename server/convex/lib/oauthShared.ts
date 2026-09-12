@@ -15,11 +15,13 @@ import { base64UrlToUtf8 } from "./base64";
 export class OAuthInvalidGrantError extends Error {
   public readonly status: number;
   public readonly chainIsDead: boolean;
+  public readonly responseBody: string;
   constructor(provider: string, status: number, body: string, chainIsDead: boolean) {
     super(`${provider} token refresh failed: ${status} ${body}`);
     this.name = "OAuthInvalidGrantError";
     this.status = status;
     this.chainIsDead = chainIsDead;
+    this.responseBody = body;
   }
 }
 

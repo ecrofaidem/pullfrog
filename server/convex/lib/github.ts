@@ -154,9 +154,10 @@ export async function getWorkflowRun(params: {
   owner: string;
   repo: string;
   runId: number;
+  runAttempt?: number;
 }): Promise<WorkflowRunInfo | null> {
   return gh<WorkflowRunInfo | null>(
-    `/repos/${params.owner}/${params.repo}/actions/runs/${params.runId}`,
+    `/repos/${params.owner}/${params.repo}/actions/runs/${params.runId}${params.runAttempt === undefined ? "" : `/attempts/${params.runAttempt}`}`,
     { token: params.token, tolerate: [404] }
   );
 }
@@ -282,4 +283,13 @@ export async function orgMembershipState(
   });
   if (!result) return "none";
   return result.state === "active" ? "active" : "pending";
+}
+
+/** Owner-level account grants require active organization administration. */
+export async function isOrgAdministrator(userToken: string, org: string): Promise<boolean> {
+  const membership = await gh<{ state?: string; role?: string } | null>(
+    `/user/memberships/orgs/${encodeURIComponent(org)}`,
+    { token: userToken, tolerate: [401, 403, 404] },
+  );
+  return membership?.state === "active" && membership.role === "admin";
 }

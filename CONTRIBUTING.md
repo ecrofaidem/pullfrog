@@ -26,6 +26,17 @@ nub run test        # or: pnpm test
 
 Run `typecheck` and the unit tests before opening a PR. Both run in CI for every PR and support standalone checkouts. When this action is checked out inside the private monorepo, the unit tests also compare its workflow with the parent workflow.
 
+For this fork's Codex account pool, run the root tests plus `pnpm --dir server
+test` and `pnpm --dir server typecheck`. The backend suite uses an in-memory
+Convex database and mocked GitHub/OAuth services. It covers selection, token
+rotation, finalization, recovery, management permissions, and compatibility.
+The runtime suite covers startup refusal and temporary auth files passed to the
+post hook. These tests do not use live ChatGPT accounts. For dashboard changes,
+also run `pnpm --dir web typecheck` and `pnpm --dir web build`.
+
+Production canaries, deployment, account enrollment, and pool activation are
+separate operator steps in [the server runbook](server/README.md#activate-or-roll-back-a-pool).
+
 The separate agent integration matrix needs Nub, provider credentials, and access to the test repositories. It runs automatically in `pullfrog/pullfrog`. Forks skip it by default. To enable it in a configured fork, provision the credentials referenced in `.github/workflows/test.yml`, ensure the tests can access their fixture repositories, and set the GitHub Actions repository variable `PULLFROG_AGENT_TESTS` to `true`. A skipped matrix does not verify agent behavior.
 
 ## Commit conventions

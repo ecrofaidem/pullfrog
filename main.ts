@@ -12,6 +12,7 @@ import { startInstallation } from "./mcp/dependencies.ts";
 import { startMcpHttpServer, type ToolContext } from "./mcp/server.ts";
 import { getSandboxMethod } from "./mcp/shell.ts";
 import { computeModes } from "./modes.ts";
+import { getModelProvider } from "./models.ts";
 import { initToolState, primaryRepoState } from "./toolState.ts";
 import {
   type ActivityTimeout,
@@ -30,6 +31,7 @@ import { resolveBody } from "./utils/body.ts";
 import { log } from "./utils/cli.ts";
 import { installCodexAuth, installXaiAuth, PULLFROG_DATA_DIR } from "./utils/codexHome.ts";
 import { primeCodexUsage } from "./utils/codexUsage.ts";
+import { describeCodexPoolDenial, hasExternalCodexAuth } from "./utils/codexPool.ts";
 import { recordToolUse } from "./utils/runStats.ts";
 import { checkConfiguredCredentials } from "./utils/credentialFallback.ts";
 import { recordDiffReadFromToolUse } from "./utils/diffCoverage.ts";
@@ -188,6 +190,27 @@ export async function main(): Promise<MainResult> {
         }
       : null;
 
+  let poolRefusal = runContext.codexPoolRefused;
+  if (runContext.codexPool) {
+    const model = resolveModel({ slug: payload.model });
+    let wrongModel = false;
+    try { wrongModel = !!model && getModelProvider(model) !== "openai"; }
+    catch { wrongModel = true; }
+    const explicitAgent = process.env.PULLFROG_AGENT?.trim();
+    if (hasExternalCodexAuth() || (explicitAgent && explicitAgent !== "codex") || payload.proxyModel || wrongModel) {
+      poolRefusal = { status: "denied", reason: "configuration" };
+    }
+  }
+  if (poolRefusal) {
+    await using _commentTokenRef = await resolveTokens({ push: "disabled", authorPermission: undefined, oidc: oidcCredentials });
+    const message = describeCodexPoolDenial(poolRefusal);
+    log.error(`Codex pool: ${message}`);
+    const body = `**Codex run did not start.** ${message}`;
+    await writeRunErrorOutputs({ rendered: { summary: body, comment: body }, toolState });
+    return { success: false, error: message };
+  }
+  if (runContext.codexPool) log.info(`» Codex pool selected ${runContext.codexPool.accountAlias}`);
+
   if (runContext.commercialRefused) {
     // gate-refusal path: posts one comment and exits, so no agent and no gh token
     await using _commentTokenRef = await resolveTokens({
@@ -238,9 +261,9 @@ export async function main(): Promise<MainResult> {
   // customer run died before the agent started. with no repo dir resolved there
   // is nothing to protect, so the window simply does not open.
   const repoDir = payload.cwd;
-  const preIntrospectionDirty = repoDir ? await dirtyTrackedPaths({ cwd: repoDir }) : null;
-  const opencodeCliPath = await agents.opencode.install();
-  captureBaselineModels(opencodeCliPath);
+  const preIntrospectionDirty = !runContext.codexPool && repoDir ? await dirtyTrackedPaths({ cwd: repoDir }) : null;
+  const opencodeCliPath = runContext.codexPool ? undefined : await agents.opencode.install();
+  if (opencodeCliPath !== undefined) captureBaselineModels(opencodeCliPath);
 
   // inject account-level secrets into process.env (YAML secrets take precedence).
   // sanitizeSecret trims + masks so accidental trailing whitespace doesn't leak
@@ -265,15 +288,17 @@ export async function main(): Promise<MainResult> {
   // without the Grok credential on disk and 12 with it, so skipping this
   // would read a subscription-only account as unable to run its own models
   // and fall the run back to the free tier.
-  installCodexAuth();
-  installXaiAuth();
+  if (!runContext.codexPool) {
+    installCodexAuth();
+    installXaiAuth();
+  }
 
   // capture the AUTHORIZED model set after dbSecrets + Codex auth.json are
   // applied. this is the authoritative source for the BYOK fallback
   // decision and the opencode-agent path of validateAgentApiKey — strictly
   // more accurate than the static envVars/managedCredentials catalog,
   // which can miss new auth shapes.
-  captureAuthorizedModels(opencodeCliPath);
+  if (opencodeCliPath !== undefined) captureAuthorizedModels(opencodeCliPath);
 
   // FORK: start reading the subscription's remaining limit for the footer;
   // never awaited here, footers built minutes later read the result.
@@ -348,14 +373,16 @@ export async function main(): Promise<MainResult> {
   // `runProxyResolution` before being rethrown — handled here (not in the
   // outer catch) because the outer catch needs `toolContext` (not yet built)
   // for its general-purpose error path.
-  await runProxyResolution({
-    payload,
-    oss: runContext.oss,
-    proxyModel: runContext.proxyModel,
-    oidcCredentials,
-    repo: runContext.repo,
-    toolState,
-  });
+  if (!runContext.codexPool) {
+    await runProxyResolution({
+      payload,
+      oss: runContext.oss,
+      proxyModel: runContext.proxyModel,
+      oidcCredentials,
+      repo: runContext.repo,
+      toolState,
+    });
+  }
 
   // create octokit with MCP token for GitHub API calls.
   // the refresh handles mid-run token invalidation (#891)
@@ -399,7 +426,7 @@ export async function main(): Promise<MainResult> {
     // through to `validateAgentApiKey`'s missing-key error below (#938).
     // proxy / byok decisions mutate `payload.proxyModel` so the resolution
     // beneath sees the corrected routing.
-    const access = decideModelAccess({
+    const access = runContext.codexPool ? { kind: "byok" as const } : decideModelAccess({
       modelExplicit: payload.modelExplicit ?? false,
       model: payload.model,
       oss: runContext.oss,
@@ -438,7 +465,7 @@ export async function main(): Promise<MainResult> {
     // to a GitHub Actions secrets page they had never put a key in. skipped
     // for proxy runs for the same reason validateAgentApiKey is: the server
     // minted the key and is the authority on it.
-    const credentials = payload.proxyModel
+    const credentials = runContext.codexPool || payload.proxyModel
       ? { kind: "ok" as const }
       : await checkConfiguredCredentials({
           model: configuredModel,
@@ -469,9 +496,9 @@ export async function main(): Promise<MainResult> {
     const resolvedModel =
       credentials.kind === "fellBack" ? credentials.replacement : configuredModel;
 
-    vertexCredentials = materializeVertexCredentials({ model: resolvedModel });
+    if (!runContext.codexPool) vertexCredentials = materializeVertexCredentials({ model: resolvedModel });
 
-    let agent = resolveAgent({
+    let agent = runContext.codexPool ? agents.codex : resolveAgent({
       model: resolvedModel,
       proxyModel: payload.proxyModel,
       // the account opt-in and the canary arm are both admissions to codex, so
@@ -511,7 +538,7 @@ export async function main(): Promise<MainResult> {
     // is the authority on "can this run use the router". the `authorized`
     // set was captured BEFORE the proxy mint, so it doesn't see the
     // openrouter slug — validating would spuriously throw.
-    if (!payload.proxyModel) {
+    if (!runContext.codexPool && !payload.proxyModel) {
       try {
         validateAgentApiKey({
           agent,

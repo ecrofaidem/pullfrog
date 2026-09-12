@@ -46,7 +46,7 @@ function codexChainIsDead(body: string): boolean {
 
 /** force one refresh round-trip against the OAuth provider. returns the
  * rotated Codex-shaped blob. does NOT persist — the caller holds the lease. */
-export async function refreshCodexAuthBody(body: CodexAuthBody): Promise<CodexAuthBody> {
+export async function refreshCodexAuthBody(body: CodexAuthBody, signal?: AbortSignal): Promise<CodexAuthBody> {
   const response = await fetch(CODEX_OAUTH_TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -55,7 +55,7 @@ export async function refreshCodexAuthBody(body: CodexAuthBody): Promise<CodexAu
       refresh_token: body.tokens.refresh_token,
       client_id: CODEX_OAUTH_CLIENT_ID,
     }).toString(),
-    signal: AbortSignal.timeout(10_000),
+    signal: signal ?? AbortSignal.timeout(10_000),
   });
   if (!response.ok) {
     const text = await response.text().catch(() => "");

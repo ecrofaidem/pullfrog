@@ -10,9 +10,13 @@
 
 import type * as actionVersion from "../actionVersion.js";
 import type * as auth from "../auth.js";
+import type * as codexAccounts from "../codexAccounts.js";
+import type * as codexAssignments from "../codexAssignments.js";
+import type * as codexQuota from "../codexQuota.js";
 import type * as configKeys from "../configKeys.js";
 import type * as crons from "../crons.js";
 import type * as dispatch from "../dispatch.js";
+import type * as handlers_codexPool from "../handlers/codexPool.js";
 import type * as handlers_cliConfig from "../handlers/cliConfig.js";
 import type * as handlers_cliSecrets from "../handlers/cliSecrets.js";
 import type * as handlers_installationToken from "../handlers/installationToken.js";
@@ -23,7 +27,9 @@ import type * as handlers_workflowRun from "../handlers/workflowRun.js";
 import type * as health from "../health.js";
 import type * as http from "../http.js";
 import type * as lib_base64 from "../lib/base64.js";
+import type * as lib_codexIdentity from "../lib/codexIdentity.js";
 import type * as lib_codexOAuth from "../lib/codexOAuth.js";
+import type * as lib_codexPool from "../lib/codexPool.js";
 import type * as lib_codexRefresh from "../lib/codexRefresh.js";
 import type * as lib_crypto from "../lib/crypto.js";
 import type * as lib_envelope from "../lib/envelope.js";
@@ -53,9 +59,13 @@ import type {
 declare const fullApi: ApiFromModules<{
   actionVersion: typeof actionVersion;
   auth: typeof auth;
+  codexAccounts: typeof codexAccounts;
+  codexAssignments: typeof codexAssignments;
+  codexQuota: typeof codexQuota;
   configKeys: typeof configKeys;
   crons: typeof crons;
   dispatch: typeof dispatch;
+  "handlers/codexPool": typeof handlers_codexPool;
   "handlers/cliConfig": typeof handlers_cliConfig;
   "handlers/cliSecrets": typeof handlers_cliSecrets;
   "handlers/installationToken": typeof handlers_installationToken;
@@ -66,7 +76,9 @@ declare const fullApi: ApiFromModules<{
   health: typeof health;
   http: typeof http;
   "lib/base64": typeof lib_base64;
+  "lib/codexIdentity": typeof lib_codexIdentity;
   "lib/codexOAuth": typeof lib_codexOAuth;
+  "lib/codexPool": typeof lib_codexPool;
   "lib/codexRefresh": typeof lib_codexRefresh;
   "lib/crypto": typeof lib_crypto;
   "lib/envelope": typeof lib_envelope;
