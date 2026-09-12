@@ -10,6 +10,7 @@
 
 import type * as actionVersion from "../actionVersion.js";
 import type * as auth from "../auth.js";
+import type * as codexAccounts from "../codexAccounts.js";
 import type * as configKeys from "../configKeys.js";
 import type * as crons from "../crons.js";
 import type * as dispatch from "../dispatch.js";
@@ -53,6 +54,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   actionVersion: typeof actionVersion;
   auth: typeof auth;
+  codexAccounts: typeof codexAccounts;
   configKeys: typeof configKeys;
   crons: typeof crons;
   dispatch: typeof dispatch;

@@ -81,6 +81,36 @@ export default defineSchema({
     leaseUntil: v.optional(v.number()),
   }).index("by_scope_name", ["owner", "repo", "name"]),
 
+  /** Canonical subscription identity; pooled credentials never enter legacy visibleTo. */
+  codexAccounts: defineTable({
+    owner: v.string(),
+    repo: v.union(v.string(), v.null()),
+    label: v.string(),
+    providerAccountId: v.string(),
+    generation: v.number(),
+    credentialVersion: v.number(),
+    ciphertext: v.string(),
+    iv: v.string(),
+    enabled: v.boolean(),
+    authState: v.union(v.literal("ready"), v.literal("rejected"), v.literal("uncertain")),
+    /** Occupancy survives reenrollment until the owning execution has stopped. */
+    activeAssignmentId: v.optional(v.string()),
+    activeOwnershipToken: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_owner_provider", ["owner", "providerAccountId"])
+    .index("by_scope", ["owner", "repo"]),
+
+  /** Explicit ordered membership. Creating a configuration does not activate it. */
+  codexPools: defineTable({
+    owner: v.string(),
+    repo: v.string(),
+    accountIds: v.array(v.id("codexAccounts")),
+    enabled: v.boolean(),
+    updatedAt: v.number(),
+  }).index("by_repo", ["owner", "repo"]),
+
   /** one row per dispatched or observed action run. */
   runs: defineTable({
     owner: v.string(),
