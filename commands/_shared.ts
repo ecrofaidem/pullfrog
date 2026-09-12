@@ -206,6 +206,26 @@ export type SecretScope = "account" | "repo";
 
 type PullfrogSecretResult = { saved: boolean; error: string };
 
+/** Named accounts use the deployed secrets route and the operator's GitHub token. */
+export async function manageCodexPool(ctx: {
+  token: string; owner: string; repo: string; scope: SecretScope;
+  operation?: "codex-enroll" | "codex-replace" | "codex-enable" | "codex-pool";
+  label?: string; value?: string; accountId?: string; enabled?: boolean; accountIds?: string[];
+}): Promise<import("../utils/codexPoolProtocol.ts").CodexPoolStatus> {
+  const { token, ...body } = ctx;
+  const result = await pullfrogApi<import("../utils/codexPoolProtocol.ts").CodexPoolStatus & { error?: string; success?: boolean }>({
+    path: ctx.operation ? "/api/cli/secrets" : `/api/cli/secrets?${new URLSearchParams({ owner: ctx.owner, repo: ctx.repo, scope: ctx.scope, codexPool: "1" })}`,
+    token, ...(ctx.operation ? { method: "POST", body } : {}),
+  });
+  if (!result.ok || (ctx.operation && result.data.success !== true)) {
+    throw new Error(result.data.error || `Codex pool request failed (${result.status})`);
+  }
+  if (!Array.isArray(result.data.accounts) || !("pool" in result.data)) {
+    throw new Error("This server does not support named Codex accounts. Deploy the compatible backend first.");
+  }
+  return result.data;
+}
+
 export async function setPullfrogSecret(ctx: {
   token: string;
   owner: string;

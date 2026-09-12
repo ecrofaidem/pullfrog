@@ -43,3 +43,25 @@ export interface CodexPoolFinalization {
 export interface CodexPoolFinalizationReceipt {
   status: "released" | "quarantined" | "stale";
 }
+
+/** Private operator metadata; never includes provider identity or credentials. */
+export interface CodexPoolAccountStatus {
+  id: string;
+  label: string;
+  repo: string | null;
+  enabled: boolean;
+  authState: "ready" | "rejected" | "uncertain";
+  busy: boolean;
+  generation: number;
+  credentialVersion: number;
+  quota: {
+    result: import("./codexQuota.ts").CodexQuotaResult;
+    observedAt: number;
+    fresh: boolean;
+  } | null;
+}
+
+export interface CodexPoolStatus {
+  accounts: CodexPoolAccountStatus[];
+  pool: { enabled: boolean; accountIds: string[] } | null;
+}

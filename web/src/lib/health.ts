@@ -2,6 +2,7 @@
 // subscription on every view, so no two tabs can disagree.
 
 import type { HealthData } from "@server/health";
+import type { CodexPoolAccountStatus } from "../../../utils/codexPoolProtocol";
 import { relative } from "./format";
 
 export type HealthKind = "ok" | "warn" | "cut" | "missing";
@@ -36,6 +37,21 @@ export function reseedCommand(): string {
 
 export function deriveHealth(data: HealthData, now: number | null): Health {
   const { chain, recent } = data;
+
+  if (data.codexPool?.pool?.enabled) {
+    const pool = data.codexPool;
+    const accounts = pool.accounts.filter((account) => pool.pool!.accountIds.includes(account.id));
+    const available = accounts.filter((account) => account.enabled && account.authState === "ready" &&
+      !account.busy && freshPoolQuota(account, now) && account.quota?.result.status === "available").length;
+    const busy = accounts.filter((account) => account.busy).length;
+    const needsLogin = accounts.filter((account) => account.enabled && account.authState !== "ready").length;
+    return {
+      kind: available ? "ok" : needsLogin === accounts.length && accounts.length > 0 ? "cut" : "warn",
+      rotated: false,
+      line: `${available} of ${accounts.length} Codex accounts available${busy ? ` · ${busy} busy` : ""}${needsLogin ? ` · ${needsLogin} need sign-in` : ""}`,
+      detail: "Quota is checked again before each run. Inspect the accounts below or run pullfrog auth codex list.",
+    };
+  }
 
   if (!chain) {
     return {
@@ -78,4 +94,26 @@ export function deriveHealth(data: HealthData, now: number | null): Health {
   if (usageLine) parts.push(usageLine);
   if (last) parts.push(`last run ${relative(last.createdAt, now)}`);
   return { kind: "ok", rotated, line: parts.join(" · ") };
+}
+
+function freshPoolQuota(account: CodexPoolAccountStatus, now: number | null): boolean {
+  const quota = account.quota;
+  if (!quota?.fresh) return false;
+  if (now === null) return true;
+  return quota.observedAt <= now && now - quota.observedAt < 60_000 &&
+    !("weekly" in quota.result && quota.result.weekly && quota.result.weekly.resetAt * 1000 <= now);
+}
+
+export function describePoolAccount(account: CodexPoolAccountStatus, now: number | null): string {
+  if (!account.enabled) return account.busy ? "Disabled · current run still finishing" : "Disabled";
+  if (account.busy) return "Busy · current run still finishing";
+  if (account.authState !== "ready") return account.authState === "uncertain" ? "Sign in again · last tokens were not recovered" : "Sign in again · login rejected";
+  const quota = account.quota;
+  if (!quota || !freshPoolQuota(account, now)) return "Idle · quota will be checked at startup";
+  if (quota.result.status === "authentication") return "Sign in again · usage request rejected";
+  if (quota.result.status === "provider_denied") return "Provider limit reached";
+  if ("weekly" in quota.result && quota.result.weekly) {
+    return `${Math.ceil(100 - quota.result.weekly.usedPercent)}% weekly remaining · resets ${new Date(quota.result.weekly.resetAt * 1000).toLocaleString()}`;
+  }
+  return "Idle · quota could not be checked";
 }
