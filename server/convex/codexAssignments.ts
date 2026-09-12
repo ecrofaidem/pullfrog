@@ -38,7 +38,7 @@ export const reserve = internalMutation({
   handler: async (ctx, input): Promise<Reservation> => {
     const args = { ...input, owner: input.owner.trim().toLowerCase(), repo: input.repo.trim().toLowerCase() };
     const existing = await ctx.db.query("codexAssignments").withIndex("by_attempt", (q) =>
-      q.eq("owner", args.owner).eq("repo", args.repo).eq("runId", args.runId).eq("runAttempt", args.runAttempt)).unique();
+      q.eq("owner", args.owner).eq("repo", args.repo).eq("runId", args.runId).eq("runAttempt", args.runAttempt)).order("desc").first();
     if (existing) {
       if (existing.finalizationStatus) return { status: "denied", reason: "configuration" };
       if (existing.runtimeInstance !== args.runtimeInstance) return { status: "denied", reason: "configuration" };
@@ -49,8 +49,8 @@ export const reserve = internalMutation({
             !await member(ctx, existing, account)) return { status: "denied", reason: "configuration" };
         return { status: "active", assignment: existing, account };
       }
-      // Only this in-flight server invocation may continue after safely skipping a candidate.
-      if (existing.phase !== "released" || !timingSafeEqual(existing.ownershipToken, args.ownershipToken)) {
+      // Only this in-flight invocation may skip a candidate; quarantines keep their own durable row.
+      if ((existing.phase !== "released" && existing.phase !== "quarantined") || !timingSafeEqual(existing.ownershipToken, args.ownershipToken)) {
         return { status: "denied", reason: existing.denialReason ?? "unknown", ...(existing.retryAt === undefined ? {} : { retryAt: existing.retryAt }) };
       }
     }
@@ -63,7 +63,7 @@ export const reserve = internalMutation({
       if (!account || account.owner !== args.owner || (account.repo !== null && account.repo !== args.repo) || !account.enabled) {
         reasons.push("configuration"); continue;
       }
-      if (account.activeAssignmentId) { reasons.push("busy"); continue; }
+      if (account.activeAssignmentId) { reasons.push(args.excludedIds.includes(accountId) ? "unknown" : "busy"); continue; }
       if (account.authState !== "ready") { reasons.push("authentication"); continue; }
       const quota = await ctx.db.query("codexQuotaObservations").withIndex("by_account", (q) => q.eq("accountId", accountId)).unique();
       // A cached 401 may only mean the access token expired; reserve its refresh chain once.
@@ -82,8 +82,9 @@ export const reserve = internalMutation({
         generation: account.generation, credentialVersion: account.credentialVersion,
         accountAlias: `Account ${index + 1}`, phase: "reserved" as const, updatedAt: now,
       };
-      const assignmentId = existing?._id ?? await ctx.db.insert("codexAssignments", { ...value, createdAt: now });
-      if (existing) await ctx.db.patch(assignmentId, { ...value, denialReason: undefined, retryAt: undefined });
+      const reusable = existing?.phase === "released" ? existing : null;
+      const assignmentId = reusable?._id ?? await ctx.db.insert("codexAssignments", { ...value, createdAt: now });
+      if (reusable) await ctx.db.patch(assignmentId, { ...value, denialReason: undefined, retryAt: undefined });
       await ctx.db.patch(accountId, { activeAssignmentId: assignmentId, activeOwnershipToken: args.ownershipToken, updatedAt: now });
       return { status: "reserved", assignment: (await ctx.db.get(assignmentId))!, account };
     }

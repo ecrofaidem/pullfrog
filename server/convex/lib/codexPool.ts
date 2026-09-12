@@ -38,7 +38,7 @@ export async function startCodexPool(ctx: ActionCtx, identity: {
   const deadline = Date.now() + 20_000;
   const ownershipToken = Array.from(crypto.getRandomValues(new Uint8Array(32)), (n) => n.toString(16).padStart(2, "0")).join("");
   const excludedIds: Id<"codexAccounts">[] = [];
-  while (Date.now() < deadline) {
+  candidates: while (Date.now() < deadline) {
     const reservation = await ctx.runMutation(internal.codexAssignments.reserve, { ...identity, ownershipToken, excludedIds });
     if (reservation.status === "denied") return reservation;
     const { assignment, account } = reservation;
@@ -56,34 +56,42 @@ export async function startCodexPool(ctx: ActionCtx, identity: {
       await ctx.runMutation(internal.codexAssignments.abandon, { ...fence, reason: "authentication", rejected: true });
       excludedIds.push(account._id); continue;
     }
-    if (codexNeedsRefresh(body)) {
-      if (Date.now() >= deadline || !await ctx.runMutation(internal.codexAssignments.refreshStarted, fence)) {
-        await ctx.runMutation(internal.codexAssignments.abandon, { ...fence, reason: "configuration" });
-        return { status: "denied", reason: "configuration" };
-      }
-      try {
-        const rotated = await refreshBefore(body, deadline);
-        const text = stringifyCodexAuthBody(rotated);
-        if (!parseCodexAuthBody(text) || getCodexProviderAccountId(text) !== account.providerAccountId) throw new Error("invalid rotated auth");
-        if (!await ctx.runMutation(internal.codexAssignments.commitRefresh, { ...fence, providerAccountId: account.providerAccountId, ...await seal(text) })) {
+    let needsRefresh = codexNeedsRefresh(body);
+    let didRefresh = false;
+    let quota;
+    while (true) {
+      if (needsRefresh) {
+        if (Date.now() >= deadline || !await ctx.runMutation(internal.codexAssignments.refreshStarted, fence)) {
           await ctx.runMutation(internal.codexAssignments.abandon, { ...fence, reason: "configuration" });
           return { status: "denied", reason: "configuration" };
         }
-        fence = { ...fence, credentialVersion: fence.credentialVersion + 1 };
-        raw = text; body = rotated;
-      } catch (err) {
-        const rejected = err instanceof OAuthInvalidGrantError &&
-          (err.chainIsDead || parseOAuthErrorBody(err.responseBody)?.error === "invalid_grant");
-        await ctx.runMutation(internal.codexAssignments.abandon, { ...fence, reason: rejected ? "authentication" : "unknown", rejected });
-        // Uncertain refresh retains occupancy; a new invocation cannot retry that token.
-        if (!rejected) return { status: "denied", reason: "unknown" };
-        excludedIds.push(account._id); continue;
+        try {
+          const rotated = await refreshBefore(body, deadline);
+          const text = stringifyCodexAuthBody(rotated);
+          if (!parseCodexAuthBody(text) || getCodexProviderAccountId(text) !== account.providerAccountId) throw new Error("invalid rotated auth");
+          if (!await ctx.runMutation(internal.codexAssignments.commitRefresh, { ...fence, providerAccountId: account.providerAccountId, ...await seal(text) })) {
+            await ctx.runMutation(internal.codexAssignments.abandon, { ...fence, reason: "configuration" });
+            return { status: "denied", reason: "configuration" };
+          }
+          fence = { ...fence, credentialVersion: fence.credentialVersion + 1 };
+          raw = text; body = rotated;
+          didRefresh = true; needsRefresh = false;
+        } catch (err) {
+          const rejected = err instanceof OAuthInvalidGrantError &&
+            (err.chainIsDead || parseOAuthErrorBody(err.responseBody)?.error === "invalid_grant");
+          await ctx.runMutation(internal.codexAssignments.abandon, { ...fence, reason: rejected ? "authentication" : "unknown", rejected });
+          // Uncertain refresh retains occupancy; a new invocation cannot retry that token.
+          excludedIds.push(account._id); continue candidates;
+        }
       }
+      const cached = await ctx.runQuery(internal.codexQuota.cached, quotaFence());
+      const observedAt = Date.now();
+      quota = cached?.result ?? await probeCodexQuota({ accessToken: body.tokens.access_token, accountId: account.providerAccountId, deadline });
+      if (!cached) await ctx.runMutation(internal.codexQuota.record, { ...quotaFence(), observedAt, result: quota });
+      // A quota 401 can precede the JWT expiry. Refresh once while we still own the chain.
+      if (quota.status === "authentication" && !didRefresh) { needsRefresh = true; continue; }
+      break;
     }
-    const cached = await ctx.runQuery(internal.codexQuota.cached, quotaFence());
-    const observedAt = Date.now();
-    const quota = cached?.result ?? await probeCodexQuota({ accessToken: body.tokens.access_token, accountId: account.providerAccountId, deadline });
-    if (!cached) await ctx.runMutation(internal.codexQuota.record, { ...quotaFence(), observedAt, result: quota });
     if (quota.status === "available" && Date.now() < deadline) {
       if (await ctx.runMutation(internal.codexAssignments.activate, fence)) return assigned(assignment, raw);
       await ctx.runMutation(internal.codexAssignments.abandon, { ...fence, reason: "configuration" });

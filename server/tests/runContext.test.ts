@@ -95,8 +95,8 @@ describe("signed pool startup handler", () => {
     expect((await request()).status).toBe(400);
   });
 
-  it("refreshes once under reservation and probes the new credential version", async () => {
-    const { request, t, id } = await setup(true, -1);
+  it.each([-1, 7200])("refreshes cached authentication under reservation even with expiry %s", async (expires) => {
+    const { request, t, id } = await setup(true, expires);
     await t.mutation(internal.codexQuota.record, { accountId: id, generation: 1, credentialVersion: 1, observedAt: Date.now(), result: { status: "authentication" } });
     const usage = provider.getMockImplementation()!;
     provider.mockImplementation(async (url: string, init: RequestInit) => {
@@ -113,6 +113,21 @@ describe("signed pool startup handler", () => {
     expect(await t.run((ctx) => ctx.db.get(id))).toMatchObject({ credentialVersion: 2 });
     expect(await t.run((ctx) => ctx.db.query("codexQuotaObservations").unique())).toMatchObject({ credentialVersion: 2 });
     expect(await t.run((ctx) => ctx.db.query("codexAssignments").unique())).toMatchObject({ phase: "active", credentialVersion: 2 });
+  });
+
+  it.each([false, true])("refreshes a live access-token rejection once; rejected again: %s", async (rejectAgain) => {
+    const { request, t, id } = await setup();
+    const usage = provider.getMockImplementation()!;
+    provider.mockImplementation((url: string, init: RequestInit) => {
+      if (url.includes("oauth/token")) return new Response(JSON.stringify({ access_token: "rotated-access", refresh_token: "rotated-refresh" }));
+      if (new Headers(init.headers).get("Authorization") !== "Bearer rotated-access" || rejectAgain) return new Response("{}", { status: 401 });
+      return usage(url, init);
+    });
+    const response = await (await request()).json();
+    expect(response.codexPool).toMatchObject(rejectAgain ? { status: "denied", reason: "authentication" } : { status: "assigned" });
+    expect(provider.mock.calls.filter(([url]) => url.includes("oauth/token"))).toHaveLength(1);
+    expect(provider).toHaveBeenCalledTimes(3);
+    expect(await t.run((ctx) => ctx.db.get(id))).toMatchObject({ credentialVersion: 2 });
   });
 
   it("does not repeat OAuth during a duplicate in-flight startup", async () => {
@@ -222,7 +237,7 @@ describe("signed pool startup handler", () => {
     expect(provider).toHaveBeenCalledTimes(1);
   });
 
-  it("continues to secondary after a definite primary refresh rejection", async () => {
+  it.each([false, true])("continues to secondary after primary refresh failure; uncertain: %s", async (uncertain) => {
     const { request, t, id, raw } = await setup(true, -1);
     const secondary = JSON.parse(raw);
     secondary.tokens.account_id = "provider-two";
@@ -232,11 +247,26 @@ describe("signed pool startup handler", () => {
     });
     await t.mutation(internal.codexAccounts.configurePool, { owner: "owner", repo: "repo", accountIds: [id, second], enabled: true });
     const usage = provider.getMockImplementation()!;
-    provider.mockImplementation((url: string, init: RequestInit) => url.includes("oauth/token")
-      ? new Response(JSON.stringify({ error: { code: "token_expired" } }), { status: 401 }) : usage(url, init));
+    provider.mockImplementation((url: string, init: RequestInit) => {
+      if (!url.includes("oauth/token")) return usage(url, init);
+      if (uncertain) throw new Error("reply lost after rotation");
+      return new Response(JSON.stringify({ error: { code: "token_expired" } }), { status: 401 });
+    });
     expect((await (await request()).json()).codexPool).toMatchObject({ status: "assigned", accountAlias: "Account 2" });
-    expect(await t.run((ctx) => ctx.db.get(id))).toMatchObject({ authState: "rejected" });
-    expect((await t.run((ctx) => ctx.db.get(id)))?.activeAssignmentId).toBeUndefined();
+    const first = await t.run((ctx) => ctx.db.get(id));
+    expect(first).toMatchObject({ authState: uncertain ? "uncertain" : "rejected" });
+    if (uncertain) {
+      expect(first?.activeAssignmentId).toBeDefined();
+      const held = await t.run((ctx) => ctx.db.get(first!.activeAssignmentId!));
+      expect(held).toMatchObject({ accountId: id, phase: "quarantined" });
+      expect(await t.run((ctx) => ctx.db.query("codexAssignments").collect())).toHaveLength(2);
+      expect(await t.mutation(internal.codexAssignments.terminal, {
+        assignmentId: held!._id, accountId: id, ownershipToken: held!.ownershipToken,
+        generation: held!.generation, credentialVersion: held!.credentialVersion,
+      })).toEqual({ status: "quarantined" });
+      expect((await t.run((ctx) => ctx.db.get(id)))?.activeAssignmentId).toBeUndefined();
+    } else expect(first?.activeAssignmentId).toBeUndefined();
+    expect((await (await request()).json()).codexPool).toMatchObject({ status: "assigned", accountAlias: "Account 2" });
     expect(provider).toHaveBeenCalledTimes(2);
   });
 
