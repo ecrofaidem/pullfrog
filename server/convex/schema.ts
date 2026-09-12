@@ -18,6 +18,18 @@ export const runStatus = v.union(
   v.literal("cancelled")
 );
 
+const codexWeeklyUsage = v.object({
+  plan: v.optional(v.string()), usedPercent: v.number(), windowSeconds: v.number(), resetAt: v.number(),
+});
+export const codexQuotaResult = v.union(
+  v.object({ status: v.union(v.literal("available"), v.literal("exhausted")), weekly: codexWeeklyUsage }),
+  v.object({ status: v.literal("authentication") }),
+  v.object({ status: v.literal("provider_denied"), weekly: v.optional(codexWeeklyUsage) }),
+  v.object({ status: v.literal("unknown"), reason: v.union(
+    v.literal("malformed"), v.literal("http"), v.literal("timeout"), v.literal("network"), v.literal("aborted"),
+  ) }),
+);
+
 export default defineSchema({
   /** one row per GitHub account the App is installed on. */
   installations: defineTable({
@@ -101,6 +113,15 @@ export default defineSchema({
   })
     .index("by_owner_provider", ["owner", "providerAccountId"])
     .index("by_scope", ["owner", "repo"]),
+
+  /** Latest observation only; generation and credential version are part of its validity. */
+  codexQuotaObservations: defineTable({
+    accountId: v.id("codexAccounts"),
+    generation: v.number(),
+    credentialVersion: v.number(),
+    observedAt: v.number(),
+    result: codexQuotaResult,
+  }).index("by_account", ["accountId"]),
 
   /** Explicit ordered membership. Creating a configuration does not activate it. */
   codexPools: defineTable({

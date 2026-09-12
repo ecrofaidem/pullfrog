@@ -8,6 +8,7 @@
 
 import { log } from "./cli.ts";
 import { parseCodexAuthBody } from "./codexOAuth.ts";
+import { parseCodexQuota } from "./codexQuota.ts";
 
 export interface CodexUsage {
   plan: string | undefined;
@@ -38,12 +39,6 @@ export function primeCodexUsage(): Promise<CodexUsage | null> {
 /** whatever the read produced so far; null before it lands or when there is no chain. */
 export function currentCodexUsage(): CodexUsage | null {
   return current;
-}
-
-interface Window {
-  used_percent?: number;
-  limit_window_seconds?: number;
-  reset_at?: number;
 }
 
 function accountIdFromToken(token: string): string | undefined {
@@ -87,30 +82,17 @@ async function fetchCodexUsage(): Promise<CodexUsage | null> {
     log.info(`» codex usage: ${response.status} from ${USAGE_URL}`);
     return null;
   }
-  const data = (await response.json()) as {
-    plan_type?: string;
-    rate_limit?: { primary_window?: Window | null; secondary_window?: Window | null };
-  };
-  // the longest window is the one people budget against (weekly on every plan seen so far)
-  const windows = [data.rate_limit?.primary_window, data.rate_limit?.secondary_window].filter(
-    (w): w is Window => !!w && typeof w.used_percent === "number" && typeof w.limit_window_seconds === "number"
-  );
-  const longest = windows.sort((a, b) => b.limit_window_seconds! - a.limit_window_seconds!)[0];
-  if (!longest) {
-    log.info("» codex usage: response carried no rate-limit window");
+  const quota = parseCodexQuota(await response.json());
+  if (!("weekly" in quota) || !quota.weekly) {
+    log.info("» codex usage: response carried no valid weekly window");
     return null;
   }
-  return {
-    plan: data.plan_type,
-    usedPercent: Math.max(0, Math.min(100, Math.round(longest.used_percent!))),
-    windowSeconds: longest.limit_window_seconds!,
-    resetAt: longest.reset_at ?? 0,
-  };
+  return { ...quota.weekly, plan: quota.weekly.plan };
 }
 
 /** "▰▰▰▰▰▰▰▱▱▱ 29% of the weekly limit left · resets in 3d 14h" */
 export function renderCodexUsage(usage: CodexUsage, now = Date.now()): string {
-  const left = 100 - usage.usedPercent;
+  const left = 100 - Math.max(0, Math.min(100, Math.round(usage.usedPercent)));
   const filled = Math.round(left / 10);
   const bar = "▰".repeat(filled) + "▱".repeat(10 - filled);
   const days = Math.round(usage.windowSeconds / 86_400);
