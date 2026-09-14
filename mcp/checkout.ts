@@ -136,6 +136,22 @@ export function formatFilesWithLineNumbers(files: PullFile[]): FormatFilesResult
   return { content, toc };
 }
 
+/** Writes the complete committed patch for parsers, independently of listFiles patch limits. */
+export function writeUnifiedPrDiff(params: {
+  cwd: string;
+  baseSha: string;
+  headSha: string;
+  diffPath: string;
+}): void {
+  // Write directly to disk: shell.$ trims stdout and buffers at most 32 MB.
+  $("git", [
+    "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-relative",
+    "--src-prefix=a/", "--dst-prefix=b/", "--binary", "--full-index",
+    "-C", "--find-copies-harder", "--ignore-submodules=none",
+    `--output=${params.diffPath}`, `${params.baseSha}...${params.headSha}`, "--",
+  ], { cwd: params.cwd, log: false });
+}
+
 function padNum(n: number): string {
   return n.toString().padStart(4, " ");
 }
@@ -157,6 +173,7 @@ export type CheckoutPrResult = {
   url: string;
   headRepo: string;
   diffPath: string;
+  unifiedDiffPath: string;
   impactPath?: string | undefined;
   incrementalDiffPath?: string | undefined;
   toc: string;
@@ -778,6 +795,22 @@ export function CheckoutPrTool(ctx: ToolContext) {
 
     // fetch PR files and format with line numbers
     const formatResult = await fetchAndFormatPrDiff(ctx, pull_number);
+    // Both artifacts and comment anchors must describe the same captured revision.
+    const latest = await ctx.octokit.rest.pulls.get({
+      owner: ctx.repo.owner,
+      repo: ctx.repo.name,
+      pull_number,
+    });
+    if (latest.data.head.sha !== checkoutSha || latest.data.base.sha !== prResponse.data.base.sha) {
+      throw new Error("PR revision changed while the diff was fetched; retry checkout_pr");
+    }
+    const unifiedDiffPath = join(tempDir, `pr-${pull_number}-${headShort}-unified.diff`);
+    writeUnifiedPrDiff({
+      cwd: process.cwd(),
+      baseSha: prResponse.data.base.sha,
+      headSha: checkoutSha,
+      diffPath: unifiedDiffPath,
+    });
     const diffPreview = formatResult.content.split("\n").slice(0, 100).join("\n");
     log.debug(`formatted diff preview (first 100 lines):\n${diffPreview}`);
     const diffPath = join(tempDir, `pr-${pull_number}-${headShort}.diff`);
@@ -797,43 +830,21 @@ export function CheckoutPrTool(ctx: ToolContext) {
     if (process.env.PULLFROG_DISABLE_CHANGE_IMPACT === "1") {
       log.info("» change impact disabled by PULLFROG_DISABLE_CHANGE_IMPACT");
     } else {
-      let revisionVerified = false;
-      let revisionFailure: string | undefined;
       try {
-        const latest = await ctx.octokit.rest.pulls.get({
-          owner: ctx.repo.owner,
-          repo: ctx.repo.name,
-          pull_number,
+        const impact = await createChangeImpactArtifact(ctx, {
+          files: formatResult.files,
+          pullNumber: pull_number,
+          baseSha: prResponse.data.base.sha,
+          headSha: checkoutSha,
         });
-        revisionVerified =
-          latest.data.head.sha === checkoutSha && latest.data.base.sha === prResponse.data.base.sha;
-      } catch (error) {
-        revisionFailure = error instanceof Error ? error.message : String(error);
-      }
-
-      if (revisionFailure !== undefined) {
-        log.warning(
-          `» change impact skipped: PR revision could not be verified (${revisionFailure})`
+        impactPath = impact.path;
+        log.info(
+          `» change impact: ${impact.candidateCount} candidate atom(s), ${impact.renderedAtomCount} detailed atom(s), ${impact.referenceCount} tracked reference(s), ${impact.bytes} bytes → ${impact.path}`
         );
-      } else if (!revisionVerified) {
-        log.warning("» change impact skipped: PR revision changed while the diff was fetched");
-      } else {
-        try {
-          const impact = await createChangeImpactArtifact(ctx, {
-            files: formatResult.files,
-            pullNumber: pull_number,
-            baseSha: prResponse.data.base.sha,
-            headSha: checkoutSha,
-          });
-          impactPath = impact.path;
-          log.info(
-            `» change impact: ${impact.candidateCount} candidate atom(s), ${impact.renderedAtomCount} detailed atom(s), ${impact.referenceCount} tracked reference(s), ${impact.bytes} bytes → ${impact.path}`
-          );
-        } catch (error) {
-          log.warning(
-            `» change impact skipped: generation failed (${error instanceof Error ? error.message : String(error)})`
-          );
-        }
+      } catch (error) {
+        log.warning(
+          `» change impact skipped: generation failed (${error instanceof Error ? error.message : String(error)})`
+        );
       }
     }
 
@@ -925,6 +936,7 @@ export function CheckoutPrTool(ctx: ToolContext) {
       url: prResponse.data.html_url,
       headRepo: pr.headRepoFullName,
       diffPath,
+      unifiedDiffPath,
       impactPath,
       incrementalDiffPath,
       toc: formatResult.toc,
@@ -939,9 +951,9 @@ export function CheckoutPrTool(ctx: ToolContext) {
         `use the TOC line ranges as your checklist and read specific files from the diff instead of reading the entire file. ` +
         `for example, if the TOC says "src/foo.ts → lines 5-42", read lines 5-42 from diffPath to see that file's changes. ` +
         `review files selectively based on relevance rather than reading everything sequentially. ` +
-        `to inspect the PR's changed files, use diffPath — do NOT run \`git diff\` to re-derive what's already in diffPath. the formatted diff with line numbers is authoritative. ` +
+        `diffPath is a numbered display for navigation and review anchors; it is NOT a unified patch and GitHub may omit large file patches from it. unifiedDiffPath is the complete raw unified patch for the captured base/head commits. Use unifiedDiffPath for governance manifests, git apply, patch parsers, and any content omitted from diffPath. Do not pass the numbered display or incremental range-diff to a unified-diff parser. ` +
         `if you ever do need a branch-vs-base diff via the git tool, use \`git diff --merge-base <base>\` (single call, includes uncommitted edits) or three-dot \`git diff <base>...HEAD\` (committed-only). bare \`<base>\` and two-dot \`<base>..HEAD\` are symmetric and pull in the inverse of every commit landed on \`<base>\` since the branch forked — the git tool will reject those forms when the divergence is detected. \`$(...)\` subshells are NOT expanded by the git tool. ` +
-        `\`git log\` and \`git diff --stat\` are fine for commit-range overview, and \`git diff\` / \`git diff --cached\` are fine for inspecting *your own* uncommitted changes — but PR review content MUST come from diffPath. ` +
+        `\`git log\` and \`git diff --stat\` are fine for commit-range overview, and \`git diff\` / \`git diff --cached\` are fine for inspecting *your own* uncommitted changes — but PR review content MUST come from diffPath or unifiedDiffPath. ` +
         `before your review is submitted, a one-time coverage pre-flight may error listing unread TOC regions. ` +
         `retry the same create_pull_request_review call to proceed — optionally after reading the listed ranges. the pre-flight will not block again this session. ` +
         `the local branch is 'localBranch' (pr-{number}), not the remote branch name. ` +
@@ -958,7 +970,7 @@ export function CheckoutPrTool(ctx: ToolContext) {
     timeoutMs: 600_000,
     description:
       "Checkout a pull request branch locally. This fetches the PR branch and sets up push configuration for fork PRs. " +
-      "Returns diffPath pointing to the formatted diff file. " +
+      "Returns diffPath for the numbered display and unifiedDiffPath for the complete machine-readable unified patch. " +
       "Example: `checkout_pr({ pull_number: 1234 })`. " +
       "Large repos can take several minutes — wait for the call to finish; do not treat a slow response as failure. " +
       "If a call times out, retry it — the retry starts a fresh attempt. DO NOT touch `.git/*.lock` files: removing them kills a still-running fetch and creates an inescapable retry loop. " +

@@ -1,7 +1,9 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { type FormatFilesResult, formatFilesWithLineNumbers } from "./checkout.ts";
+import { type FormatFilesResult, formatFilesWithLineNumbers, writeUnifiedPrDiff } from "./checkout.ts";
 
 /**
  * parses TOC entries like "- src/math.ts → lines 7-42 · diff-<hex>" into structured data.
@@ -66,5 +68,59 @@ describe("formatFilesWithLineNumbers", () => {
 
     expect(result.toc).toMatchSnapshot("toc");
     expect(result.content).toMatchSnapshot("content");
+  });
+});
+
+describe("writeUnifiedPrDiff", () => {
+  it("exports a parseable committed PR diff including large files and renames", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "pullfrog-unified-"));
+    const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" });
+    try {
+      git("init", "-q");
+      git("config", "user.name", "Fixture");
+      git("config", "user.email", "fixture@example.test");
+      writeFileSync(join(cwd, "old name.txt"), "preserved content\n");
+      git("add", ".");
+      git("commit", "-qm", "base");
+      const base = git("rev-parse", "HEAD").trim();
+      git("checkout", "-qb", "feature");
+      renameSync(join(cwd, "old name.txt"), join(cwd, "new name.txt"));
+      const large = Array.from({ length: 20000 }, (_, i) => `SELECT ${i};`).join("\n") + "\n";
+      writeFileSync(join(cwd, "large.sql"), large);
+      writeFileSync(join(cwd, "trailing.txt"), "trailing spaces  ");
+      git("add", ".");
+      git("commit", "-qm", "changes");
+      const headSha = git("rev-parse", "HEAD").trim();
+      git("checkout", "-q", "--detach", base);
+      writeFileSync(join(cwd, "base-only.txt"), "not in PR\n");
+      git("add", ".");
+      git("commit", "-qm", "base advanced");
+      const baseSha = git("rev-parse", "HEAD").trim();
+      git("checkout", "-q", "feature");
+      writeFileSync(join(cwd, "large.sql"), "dirty edit must not leak\n");
+      const diffPath = join(cwd, "review.diff");
+      writeUnifiedPrDiff({ cwd, baseSha, headSha, diffPath });
+      const diff = readFileSync(diffPath, "utf8");
+      const stat = git("apply", "--numstat", diffPath);
+      expect(stat).toContain("20000\t0\tlarge.sql");
+      expect(stat).toContain("new name.txt");
+      expect(diff).toContain("rename from old name.txt");
+      expect(diff).toContain("+SELECT 19999;");
+      expect(diff).toContain("+trailing spaces  \n\\ No newline at end of file\n");
+      expect(diff).not.toContain("dirty edit");
+      expect(diff).not.toContain("base-only.txt");
+      git("checkout", "-q", "--detach", base, "--force");
+      git("apply", "--check", diffPath);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("does not present the numbered display as a unified patch", () => {
+    const fx = loadFixture<DiffFixture>("pullfrog-test-repo-pr-1.diff.json");
+    const formatted = formatFilesWithLineNumbers(fx.files).content;
+    expect(() => execFileSync("git", ["apply", "--numstat"], {
+      input: formatted, stdio: ["pipe", "pipe", "pipe"],
+    })).toThrow();
   });
 });
