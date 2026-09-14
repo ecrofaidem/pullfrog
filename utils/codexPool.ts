@@ -30,7 +30,7 @@ export function decodeCodexPool(value: unknown, instance: string): CodexPoolResp
         data.retryAt > 0 && data.retryAt < 8_640_000_000_000 ? { retryAt: data.retryAt } : {}),
     };
   }
-  if (data.status !== "assigned" || data.version !== 1 ||
+  if (data.status !== "assigned" || (data.version !== 1 && data.version !== 2) ||
       typeof data.assignmentId !== "string" || !data.assignmentId || data.assignmentId.length > 128 ||
       typeof data.capability !== "string" || !/^[\w-]{32,512}$/.test(data.capability) ||
       typeof data.accountAlias !== "string" || !/^Account [1-9]\d*$/.test(data.accountAlias) ||
@@ -39,7 +39,7 @@ export function decodeCodexPool(value: unknown, instance: string): CodexPoolResp
       (process.env.GITHUB_RUN_ATTEMPT && data.runAttempt !== process.env.GITHUB_RUN_ATTEMPT) ||
       data.runtimeInstance !== instance) return null;
   return {
-    status: "assigned", version: 1, assignmentId: data.assignmentId, capability: data.capability,
+    status: "assigned", version: data.version, assignmentId: data.assignmentId, capability: data.capability,
     accountAlias: data.accountAlias, generation: data.generation,
     runAttempt: data.runAttempt, runtimeInstance: instance,
   };

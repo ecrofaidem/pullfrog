@@ -33,7 +33,7 @@ async function member(ctx: MutationCtx, assignment: Doc<"codexAssignments">, acc
 export const reserve = internalMutation({
   args: {
     owner: v.string(), repo: v.string(), runId: v.string(), runAttempt: v.string(), runtimeInstance: v.string(),
-    ownershipToken: v.string(), excludedIds: v.array(v.id("codexAccounts")),
+    ownershipToken: v.string(), excludedIds: v.array(v.id("codexAccounts")), accessOnly: v.optional(v.boolean()),
   },
   handler: async (ctx, input): Promise<Reservation> => {
     const args = { ...input, owner: input.owner.trim().toLowerCase(), repo: input.repo.trim().toLowerCase() };
@@ -41,11 +41,12 @@ export const reserve = internalMutation({
       q.eq("owner", args.owner).eq("repo", args.repo).eq("runId", args.runId).eq("runAttempt", args.runAttempt)).order("desc").first();
     if (existing) {
       if (existing.finalizationStatus) return { status: "denied", reason: "configuration" };
-      if (existing.runtimeInstance !== args.runtimeInstance) return { status: "denied", reason: "configuration" };
+      if (existing.runtimeInstance !== args.runtimeInstance || !!existing.accessOnly !== !!args.accessOnly) return { status: "denied", reason: "configuration" };
       if (existing.phase === "active") {
         const account = await ctx.db.get(existing.accountId);
-        if (!account || account.generation !== existing.generation || account.credentialVersion !== existing.credentialVersion ||
-            account.activeAssignmentId !== existing._id || account.activeOwnershipToken !== existing.ownershipToken ||
+        if (!account || account.generation !== existing.generation ||
+            (!existing.accessOnly && (account.credentialVersion !== existing.credentialVersion ||
+              account.activeAssignmentId !== existing._id || account.activeOwnershipToken !== existing.ownershipToken)) ||
             !await member(ctx, existing, account)) return { status: "denied", reason: "configuration" };
         return { status: "active", assignment: existing, account };
       }
@@ -80,7 +81,7 @@ export const reserve = internalMutation({
         owner: args.owner, repo: args.repo, runId: args.runId, runAttempt: args.runAttempt,
         runtimeInstance: args.runtimeInstance, ownershipToken: args.ownershipToken, accountId,
         generation: account.generation, credentialVersion: account.credentialVersion,
-        accountAlias: `Account ${index + 1}`, phase: "reserved" as const, updatedAt: now,
+        accessOnly: args.accessOnly ?? false, accountAlias: `Account ${index + 1}`, phase: "reserved" as const, updatedAt: now,
       };
       const reusable = existing?.phase === "released" ? existing : null;
       const assignmentId = reusable?._id ?? await ctx.db.insert("codexAssignments", { ...value, createdAt: now });
@@ -125,6 +126,9 @@ export const activate = internalMutation({
     const quota = await ctx.db.query("codexQuotaObservations").withIndex("by_account", (q) => q.eq("accountId", state.account._id)).unique();
     if (!quota || !isFreshCodexQuota(quota, state.account) || quota.result.status !== "available" || quota.result.weekly.usedPercent >= 100) return false;
     await ctx.db.patch(args.assignmentId, { phase: "active", updatedAt: Date.now() });
+    if (state.assignment.accessOnly) {
+      await ctx.db.patch(state.account._id, { activeAssignmentId: undefined, activeOwnershipToken: undefined, updatedAt: Date.now() });
+    }
     return true;
   },
 });
@@ -182,6 +186,13 @@ async function finish(ctx: MutationCtx, assignment: Doc<"codexAssignments">, aut
 ): Promise<Receipt> {
   if (assignment.finalizationStatus) return { status: assignment.finalizationStatus };
   const account = await ctx.db.get(assignment.accountId);
+  // Access-only children cannot rotate or damage the canonical refresh chain.
+  // Their completion must not touch a newer preflight owner or token version.
+  if (assignment.accessOnly && assignment.phase === "active") {
+    const status = account?.generation === assignment.generation ? "released" : "stale";
+    await ctx.db.patch(assignment._id, { phase: "released", finalizationStatus: status, updatedAt: Date.now() });
+    return { status };
+  }
   const occupies = account?.activeAssignmentId === assignment._id && !!account.activeOwnershipToken &&
     timingSafeEqual(account.activeOwnershipToken, assignment.ownershipToken);
   const current = occupies && account.generation === assignment.generation;

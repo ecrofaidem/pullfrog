@@ -69,7 +69,7 @@ async function finalizeCodexPool(cleanup: CodexPoolCleanup): Promise<void> {
     return;
   }
   let auth: CodexPoolFinalAuth = { kind: "unchanged" };
-  if (cleanup.childState === "stopped") {
+  if (cleanup.childState === "stopped" && cleanup.assignment.version === 1) {
     auth = { kind: "uncertain" };
     try {
       const value = readFileSync(cleanup.authPath ?? "", "utf8");

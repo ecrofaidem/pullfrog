@@ -96,3 +96,13 @@ describe("pooled native process cleanup", () => {
     expect(JSON.stringify(mocks.warning.mock.calls)).not.toContain(assignment.capability);
   });
 });
+
+
+it("finishes access-only reviews without reading or returning a credential file", async () => {
+  pool.rememberCodexPoolAssignment({ ...assignment, version: 2 }, "token");
+  pool.registerCodexPoolAuth(join(directory, "missing-auth.json"));
+  pool.markCodexPoolChild("running");
+  pool.markCodexPoolChild("stopped");
+  await post.runOAuthWriteback();
+  expect(JSON.parse(mocks.apiFetch.mock.calls[0]![0].body).auth).toEqual({ kind: "unchanged" });
+});

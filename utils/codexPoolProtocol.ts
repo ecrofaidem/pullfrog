@@ -1,5 +1,5 @@
 /** The internal action/server contract for native Codex subscription runs. */
-export const CODEX_POOL_VERSION = "1";
+export const CODEX_POOL_VERSION = "2";
 
 export type CodexPoolDenialReason =
   | "busy"
@@ -10,7 +10,7 @@ export type CodexPoolDenialReason =
 
 export interface CodexPoolAssignment {
   status: "assigned";
-  version: 1;
+  version: 1 | 2;
   assignmentId: string;
   /** Opaque authority for this assignment only; never include in prompts or logs. */
   capability: string;

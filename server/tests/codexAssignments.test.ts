@@ -112,3 +112,40 @@ describe("Codex assignment reservation", () => {
     expect(await t.run((ctx) => ctx.db.get(result.assignment._id))).toMatchObject({ phase: "reserved", credentialVersion: 2 });
   });
 });
+
+
+it("access-only completion cannot release another startup or overwrite a later rotation", async () => {
+  const { t, ids } = await setup([10]);
+  const first = await t.mutation(internal.codexAssignments.reserve, { ...attempt, accessOnly: true });
+  if (first.status !== "reserved") throw new Error("expected reservation");
+  const fence = { assignmentId: first.assignment._id, ownershipToken: attempt.ownershipToken, generation: 1, credentialVersion: 1 };
+  expect(await t.mutation(internal.codexAssignments.activate, fence)).toBe(true);
+  const second = await t.mutation(internal.codexAssignments.reserve, { ...attempt, accessOnly: true, runId: "2", ownershipToken: "second" });
+  if (second.status !== "reserved") throw new Error("expected second reservation");
+  const secondFence = { ...fence, assignmentId: second.assignment._id, ownershipToken: "second" };
+  expect(await t.mutation(internal.codexAssignments.refreshStarted, secondFence)).toBe(true);
+  expect(await t.mutation(internal.codexAssignments.commitRefresh, {
+    ...secondFence, providerAccountId: "provider-0", ciphertext: "rotated", iv: "rotated-iv",
+  })).toBe(true);
+  // A duplicate response can recover the original attempt after a later rotation.
+  expect(await t.mutation(internal.codexAssignments.reserve, { ...attempt, accessOnly: true, ownershipToken: "retry" }))
+    .toMatchObject({ status: "active", assignment: { _id: first.assignment._id } });
+  expect(await t.mutation(internal.codexAssignments.finalize, { ...fence,
+    auth: { kind: "snapshot", providerAccountId: "provider-0", ciphertext: "stale-child", iv: "stale-child" },
+  })).toEqual({ status: "released" });
+  expect(await t.run((ctx) => ctx.db.get(ids[0]!))).toMatchObject({
+    activeAssignmentId: second.assignment._id, activeOwnershipToken: "second", authState: "ready",
+    credentialVersion: 2, ciphertext: "rotated", iv: "rotated-iv",
+  });
+});
+
+it("terminal reconciliation of an access-only review leaves the account usable", async () => {
+  const { t, ids } = await setup([10]);
+  const first = await t.mutation(internal.codexAssignments.reserve, { ...attempt, accessOnly: true });
+  if (first.status !== "reserved") throw new Error("expected reservation");
+  const fence = { assignmentId: first.assignment._id, ownershipToken: attempt.ownershipToken, generation: 1, credentialVersion: 1 };
+  expect(await t.mutation(internal.codexAssignments.activate, fence)).toBe(true);
+  expect(await t.mutation(internal.codexAssignments.terminal, { ...fence, accountId: ids[0]! })).toEqual({ status: "released" });
+  expect(await t.run((ctx) => ctx.db.get(ids[0]!))).toMatchObject({ authState: "ready", credentialVersion: 1 });
+  expect(await t.mutation(internal.codexAssignments.reserve, { ...attempt, runId: "2", accessOnly: true })).toMatchObject({ status: "reserved" });
+});
