@@ -6,8 +6,8 @@ implements the action's HTTP endpoints and the named Codex account extension.
 What it does:
 
 - **Installation tokens.** `POST /api/github/installation-token` verifies the GitHub Actions OIDC token and mints an App installation token for the calling repo. This is why the action's pushes trigger downstream workflows.
-- **Run context.** `GET /api/repo/:owner/:repo/run-context` returns settings and secrets. An enabled Codex pool reserves one account for the whole native process; the legacy single-secret path uses its existing refresh lease.
-- **Write-back.** `POST /api/runtime/codex-pool` commits the selected account's final auth and releases its assignment. `PUT /api/runtime/secret` handles legacy secrets. `PATCH /api/workflow-run/:id` records model, tokens, and artifact IDs.
+- **Run context.** `GET /api/repo/:owner/:repo/run-context` returns settings and secrets. An enabled Codex pool locks credential refresh during startup and supports concurrent reviews on one account; the legacy single-secret path uses its existing refresh lease.
+- **Write-back.** `POST /api/runtime/codex-pool` closes an access-only assignment, or commits final auth for a legacy pool assignment. `PUT /api/runtime/secret` handles legacy secrets. `PATCH /api/workflow-run/:id` records model, tokens, and artifact IDs.
 - **CLI.** `/api/cli/secrets` is what `npx pullfrog auth codex` talks to, unmodified, when `PULLFROG_API_URL` points here. `/api/cli/config` reads and patches a repo's settings with the same dotted keys the dashboard shows (`convex/configKeys.ts`), authenticated with the user's `gh auth token`:
 
   ```
@@ -123,15 +123,19 @@ Re-run the same command to switch the credential to a different ChatGPT account.
 ## Named Codex accounts
 
 A repository can use an ordered pool of dedicated ChatGPT accounts. A run takes
-the first enabled, authenticated, idle account with fresh weekly usage below
+the first enabled, authenticated account with fresh weekly usage below
 100%. The provider must identify a seven-day window; missing or unavailable
 evidence stops startup. Display rounding does not decide eligibility.
 
-Each account has at most one native Codex process across its repository
-memberships. Two accounts therefore support at most two concurrent runs. A
-running review keeps its account until completion; it never switches accounts
-or replays work when a limit is reached. Busy, exhausted, authentication,
-configuration, and unknown-usage failures stop before the agent starts.
+Each account supports concurrent native Codex reviews across its repository
+memberships. The server briefly locks the account to check usage and refresh
+credentials, then gives each review an access token without a refresh token.
+Only the server owns the refresh chain. Startup requires at least six hours of
+access-token validity; a running review cannot refresh or switch accounts.
+Provider usage limits still apply to all reviews sharing the account. Busy,
+exhausted, authentication, configuration, and unknown-usage failures stop before
+the agent starts. A legacy pool review retains exclusive occupancy until it
+finishes.
 
 Build the compatible fork with `pnpm install --frozen-lockfile` and `pnpm build`.
 The published npm CLI does not necessarily include these commands. From the
@@ -146,8 +150,8 @@ node "$PULLFROG_CLI" auth codex list
 node "$PULLFROG_CLI" auth codex pool <primary-id> <secondary-id>
 ```
 
-Sign in to two distinct accounts. Enrollment uses an isolated Codex home; do not
-share the resulting refresh chain with a desktop CLI or another service. Pool
+Enroll one or more dedicated accounts; the commands above show a two-account
+pool. Enrollment uses an isolated Codex home; do not share the resulting refresh chain with a desktop CLI or another service. Pool
 configuration preserves its enabled state and starts disabled. Repository scope
 is the default. `--scope account` shares an account across explicitly configured
 repositories and requires owner administration; granting that account to a pool
@@ -169,7 +173,7 @@ consumer pin. Use this order:
    dashboard, then pin the compatible action with
    `PULLFROG_FORCE_LOCAL_CLI: "1"`. Verify ordinary legacy runs still work.
 2. Pause dispatch and drain every workflow using either account, including other
-   repositories and desktop clients. Enroll the two dedicated accounts and set
+   repositories and desktop clients. Enroll the dedicated accounts and set
    their order. Confirm native Codex is selected and remove externally supplied
    `CODEX_AUTH_JSON`, `CODEX_API_KEY`, and `OPENAI_API_KEY` credentials.
 3. While dispatch remains paused, run
@@ -178,15 +182,22 @@ consumer pin. Use this order:
    an enabled pool rejects older clients and a required-pool client refuses a
    disabled or incompatible backend.
 4. Run a controlled canary. Verify the selected alias, finalization receipt,
-   cleared occupancy, and reuse of the updated chain on the next run. Verify
-   secondary selection with simulated exhausted usage in tests, not by burning
+   cleared startup occupancy, and two overlapping reviews using the same alias.
+   Verify secondary selection with simulated exhausted usage in tests, not by burning
    the primary's allowance. Resume dispatch after these checks pass.
 
-The post hook reads final auth only after the native child closes. If cleanup is
-lost, the existing five-minute cron checks GitHub's exact workflow run attempt.
-Only a completed attempt permits occupancy recovery. Unknown final tokens
-quarantine the account until reenrollment; elapsed time alone never makes it
-available. Inspect **Credentials** and the failed run before retrying.
+Deploy the backend with protocol v2 support before updating the action pin.
+The backend accepts v1 assignments while their workflows finish. The action
+requires v2 for concurrent reviews and refuses an incompatible backend.
+
+The post hook closes an access-only assignment without writing credentials.
+If cleanup is lost, the five-minute cron closes the assignment only after
+GitHub reports its exact workflow run attempt completed. Neither path changes
+the account's refresh chain. Legacy pool assignments still write final auth
+after the native child closes. An uncertain server refresh or unknown legacy
+final tokens quarantine the account until recovery or reenrollment; elapsed
+time alone never releases that credential lock. Inspect **Credentials** and
+the failed run before retrying.
 
 For rollback, pause and drain all affected runs first. Restore a current legacy
 login with `auth codex` using the compatible CLI, disable the pool with

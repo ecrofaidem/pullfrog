@@ -7,6 +7,7 @@
 // synchronously. API-key runs have no chain and render nothing.
 
 import { log } from "./cli.ts";
+import { parseCodexAccessAuth } from "./codexAccessAuth.ts";
 import { parseCodexAuthBody } from "./codexOAuth.ts";
 import { parseCodexQuota } from "./codexQuota.ts";
 
@@ -63,8 +64,8 @@ async function fetchCodexUsage(): Promise<CodexUsage | null> {
     log.info("» codex usage: no CODEX_AUTH_JSON in env, skipping");
     return null;
   }
-  const body = parseCodexAuthBody(raw);
-  if (!body || body.refresh_rejected_at) return null;
+  const body = parseCodexAccessAuth(raw) ?? parseCodexAuthBody(raw);
+  if (!body || (body.auth_mode === "chatgpt" && body.refresh_rejected_at)) return null;
   const accountId =
     body.tokens.account_id ??
     accountIdFromToken(body.tokens.id_token ?? "") ??

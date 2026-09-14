@@ -2,7 +2,7 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import schema from "../convex/schema";
 import { internal } from "../convex/_generated/api";
-import { open } from "../convex/lib/crypto";
+import { open, seal } from "../convex/lib/crypto";
 import { bytesToBase64Url, utf8ToBase64Url } from "../convex/lib/base64";
 import type { CodexPoolAssignment } from "../../utils/codexPoolProtocol";
 
@@ -19,9 +19,9 @@ const usage = vi.fn<(account: string | null, accessToken: string | null) => void
 let keys: CryptoKeyPair;
 let jwk: JsonWebKey;
 
-function auth(account: string, revision = "original") {
+function auth(account: string, revision = "original", lifetimeSeconds = 7200) {
   return JSON.stringify({ auth_mode: "chatgpt", tokens: {
-    access_token: `header.${utf8ToBase64Url(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 7200, revision, account }))}.signature`,
+    access_token: `header.${utf8ToBase64Url(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + lifetimeSeconds, revision, account }))}.signature`,
     refresh_token: `${account}-${revision}-refresh`,
     account_id: account,
   } });
@@ -70,7 +70,7 @@ beforeEach(() => {
   }));
 });
 
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.clearAllMocks(); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.clearAllMocks(); });
 
 describe("Codex pool rollout and rollback through HTTP", () => {
   it("preserves legacy startup, selects secondary, persists rotation for the next run, and drains before restoring the current chain", async () => {
@@ -193,4 +193,103 @@ describe("Codex pool rollout and rollback through HTTP", () => {
     expect(await t.run((ctx) => ctx.db.get(primaryAccount._id))).toEqual(afterSelection);
     expect((await t.run((ctx) => ctx.db.query("codexAccounts").collect())).every((row) => row.activeAssignmentId === undefined)).toBe(true);
   });
+});
+
+
+it.each([false, true])("starts seven concurrent reviews without refresh-token handoff (refresh needed: %s)", async (needsRefresh) => {
+  const t = convexTest(schema, modules);
+  const repo = await t.mutation(internal.repos.ensure, { owner: "owner", name: "repo" });
+  await t.run((ctx) => ctx.db.patch(repo._id, { codexAgent: true }));
+  const canonical = auth("secondary", "original", needsRefresh ? 2 * 3600 : 12 * 3600);
+  let refreshes = 0;
+  const providerFetch = globalThis.fetch;
+  vi.stubGlobal("fetch", vi.fn(async (url, init) => {
+    if (url === "https://auth.openai.com/oauth/token") {
+      refreshes++;
+      expect(new URLSearchParams(String(init?.body)).get("refresh_token")).toBe("secondary-original-refresh");
+      return Response.json(JSON.parse(auth("secondary", "rotated", 12 * 3600)).tokens);
+    }
+    return providerFetch(url, init);
+  }));
+  const accountId = await t.mutation(internal.codexAccounts.enroll, {
+    owner: "owner", repo: "repo", label: "Shared", providerAccountId: "secondary", ...await seal(canonical),
+  });
+  await t.mutation(internal.codexAccounts.configurePool, { owner: "owner", repo: "repo", accountIds: [accountId], enabled: true });
+  const results = await Promise.all(Array.from({ length: 7 }, async (_, index) => {
+    const response = await t.fetch("/api/repo/owner/repo/run-context", {
+      headers: { ...requiredHeaders, "X-Pullfrog-Codex-Pool": "2", "X-GitHub-OIDC-Token": await oidc(String(100 + index)) },
+    });
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result.codexPool).toMatchObject({ status: "assigned", version: 2 });
+    expect(JSON.parse(result.dbSecrets.CODEX_AUTH_JSON)).toMatchObject({
+      auth_mode: "chatgptAuthTokens", tokens: { refresh_token: "", account_id: "secondary" },
+    });
+    expect(result.dbSecrets.CODEX_AUTH_JSON).not.toContain("secondary-original-refresh");
+    return result.codexPool as CodexPoolAssignment;
+  }));
+  expect(new Set(results.map((r) => r.assignmentId)).size).toBe(7);
+  for (const assignment of results) {
+    const response = await t.fetch("/api/runtime/codex-pool", {
+      method: "POST", headers: { Authorization: `Bearer ${assignment.capability}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ assignmentId: assignment.assignmentId, childStopped: true, auth: { kind: "uncertain" } }),
+    });
+    expect(await response.json()).toEqual({ status: "released" });
+  }
+  const account = await t.run((ctx) => ctx.db.get(accountId));
+  expect(account).toMatchObject({ authState: "ready", credentialVersion: needsRefresh ? 2 : 1 });
+  expect(account?.activeAssignmentId).toBeUndefined();
+  expect(JSON.parse(await open(account!)).tokens.refresh_token).toBe(needsRefresh ? "secondary-rotated-refresh" : "secondary-original-refresh");
+  expect(refreshes).toBe(needsRefresh ? 1 : 0);
+});
+
+
+it("does not hand off a provider token too short for the hosted workflow", async () => {
+  const t = convexTest(schema, modules);
+  const repo = await t.mutation(internal.repos.ensure, { owner: "owner", name: "repo" });
+  await t.run((ctx) => ctx.db.patch(repo._id, { codexAgent: true }));
+  const accountId = await t.mutation(internal.codexAccounts.enroll, {
+    owner: "owner", repo: "repo", label: "Shared", providerAccountId: "secondary", ...await seal(auth("secondary")),
+  });
+  await t.mutation(internal.codexAccounts.configurePool, { owner: "owner", repo: "repo", accountIds: [accountId], enabled: true });
+  const providerFetch = globalThis.fetch;
+  vi.stubGlobal("fetch", vi.fn(async (url, init) => url === "https://auth.openai.com/oauth/token"
+    ? Response.json(JSON.parse(auth("secondary", "rotated", 2 * 3600)).tokens) : providerFetch(url, init)));
+  const response = await t.fetch("/api/repo/owner/repo/run-context", {
+    headers: { ...requiredHeaders, "X-Pullfrog-Codex-Pool": "2", "X-GitHub-OIDC-Token": await oidc("500") },
+  });
+  expect(response.ok).toBe(false);
+  expect(await response.json()).toMatchObject({ codexPool: { status: "denied" } });
+  const account = await t.run((ctx) => ctx.db.get(accountId));
+  expect(account).toMatchObject({ authState: "ready", credentialVersion: 2 });
+  expect(account?.activeAssignmentId).toBeUndefined();
+  expect(JSON.parse(await open(account!)).tokens.refresh_token).toBe("secondary-rotated-refresh");
+});
+
+
+it("preserves busy when a legacy review holds the account through the startup deadline", async () => {
+  const t = convexTest(schema, modules);
+  const repo = await t.mutation(internal.repos.ensure, { owner: "owner", name: "repo" });
+  await t.run((ctx) => ctx.db.patch(repo._id, { codexAgent: true }));
+  const accountId = await t.mutation(internal.codexAccounts.enroll, {
+    owner: "owner", repo: "repo", label: "Shared", providerAccountId: "secondary", ...await seal(auth("secondary")),
+  });
+  await t.mutation(internal.codexAccounts.configurePool, { owner: "owner", repo: "repo", accountIds: [accountId], enabled: true });
+  const reservation = await t.mutation(internal.codexAssignments.reserve, {
+    owner: "owner", repo: "repo", runId: "legacy", runAttempt: "1", runtimeInstance,
+    ownershipToken: "legacy-owner", excludedIds: [],
+  });
+  expect(reservation.status).toBe("reserved");
+  const token = await oidc("900");
+  vi.useFakeTimers();
+  const request = t.fetch("/api/repo/owner/repo/run-context", {
+    headers: { ...requiredHeaders, "X-Pullfrog-Codex-Pool": "2", "X-GitHub-OIDC-Token": token },
+  });
+  // Let OIDC's real WebCrypto verification finish before advancing startup time.
+  await vi.waitFor(() => expect(vi.getTimerCount()).toBeGreaterThan(0));
+  await vi.advanceTimersByTimeAsync(20_001);
+  const response = await request;
+  expect(response.status).toBe(409);
+  expect(await response.json()).toMatchObject({ codexPool: { status: "denied", reason: "busy" } });
+  expect((await t.run((ctx) => ctx.db.get(accountId)))?.activeAssignmentId).toBeDefined();
 });

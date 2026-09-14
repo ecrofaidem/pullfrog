@@ -57,7 +57,7 @@ describe("Codex pool startup", () => {
     const state = vi.mocked(core.saveState).mock.calls.find(([key]) => key === "oauth_writeback")?.[1];
     expect(JSON.parse(String(state))).toMatchObject({ apiToken: "run-token", entries: [], codexPool: { assignment } });
     expect(apiFetch).toHaveBeenCalledWith(expect.objectContaining({ headers: expect.objectContaining({
-      "X-Pullfrog-Codex-Pool": "1", "X-Pullfrog-Codex-Pool-Required": "1", "X-Pullfrog-Run-Instance": instance,
+      "X-Pullfrog-Codex-Pool": "2", "X-Pullfrog-Codex-Pool-Required": "1", "X-Pullfrog-Run-Instance": instance,
     }) }));
   });
 
@@ -93,7 +93,7 @@ describe("Codex pool startup", () => {
     expect(apiFetch).toHaveBeenCalledTimes(2);
   });
 
-  it.each([{ version: 2 }, { runtimeInstance: "different" }, { runAttempt: "2" }, { accountAlias: "private@example.com" }])("rejects an incompatible or misbound assignment %j", async (patch) => {
+  it.each([{ version: 3 }, { runtimeInstance: "different" }, { runAttempt: "2" }, { accountAlias: "private@example.com" }])("rejects an incompatible or misbound assignment %j", async (patch) => {
     vi.mocked(apiFetch).mockResolvedValue(Response.json({ ...success, codexPool: { ...assignment, ...patch } }));
     expect(await fetchRunContext(request)).toMatchObject({ codexPoolRefused: { reason: "configuration" } });
     expect(core.saveState).not.toHaveBeenCalledWith("oauth_writeback", expect.anything());
@@ -114,4 +114,21 @@ describe("Codex pool startup", () => {
     expect(fallback).toMatchObject({ secretsUnavailable: true });
     expect(fallback).not.toHaveProperty("codexPoolRefused");
   });
+});
+
+
+it("passes access-only server credentials through the actual runner startup boundary", async () => {
+  const accessAuth = JSON.stringify({ auth_mode: "chatgptAuthTokens", tokens: {
+    access_token: "access", id_token: "identity", account_id: "account", refresh_token: "",
+  } });
+  const v2 = { ...assignment, version: 2 };
+  vi.mocked(apiFetch).mockResolvedValue(Response.json({ ...success, codexPool: v2, dbSecrets: { CODEX_AUTH_JSON: accessAuth } }));
+  const result = await fetchRunContext(request);
+  expect(result).toMatchObject({ codexPool: v2, dbSecrets: { CODEX_AUTH_JSON: accessAuth } });
+  expect(result.codexPoolRefused).toBeUndefined();
+});
+
+it("rejects refresh-chain credentials for an access-only assignment", async () => {
+  vi.mocked(apiFetch).mockResolvedValue(Response.json({ ...success, codexPool: { ...assignment, version: 2 } }));
+  expect(await fetchRunContext(request)).toMatchObject({ codexPoolRefused: { reason: "configuration" } });
 });

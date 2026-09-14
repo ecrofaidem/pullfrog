@@ -1,6 +1,7 @@
 import type { PushPermission, ShellPermission } from "../external.ts";
 import { apiFetch } from "./apiFetch.ts";
 import { codexPoolRuntimeInstance, decodeCodexPool, hasExternalCodexAuth, rememberCodexPoolAssignment } from "./codexPool.ts";
+import { parseCodexAccessAuth } from "./codexAccessAuth.ts";
 import { CODEX_POOL_VERSION, type CodexPoolAssignment, type CodexPoolDenial } from "./codexPoolProtocol.ts";
 import { parseCodexAuthBody } from "./codexOAuth.ts";
 import type { RepoContext } from "./github.ts";
@@ -235,7 +236,8 @@ export async function fetchRunContext(params: {
       rememberCodexPoolAssignment(pool, typeof envelope.apiToken === "string" ? envelope.apiToken : "");
       const secrets = envelope.dbSecrets as Record<string, unknown> | undefined;
       if (!response.ok || typeof envelope.apiToken !== "string" || !envelope.apiToken ||
-          typeof secrets?.CODEX_AUTH_JSON !== "string" || !parseCodexAuthBody(secrets.CODEX_AUTH_JSON)) {
+          typeof secrets?.CODEX_AUTH_JSON !== "string" ||
+          !(pool.version === 2 ? parseCodexAccessAuth(secrets.CODEX_AUTH_JSON) : parseCodexAuthBody(secrets.CODEX_AUTH_JSON))) {
         return refused("configuration");
       }
     } else if (poolRequired) {

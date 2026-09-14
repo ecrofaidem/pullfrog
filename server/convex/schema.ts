@@ -116,12 +116,13 @@ export default defineSchema({
     .index("by_owner_provider", ["owner", "providerAccountId"])
     .index("by_scope", ["owner", "repo"]),
 
-  /** Durable attempt ownership; elapsed time never authorizes another native run. */
+  /** Durable attempt ownership; v2 hands out access tokens and locks only preflight. */
   codexAssignments: defineTable({
     owner: v.string(), repo: v.string(), runId: v.string(), runAttempt: v.string(),
     runtimeInstance: v.string(), accountId: v.id("codexAccounts"),
     generation: v.number(), credentialVersion: v.number(), ownershipToken: v.string(),
     accountAlias: v.string(),
+    accessOnly: v.optional(v.boolean()),
     phase: v.union(v.literal("reserved"), v.literal("refreshing"), v.literal("active"), v.literal("released"), v.literal("quarantined")),
     denialReason: v.optional(codexDenialReason), retryAt: v.optional(v.number()),
     /** Permanent receipt distinguishes completion from a retryable preflight skip. */

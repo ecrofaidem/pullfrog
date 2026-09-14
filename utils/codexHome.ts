@@ -53,7 +53,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import { log } from "./cli.ts";
-import { type CodexAuthBody, parseCodexAuthBody, stringifyCodexAuthBody } from "./codexOAuth.ts";
+import { parseCodexAccessAuth } from "./codexAccessAuth.ts";
+import { type CodexAuthBody, parseCodexAuthBody } from "./codexOAuth.ts";
 import { decodeJwtExpMs } from "./oauthShared.ts";
 import { parseXaiAuthBody, type XaiAuthBody } from "./xaiOAuth.ts";
 
@@ -297,12 +298,12 @@ export function installCodexHome(): InstalledCodexHome | null {
   const raw = process.env[CODEX_AUTH_ENV];
   if (!raw) return null;
 
-  const body = parseCodexAuthBody(raw);
+  const body = parseCodexAccessAuth(raw) ?? parseCodexAuthBody(raw);
   if (!body) {
     log.warning(`» ${CODEX_AUTH_ENV} present but malformed; ignoring`);
     return null;
   }
-  if (isRejectedChain(body)) return null;
+  if (body.auth_mode === "chatgpt" && isRejectedChain(body)) return null;
   if (!body.tokens.id_token) {
     log.warning(
       `» ${CODEX_AUTH_ENV} carries no id_token — the codex CLI cannot load it. ` +
@@ -315,7 +316,7 @@ export function installCodexHome(): InstalledCodexHome | null {
   const authPath = join(codexHome, "auth.json");
 
   mkdirSync(codexHome, { recursive: true });
-  writeFileSync(authPath, stringifyCodexAuthBody(body), { mode: 0o600 });
+  writeFileSync(authPath, `${JSON.stringify(body, null, 2)}\n`, { mode: 0o600 });
 
   log.info(`» installed Codex auth at ${authPath}`);
 

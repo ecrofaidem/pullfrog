@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { parseCodexQuota } from "./codexQuota.ts";
 
 const weekly = { used_percent: 99.6, limit_window_seconds: 604800, reset_at: 2_000_000_000 };
@@ -53,4 +53,26 @@ it("rounds only for rendering while retaining eligibility in the same observatio
   if (quota.status !== "available") throw new Error("expected available weekly quota");
   expect(renderCodexUsage({ ...quota.weekly, plan: quota.weekly.plan }, 1_800_000_000_000)).toMatch(/^▱{10} 0% of the weekly limit left/);
   expect(quota.weekly.usedPercent).toBe(99.6);
+});
+
+
+it("retains the weekly usage footer with access-only credentials", async () => {
+  vi.resetModules();
+  vi.stubEnv("CODEX_AUTH_JSON", JSON.stringify({ auth_mode: "chatgptAuthTokens", tokens: {
+    access_token: "access-only", id_token: "identity", account_id: "account", refresh_token: "",
+  } }));
+  const fetcher = vi.fn().mockResolvedValue(Response.json({ plan_type: "plus", rate_limit: {
+    primary_window: { ...weekly, used_percent: 25 },
+  } }));
+  vi.stubGlobal("fetch", fetcher);
+  try {
+    const { primeCodexUsage, currentCodexUsage, renderCodexUsage } = await import("./codexUsage.ts");
+    const usage = await primeCodexUsage();
+    expect(usage).toMatchObject({ usedPercent: 25, windowSeconds: 604800, plan: "plus" });
+    expect(currentCodexUsage()).toEqual(usage);
+    expect(renderCodexUsage(usage!)).toContain("75% of the weekly limit left");
+    expect(fetcher).toHaveBeenCalledWith("https://chatgpt.com/backend-api/wham/usage", expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: "Bearer access-only", "chatgpt-account-id": "account" }),
+    }));
+  } finally { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.resetModules(); }
 });

@@ -22,7 +22,7 @@ export const codexPoolPost = httpAction(async (ctx, request) => {
   if (kind !== "snapshot" && kind !== "unchanged" && kind !== "uncertain") return error(400, "expected final auth result");
   let auth: { kind: "snapshot"; ciphertext: string; iv: string; providerAccountId: string } | { kind: "unchanged" | "uncertain" } = { kind: "uncertain" };
   try {
-    const raw = kind === "snapshot" && typeof body.auth?.value === "string" ? body.auth.value :
+    const raw = state.assignment.accessOnly ? null : kind === "snapshot" && typeof body.auth?.value === "string" ? body.auth.value :
       kind === "unchanged" && state.account?.authState === "ready" ? await open(state.account) : null;
     const providerAccountId = raw === null ? null : getCodexProviderAccountId(raw);
     if (providerAccountId && providerAccountId === state.account?.providerAccountId) {
