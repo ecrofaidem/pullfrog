@@ -169,6 +169,7 @@ export async function createCheckRun(params: {
   name: string;
   headSha: string;
   detailsUrl?: string;
+  skippedSummary?: string;
 }): Promise<{ id: number }> {
   return gh<{ id: number }>(`/repos/${params.owner}/${params.repo}/check-runs`, {
     token: params.token,
@@ -176,8 +177,14 @@ export async function createCheckRun(params: {
     body: {
       name: params.name,
       head_sha: params.headSha,
-      status: "in_progress",
-      started_at: new Date().toISOString(),
+      ...(params.skippedSummary !== undefined
+        ? {
+            status: "completed",
+            conclusion: "skipped",
+            completed_at: new Date().toISOString(),
+            output: { title: "skipped", summary: params.skippedSummary },
+          }
+        : { status: "in_progress", started_at: new Date().toISOString() }),
       ...(params.detailsUrl ? { details_url: params.detailsUrl } : {}),
     },
   });

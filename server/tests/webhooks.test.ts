@@ -13,6 +13,7 @@ vi.mock("../convex/lib/github", async (original) => ({
   createInstallationToken: vi.fn(async () => ({ token: "fixture-installation-token" })),
   collaboratorPermission: vi.fn(async () => "write"),
   createCheckRun: vi.fn(async () => ({ id: 10 })),
+  finalizeCheckRun: vi.fn(async () => undefined),
   dispatchWorkflow: vi.fn(async () => undefined),
   addReaction: vi.fn(async () => undefined),
   getPullRequest: vi.fn(async () => ({
@@ -265,6 +266,131 @@ describe("webhook ingestion", () => {
       if (action === "synchronize") expect(envelope.event.before_sha).toBe("before");
     },
   );
+
+  it.each([
+    { statusChecks: true, skipCheckFails: false },
+    { statusChecks: false, skipCheckFails: false },
+    { statusChecks: true, skipCheckFails: true },
+  ])(
+    "handles a signed base-only merge (status checks: $statusChecks, skipped check fails: $skipCheckFails)",
+    async ({ statusChecks, skipCheckFails }) => {
+      const t = convexTest(schema, modules);
+      const repo = await t.mutation(internal.repos.ensure, {
+        owner: "owner",
+        name: "repo",
+      });
+      await t.run((ctx) => ctx.db.patch(repo._id, { statusChecks }));
+      if (skipCheckFails) {
+        await t.mutation(internal.actionVersion.set, {
+          repo: "ecrofaidem/pullfrog@main",
+          version: "0.1.67",
+        });
+        vi.mocked(github.createCheckRun)
+          .mockRejectedValueOnce(new Error("GitHub unavailable"))
+          .mockResolvedValueOnce({ id: 11 });
+      }
+      const before = "a".repeat(40),
+        base = "b".repeat(40),
+        head = "c".repeat(40),
+        ancestor = "d".repeat(40);
+      const leaf = (path: string) => ({
+        path,
+        mode: "100644",
+        type: "blob",
+        sha: "e".repeat(40),
+      });
+      vi.mocked(fetch).mockImplementation(async (url) => {
+        const path = new URL(String(url)).pathname;
+        if (path.endsWith(`/git/commits/${head}`))
+          return Response.json({
+            sha: head,
+            parents: [{ sha: before }, { sha: base }],
+            tree: { sha: head },
+          });
+        if (path.includes("/compare/"))
+          return Response.json({ merge_base_commit: { sha: ancestor } });
+        const ref = path.split("/").at(-1);
+        const tree =
+          ref === ancestor
+            ? []
+            : ref === before
+              ? [leaf("feature")]
+              : ref === base
+                ? [leaf("base")]
+                : [leaf("feature"), leaf("base")];
+        return Response.json({ tree, truncated: false });
+      });
+      const payload = pullRequest("synchronize");
+      payload.before = before;
+      payload.pull_request.head.sha = head;
+      Object.assign(payload.pull_request.base, { sha: base });
+      const req = await request("pull_request", payload);
+      expect(
+        (
+          await t.fetch("/webhooks/github", {
+            method: "POST",
+            headers: req.headers,
+            body: await req.text(),
+          })
+        ).status,
+      ).toBe(202);
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+      if (skipCheckFails) {
+        expect(github.dispatchWorkflow).toHaveBeenCalledTimes(1);
+        expect(github.createCheckRun).toHaveBeenCalledTimes(2);
+        expect(github.createCheckRun).toHaveBeenNthCalledWith(
+          1,
+          expect.objectContaining({ headSha: head, skippedSummary: expect.any(String) }),
+        );
+        expect(github.createCheckRun).toHaveBeenNthCalledWith(2, {
+          token: "fixture-installation-token",
+          owner: "owner",
+          repo: "repo",
+          name: "pullfrog",
+          headSha: head,
+        });
+        const runs = await t.run((ctx) => ctx.db.query("runs").collect());
+        expect(runs).toHaveLength(1);
+        expect(runs[0].checkRunId).toBe(11);
+        return;
+      }
+      expect(github.dispatchWorkflow).not.toHaveBeenCalled();
+      expect(github.addReaction).not.toHaveBeenCalled();
+      expect(await t.run((ctx) => ctx.db.query("runs").collect())).toEqual([]);
+      if (statusChecks) {
+        expect(github.createCheckRun).toHaveBeenCalledWith(
+          expect.objectContaining({
+            headSha: head,
+            skippedSummary:
+              "Review skipped: this update only merges the PR base branch, with no conflicts or additional changes.",
+          }),
+        );
+      } else {
+        expect(github.createCheckRun).not.toHaveBeenCalled();
+      }
+      expect(github.finalizeCheckRun).not.toHaveBeenCalled();
+    },
+  );
+
+  it("dispatches review if GitHub cannot verify the merge", async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.actionVersion.set, {
+      repo: "ecrofaidem/pullfrog@main",
+      version: "0.1.67",
+    });
+    const payload = pullRequest("synchronize");
+    payload.before = "a".repeat(40);
+    payload.pull_request.head.sha = "b".repeat(40);
+    Object.assign(payload.pull_request.base, { sha: "c".repeat(40) });
+    vi.mocked(fetch).mockResolvedValue(
+      new Response("Unavailable", { status: 503 }),
+    );
+    await t.action(internal.dispatch.handleEvent, {
+      delivery: "unavailable",
+      ...selectWebhook("pull_request", payload, "pullfrog.yml")!,
+    });
+    expect(github.dispatchWorkflow).toHaveBeenCalledTimes(1);
+  });
 
   it("keeps exact handle and collaborator checks in the backend", async () => {
     const t = convexTest(schema, modules);

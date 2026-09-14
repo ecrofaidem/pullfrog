@@ -9,6 +9,7 @@ import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { actionWorkflow, resolveActionVersion } from "./actionVersion";
 import { buildEnvelope, buildRunEvent, type RunTrigger } from "./lib/envelope";
+import { isBaseOnlyMerge } from "./lib/baseMerge";
 import { isBot, shouldIgnorePullRequestEvent } from "./reviewPolicy";
 import {
   addReaction,
@@ -178,7 +179,7 @@ async function handlePullRequest(ctx: ActionCtx, payload: Json) {
     },
     triggerer: String(payload.sender?.login ?? pr.user.login),
     prompt,
-    ...(trigger === "pull_request_synchronize" ? { beforeSha: String(payload.before ?? "") } : {}),
+    ...(trigger === "pull_request_synchronize" ? { beforeSha: String(payload.before ?? ""), baseSha: String(pr.base?.sha ?? "") } : {}),
   });
 }
 
@@ -261,6 +262,7 @@ interface DispatchRunParams {
   triggerer: string;
   prompt: string;
   beforeSha?: string;
+  baseSha?: string;
   commentId?: number;
   /** already-minted installation token and resolved permission, when the caller has them */
   token?: string;
@@ -277,6 +279,39 @@ async function dispatchRun(ctx: ActionCtx, params: DispatchRunParams) {
       return;
     }
     token = (await createInstallationToken(installation.id, { repositories: [repo.name] })).token;
+  }
+  if (
+    params.trigger === "pull_request_synchronize" &&
+    pr &&
+    (await isBaseOnlyMerge({
+      token,
+      owner: repo.owner,
+      repo: repo.name,
+      beforeSha: params.beforeSha ?? "",
+      headSha: pr.headSha,
+      baseSha: params.baseSha ?? "",
+    }))
+  ) {
+    // Resolve the check on this SHA so repositories requiring it are not left waiting.
+    try {
+      if (repo.statusChecks) {
+        await createCheckRun({
+          token,
+          owner: repo.owner,
+          repo: repo.name,
+          name: RUN_STATUS_CHECK_NAME,
+          headSha: pr.headSha,
+          skippedSummary:
+            "Review skipped: this update only merges the PR base branch, with no conflicts or additional changes.",
+        });
+      }
+      console.log(
+        `Skipping base-only merge review for ${repo.owner}/${repo.name}#${issue.number} at ${pr.headSha}`,
+      );
+      return;
+    } catch (err) {
+      console.warn(`skipped check-run creation failed, dispatching review: ${String(err)}`);
+    }
   }
   const authorPermission =
     params.authorPermission ??
