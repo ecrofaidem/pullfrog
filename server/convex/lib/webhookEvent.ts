@@ -26,6 +26,7 @@ export type WebhookEvent =
           draft: boolean;
           user: User;
           head: { ref: string; sha: string };
+          base: { sha: string };
         };
       };
     }
@@ -132,6 +133,7 @@ export function selectWebhook(
             draft: Boolean(pr.draft),
             user: user(pr.user),
             head: { ref: text(object(pr.head).ref), sha: text(object(pr.head).sha) },
+            base: { sha: text(object(pr.base).sha) },
           },
         },
       };
