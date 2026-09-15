@@ -5,6 +5,7 @@ import { buildPullfrogFooter, stripExistingFooter } from "../utils/buildPullfrog
 import { log } from "../utils/cli.ts";
 import { fixDoubleEscapedString } from "../utils/fixDoubleEscapedString.ts";
 import { patchWorkflowRunFields } from "../utils/patchWorkflowRunFields.ts";
+import { isCodexReview, reviewPublicationBody } from "../utils/reviewCoverage.ts";
 import {
   createLeapingProgressComment,
   deleteProgressCommentApi,
@@ -84,6 +85,7 @@ export function CreateCommentTool(ctx: ToolContext) {
       "For the current run's answer, progress, or plan use report_progress instead. Use this on the current target only when the task explicitly requests a standalone comment. Skip report_progress only when that current-target comment is the task's sole requested deliverable.",
     parameters: Comment,
     execute: execute(async ({ issueNumber, body, type: commentType }) => {
+      body = await reviewPublicationBody(ctx, body, issueNumber);
       const bodyWithFooter = addFooter(ctx, body);
 
       const result = await ctx.octokit.rest.issues.createComment({
@@ -149,6 +151,11 @@ export function EditCommentTool(ctx: ToolContext) {
     description: "Edit a GitHub issue comment by its ID",
     parameters: EditComment,
     execute: execute(async ({ commentId, body }) => {
+      if (isCodexReview(ctx)) {
+        const { data: comment } = await ctx.octokit.rest.issues.getComment({ owner: ctx.repo.owner, repo: ctx.repo.name, comment_id: commentId });
+        const issueNumber = Number(comment.issue_url.split("/").pop());
+        body = await reviewPublicationBody(ctx, body, issueNumber);
+      }
       const bodyWithFooter = addFooter(ctx, body);
 
       const result = await ctx.octokit.rest.issues.updateComment({
@@ -391,6 +398,7 @@ export function ReportProgressTool(ctx: ToolContext) {
       "Call this at the end of every run with a brief final summary (1-3 sentences) unless the mode guidance instructs otherwise. The current task list is automatically appended in a collapsible section — do not restate individual steps.",
     parameters: ReportProgress,
     execute: execute(async (params) => {
+      params.body = await reviewPublicationBody(ctx, params.body, ctx.payload.event.issue_number ?? primaryRepoState(ctx.toolState).issueNumber);
       // a standalone comment already delivered this run's answer to its own
       // target. writing here too leaves two comments restating each other, and
       // flipping finalSummaryWritten would also preserve the progress comment
