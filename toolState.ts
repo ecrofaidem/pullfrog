@@ -1,3 +1,4 @@
+import type { ReviewCoverage } from "./utils/reviewCoverage.ts";
 import type { AgentCredential, AgentUsage } from "./agents/shared.ts";
 import type { PrepResult } from "./prep/types.ts";
 import type { AgentDiagnostic } from "./utils/agentHangReport.ts";
@@ -100,6 +101,7 @@ export interface RepoToolState {
   // then from checkoutSha when review.ts detects new commits mid-review
   beforeSha?: string;
   diffCoverage?: DiffCoverageState | undefined;
+  reviewCoverage?: ReviewCoverage | undefined;
 }
 
 /**
