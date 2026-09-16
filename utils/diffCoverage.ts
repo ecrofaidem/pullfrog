@@ -33,6 +33,8 @@ export type DiffCoverageBreakdown = {
 
 export type DiffCoverageState = {
   diffPath: string;
+  /** Immutable review artifact digest, checked before crediting delivered pages. */
+  contentHash?: string | undefined;
   totalLines: number;
   tocEntries: DiffTocEntry[];
   coveredRanges: DiffLineRange[];
@@ -118,6 +120,24 @@ export function recordDiffReadFromToolUse(params: {
   if (!range) return false;
 
   state.coveredRanges = mergeRanges({ ranges: state.coveredRanges, nextRange: range });
+  return true;
+}
+
+/** Record only lines the server actually delivered, never a requested range. */
+export function recordDeliveredDiffRange(params: {
+  state: DiffCoverageState;
+  path: string;
+  startLine: number;
+  endLine: number;
+}): boolean {
+  if (normalize(params.path) !== normalize(params.state.diffPath)) return false;
+  const startLine = Math.max(1, params.startLine);
+  const endLine = Math.min(params.state.totalLines, params.endLine);
+  if (startLine > endLine) return false;
+  params.state.coveredRanges = mergeRanges({
+    ranges: params.state.coveredRanges,
+    nextRange: { startLine, endLine },
+  });
   return true;
 }
 

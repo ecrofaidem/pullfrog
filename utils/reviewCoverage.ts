@@ -7,6 +7,8 @@ import { runSandboxed } from "../mcp/shell.ts";
 import { filterEnv } from "./secrets.ts";
 import { primaryRepoState } from "../toolState.ts";
 import { BASE_REVIEW_PASSES, REVIEW_LENSES, type ReviewLens } from "./reviewLenses.ts";
+import type { DiffCoverageState } from "./diffCoverage.ts";
+import { applyReviewResume, hasUnreadReviewDiff, stripReviewReceipt, unreadReviewFiles, type ReviewReceipt } from "./reviewResume.ts";
 
 export interface ReviewScope {
   id: string;
@@ -51,6 +53,11 @@ export interface ReviewCoverage {
   };
   passes: Record<string, ReviewPass>;
   limitation?: string | undefined;
+  publicSummary?: string | undefined;
+  readCoverage?: DiffCoverageState[] | undefined;
+  previousReceipt?: ReviewReceipt | undefined;
+  analysisScope?: "full" | "incremental" | undefined;
+  resumeApplied?: boolean | undefined;
 }
 
 const hash = (text: string | Buffer) => createHash("sha256").update(text).digest("hex");
@@ -148,6 +155,12 @@ export function planReview(coverage: ReviewCoverage, lenses: LensDecision[], man
   };
   coverage.passes = {};
   coverage.limitation = undefined;
+  coverage.publicSummary = undefined;
+  // Replanning can change guidance applicability; don't retain inherited reads
+  // from an earlier plan with a different set of instruction sources.
+  if (coverage.resumeApplied) for (const state of coverage.readCoverage ?? []) state.coveredRanges = [];
+  applyReviewResume(coverage);
+  coverage.resumeApplied = true;
 }
 
 export function recordReviewPasses(coverage: ReviewCoverage, passes: ReviewPass[]): void {
@@ -165,6 +178,9 @@ export function recordReviewPasses(coverage: ReviewCoverage, passes: ReviewPass[
     }
   }
   const next = { ...coverage.passes, ...Object.fromEntries(passes.map(pass => [pass.id, pass])) };
+  if (passes.some(pass => pass.id === "verification" && pass.status === "completed") && hasUnreadReviewDiff(coverage)) {
+    throw new Error("Finish reading the required diff pages with read_file before final verification. Use review_checkpoint action=status for remaining ranges.");
+  }
   if (next.verification?.status === "completed" && coverage.plan.required.some(id => id !== "verification" && next[id]?.status !== "completed")) {
     // A changed/incomplete earlier pass invalidates verification, rather than preserving a stale final verdict.
     if (passes.some(pass => pass.id === "verification")) throw new Error("Complete other required passes before verification.");
@@ -174,12 +190,13 @@ export function recordReviewPasses(coverage: ReviewCoverage, passes: ReviewPass[
   }
   coverage.passes = next;
   coverage.limitation = undefined;
+  coverage.publicSummary = undefined;
 }
 
 export function missingReviewPasses(coverage: ReviewCoverage | undefined): string[] {
   if (!coverage) return ["checkout_pr"];
   if (!coverage.plan) return ["review plan"];
-  return coverage.plan.required.filter(id => coverage.passes[id]?.status !== "completed");
+  return [...coverage.plan.required.filter(id => coverage.passes[id]?.status !== "completed"), ...(hasUnreadReviewDiff(coverage) ? ["diff reading"] : [])];
 }
 
 export function isCodexReview(ctx: Pick<ToolContext, "agentId" | "toolState">): boolean {
@@ -216,14 +233,21 @@ export async function reviewCompletionBody(ctx: Pick<ToolContext, "agentId" | "t
   const coverage = await currentReviewCoverage(ctx);
   verifyGuidanceSources(primaryRepoState(ctx.toolState).dir, coverage.plan?.sources ?? []);
   const missing = missingReviewPasses(coverage);
+  body = stripReviewReceipt(body);
   if (!missing.length && !coverage.limitation) return body;
   if (!coverage.limitation) throw new Error(`Review coverage incomplete: ${missing.join(", ")}. Complete review_checkpoint or explicitly record action=incomplete.`);
   if (approved) {
     throw new Error("Incomplete coverage cannot approve or claim a clean result. Report the limitation and verified findings.");
   }
-  // The harness owns the incomplete disposition. Verified findings can still
-  // be submitted as inline comments, but arbitrary summary text cannot override it.
-  return `> [!IMPORTANT]\n> Review incomplete: ${coverage.limitation.replaceAll("\n", " ")}\n\nNo clean verdict was reached.`;
+  if (/\b(?:lgtm|ready to merge|all changes are correct|no (?:new )?(?:issues|bugs|findings)(?: found)?)\b|>\s*✅/i.test(body)) {
+    throw new Error("An incomplete review cannot contain a clean verdict. Keep the verified findings and describe the remaining work.");
+  }
+  const unread = unreadReviewFiles(coverage);
+  const status = unread ? `${unread} changed file${unread === 1 ? "" : "s"} still need${unread === 1 ? "s" : ""} review.` : "Some required checks are unfinished.";
+  const explanation = coverage.publicSummary?.trim().replaceAll("\n", " ") || status;
+  // Keep implementation details in the checkpoint, and keep useful findings in
+  // the review. The harness owns the disposition and the API approval guard.
+  return `> [!IMPORTANT]\n> Review incomplete. ${explanation} This review does not approve the PR.\n\n${body}`.trim();
 }
 
 export async function incompleteReviewIssue(toolState: ToolContext["toolState"]): Promise<string | undefined> {
