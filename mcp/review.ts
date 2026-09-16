@@ -9,7 +9,8 @@ import { countLinesInRanges, getDiffCoverageBreakdown } from "../utils/diffCover
 import { fixDoubleEscapedString } from "../utils/fixDoubleEscapedString.ts";
 import { isPullfrog } from "../utils/isPullfrog.ts";
 import { patchWorkflowRunFields } from "../utils/patchWorkflowRunFields.ts";
-import { reviewPublicationBody } from "../utils/reviewCoverage.ts";
+import { isCodexReview, reviewPublicationBody } from "../utils/reviewCoverage.ts";
+import { appendReviewReceipt, attestReviewReceipt, createReviewReceipt } from "../utils/reviewResume.ts";
 import * as yes from "../yes/index.ts";
 import { deleteProgressComment } from "./comment.ts";
 import type { ToolContext } from "./server.ts";
@@ -868,6 +869,9 @@ export function CreatePullRequestReviewTool(ctx: ToolContext) {
         // agent dropping valid inline comments chasing a non-issue.
         // `bail` scopes retries to the transient body only, so real
         // validation 422s still fail fast.
+        if (isCodexReview(ctx) && primary.reviewCoverage) {
+          body = appendReviewReceipt(body, await attestReviewReceipt(ctx, createReviewReceipt(`${ctx.repo.owner}/${ctx.repo.name}`, primary.reviewCoverage)));
+        }
         let result;
         try {
           result = await yes.op(
@@ -1025,6 +1029,10 @@ export function CreatePullRequestReviewTool(ctx: ToolContext) {
 }
 
 function runDiffCoveragePreflight(params: { ctx: ToolContext }): void {
+  // Codex's read_file tracks delivered raw-patch pages and the publication
+  // boundary already enforces them. Native read guesses about the optional
+  // numbered display would incorrectly flag every file as unread.
+  if (isCodexReview(params.ctx)) return;
   const coverageState = primaryRepoState(params.ctx.toolState).diffCoverage;
   if (!coverageState) {
     log.debug("diff coverage pre-flight skipped: no diffCoverage state present in toolState");

@@ -4,13 +4,16 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { decode } from "@toon-format/toon";
 import { CreateCommentTool, EditCommentTool, ReportProgressTool } from "../mcp/comment.ts";
 import { ReviewCheckpointTool } from "../mcp/reviewCheckpoint.ts";
+import { ReadFileTool } from "../mcp/readFile.ts";
 import type { ToolContext } from "../mcp/server.ts";
 import { computeModes } from "../modes.ts";
 import { initToolState, primaryRepoState } from "../toolState.ts";
 import { createReviewCoverage, currentReviewCoverage, incompleteReviewIssue, loadReviewManifest, missingReviewPasses, planReview, recordReviewPasses, reviewCompletionBody, reviewPublicationBody, type LensDecision, type ReviewCoverage, type ReviewPass } from "./reviewCoverage.ts";
 import { REVIEW_LENSES } from "./reviewLenses.ts";
+import { appendReviewReceipt, attestReviewReceipt, createReviewReadState, createReviewReceipt, fetchReviewReceipt } from "./reviewResume.ts";
 
 let root: string;
 let coverage: ReviewCoverage;
@@ -167,12 +170,19 @@ describe("single-session completion", () => {
     expect(missingReviewPasses(coverage)).toContain("sweep:rule:1");
     expect(() => recordReviewPasses(coverage, [pass("verification")])).toThrow();
   });
-  it("permits explicit incomplete reports, never approval or clean language", async () => {
+  it("preserves useful partial findings without publishing the internal checkpoint explanation", async () => {
     const ctx = context();
-    coverage.limitation = "Required database tooling is unavailable after retry.";
-    expect(await reviewCompletionBody(ctx, "Verified finding: stale consumer.")).toContain("Review incomplete:");
-    expect(await reviewCompletionBody(ctx, "LGTM; ready to merge. No new issues.")).not.toContain("LGTM");
-    expect(await reviewCompletionBody(ctx, "All changes are correct.")).toContain("No clean verdict was reached.");
+    coverage.limitation = "sweep:rule:1 failed after bounded retries of authoritative reads";
+    coverage.publicSummary = "The database check could not run because its required tool is missing.";
+    const summary = "Found one stale consumer.\n\nChanged the account identifier and its callers.";
+    const body = await reviewCompletionBody(ctx, summary);
+    expect(body).toContain("Review incomplete");
+    expect(body).toContain(coverage.publicSummary);
+    expect(body).toContain(summary);
+    expect(body).not.toContain("sweep:rule:1");
+    expect(body).not.toContain("bounded retries");
+    await expect(reviewCompletionBody(ctx, "LGTM; ready to merge. No new issues.")).rejects.toThrow("clean verdict");
+    await expect(reviewCompletionBody(ctx, "All changes are correct.")).rejects.toThrow("clean verdict");
     await expect(reviewCompletionBody(ctx, "Some findings", true)).rejects.toThrow("cannot approve");
   });
   it("keeps an explicit limitation authoritative after passes were recorded", async () => {
@@ -181,8 +191,7 @@ describe("single-session completion", () => {
     recordReviewPasses(coverage, coverage.plan!.required.map(pass));
     coverage.limitation = "The final reproduction could not be completed.";
     await expect(reviewCompletionBody(ctx, "LGTM", true)).rejects.toThrow("cannot approve");
-    expect(await reviewCompletionBody(ctx, "LGTM")).toContain("Review incomplete:");
-    expect(await reviewCompletionBody(ctx, "LGTM")).not.toContain("LGTM");
+    await expect(reviewCompletionBody(ctx, "LGTM")).rejects.toThrow("clean verdict");
   });
   it("keeps manifest IDs out of the public incomplete summary", async () => {
     const ctx = context();
@@ -243,10 +252,11 @@ describe("review_checkpoint tool", () => {
 
   it("declares a visible limitation and rejects non-Codex sessions", async () => {
     const ctx = { ...context(), tmpdir: root } as ToolContext;
-    const params = { action: "incomplete" as const, review_id: coverage.scope.id, reason: "Manifest provider failed after retry." };
+    const params = { action: "incomplete" as const, review_id: coverage.scope.id, reason: "Manifest provider failed after retry.", public_summary: "The repository's review-check configuration could not be loaded." };
     const result = await ReviewCheckpointTool(ctx).execute(params, {} as never);
     expect(result).not.toHaveProperty("isError", true);
-    expect(await reviewCompletionBody(ctx, "Verified finding.")).toContain(params.reason);
+    expect(await reviewCompletionBody(ctx, "Verified finding.")).toContain(params.public_summary);
+    expect(await reviewCompletionBody(ctx, "Verified finding.")).not.toContain(params.reason);
     await expect(reviewCompletionBody(ctx, "No new issues.", true)).rejects.toThrow();
     const unsupported = await ReviewCheckpointTool({ ...ctx, agentId: "opencode" }).execute(params, {} as never);
     expect(unsupported).toHaveProperty("isError", true);
@@ -307,4 +317,69 @@ describe("review publication freshness", () => {
     get.mockResolvedValue({ data: { head: { sha: changed === "head" ? "new-head" : coverage.scope.headSha }, base: { sha: changed === "base" ? "new-base" : coverage.scope.baseSha } } });
     await expect(reviewPublicationBody(publication, "No new issues", 1, true)).rejects.toThrow("remote PR revision changed");
   });
+});
+
+describe("large review continuation through the tools", () => {
+  it("reads a 77-file patch, publishes coverage, then requires only changed sections and the new delta", async () => {
+    const rawPath = join(root, "review.raw.diff");
+    const raw = Array.from({ length: 77 }, (_, index) => `diff --git a/file${index}.ts b/file${index}.ts\n--- a/file${index}.ts\n+++ b/file${index}.ts\n@@ -1 +1 @@\n-old\n+${"content".repeat(30)}${index}\n`).join("");
+    writeFileSync(rawPath, raw);
+    const { id: initialId, ...initialScope } = coverage.scope;
+    coverage = createReviewCoverage({ ...initialScope, baseSha: coverage.scope.headSha, unifiedDiffPath: rawPath });
+    coverage.readCoverage = [createReviewReadState(rawPath)];
+    let ctx = { ...context(), tmpdir: root, repo: { owner: "test", name: "repo" } } as ToolContext;
+    const imported = manifest();
+    const execute = async (tool: ReturnType<typeof ReadFileTool>, params: Parameters<typeof tool.execute>[0]) => {
+      const result = await tool.execute(params, {} as never);
+      expect(result).not.toHaveProperty("isError", true);
+      if (!result || typeof result !== "object" || !("content" in result)) throw new Error("Expected tool content");
+      const first = result.content[0];
+      if (!first || first.type !== "text") throw new Error("Expected text content");
+      return decode(first.text) as { next_cursor: string | null };
+    };
+    let checkpoint = ReviewCheckpointTool(ctx);
+    await checkpoint.execute({ action: "plan", review_id: coverage.scope.id, lenses: decisions(), manifest_path: join(root, "manifest.json") }, {} as never);
+    const premature = await checkpoint.execute({ action: "record", review_id: coverage.scope.id, passes: coverage.plan!.required.map(pass) }, {} as never);
+    expect(premature).toHaveProperty("isError", true);
+    const reader = ReadFileTool(ctx);
+    let page = await execute(reader, { path: rawPath, max_chars: 12000 });
+    expect(page.next_cursor).toBeTypeOf("string");
+    while (page.next_cursor) page = await execute(reader, { path: rawPath, cursor: page.next_cursor, max_chars: 12000 });
+    const recorded = await checkpoint.execute({ action: "record", review_id: coverage.scope.id, passes: coverage.plan!.required.map(pass) }, {} as never);
+    expect(recorded).not.toHaveProperty("isError", true);
+    expect(await reviewCompletionBody(ctx, "No new issues found.", true)).toBe("No new issues found.");
+    const receipt = createReviewReceipt("test/repo", coverage)!;
+    expect(receipt.readSections).toHaveLength(77);
+    expect(receipt.complete).toBe(true);
+    const check = { name: "pullfrog", head_sha: coverage.scope.headSha, app: { slug: "prfrog" }, external_id: "" };
+    const checks = {
+      get: vi.fn().mockImplementation(async () => ({ data: check })),
+      update: vi.fn().mockImplementation(async (params: { external_id: string }) => { check.external_id = params.external_id; }),
+    };
+    const attested = await attestReviewReceipt({ ...ctx, payload: { ...ctx.payload, checkRun: { id: "123" } }, octokit: { rest: { checks } } } as unknown as ToolContext, receipt);
+    expect(attested).toBeDefined();
+    const published = appendReviewReceipt("No new issues found.", attested);
+    const beforeSha = coverage.scope.headSha;
+    const { id: savedId, ...savedScope } = coverage.scope;
+    writeFileSync(join(root, "source.ts"), "export const changed = true;\n");
+    git("add", "source.ts"); git("-c", "commit.gpgsign=false", "commit", "-qm", "follow-up");
+    writeFileSync(rawPath, raw.replace("content76\n", "changed76\n"));
+    const deltaPath = join(root, "delta.diff"); writeFileSync(deltaPath, "-old\n+changed\n");
+    coverage = createReviewCoverage({ ...savedScope, headSha: git("rev-parse", "HEAD"), beforeSha, incrementalDiffPath: deltaPath });
+    coverage.readCoverage = [createReviewReadState(rawPath), createReviewReadState(deltaPath)];
+    ctx = { ...context("IncrementalReview"), tmpdir: root, repo: { owner: "test", name: "repo" }, octokit: { paginate: vi.fn().mockResolvedValue([{ id: 10, user: { login: "prfrog[bot]", type: "Bot" }, state: "COMMENTED", submitted_at: new Date().toISOString(), commit_id: beforeSha, body: published }]), rest: { checks, pulls: { listReviews: vi.fn() } } } } as unknown as ToolContext;
+    coverage.previousReceipt = await fetchReviewReceipt(ctx, 1, beforeSha);
+    checkpoint = ReviewCheckpointTool(ctx);
+    planReview(coverage, decisions(), imported);
+    expect(coverage.analysisScope).toBe("incremental");
+    expect(coverage.passes).toEqual({});
+    expect(coverage.readCoverage[0]!.coveredRanges).toEqual([{ startLine: 1, endLine: 456 }]);
+    await expect(reviewCompletionBody(ctx, "No new issues.", true)).rejects.toThrow("coverage incomplete");
+    const nextReader = ReadFileTool(ctx);
+    await execute(nextReader, { path: rawPath, start_line: 457, max_chars: 12000 });
+    await execute(nextReader, { path: deltaPath });
+    const finished = await checkpoint.execute({ action: "record", review_id: coverage.scope.id, passes: coverage.plan!.required.map(pass) }, {} as never);
+    expect(finished).not.toHaveProperty("isError", true);
+    expect(await reviewCompletionBody(ctx, "No new issues.", true)).toBe("No new issues.");
+  }, 15000);
 });

@@ -11,6 +11,7 @@ import { $git, $gitFetchWithDeepen, DEEPEN_RETRY_DEPTH } from "../utils/gitAuth.
 import { executeLifecycleHook } from "../utils/lifecycle.ts";
 import { computeIncrementalDiff } from "../utils/rangeDiff.ts";
 import { createReviewCoverage } from "../utils/reviewCoverage.ts";
+import { createReviewReadState, fetchReviewReceipt } from "../utils/reviewResume.ts";
 import { $ } from "../utils/shell.ts";
 import * as yes from "../yes/index.ts";
 import { rejectIfLeadingDash } from "./git.ts";
@@ -831,7 +832,11 @@ export function CheckoutPrTool(ctx: ToolContext) {
         unifiedDiffPath,
         incrementalDiffPath,
       });
-      if (primary.reviewCoverage?.scope.id !== coverage.scope.id) primary.reviewCoverage = coverage;
+      if (primary.reviewCoverage?.scope.id !== coverage.scope.id) {
+        coverage.readCoverage = [createReviewReadState(unifiedDiffPath), ...(incrementalDiffPath ? [createReviewReadState(incrementalDiffPath)] : [])];
+        coverage.previousReceipt = await fetchReviewReceipt(ctx, pull_number, primary.beforeSha);
+        primary.reviewCoverage = coverage;
+      }
     }
     log.debug(`wrote diff to ${diffPath} (${formatResult.content.length} bytes)`);
     primary.diffCoverage = createDiffCoverageState({
@@ -967,15 +972,19 @@ export function CheckoutPrTool(ctx: ToolContext) {
       hookWarning: checkoutResult.hookWarning,
       instructions:
         incrementalInstructions +
+        (ctx.agentId === "codex"
+          ? `Use read_file for diff and guidance reads, following next_cursor until eof or until the required range has been fully delivered. After inspecting the delta and applicable guidance, call review_checkpoint action=plan before rereading the full patch. It validates prior coverage and returns analysisScope plus the remaining raw-diff ranges. Reuse only coverage the harness accepts; a prior incomplete review leaves outstanding full-PR work. `
+          : "") +
         `the diff file at diffPath contains a table of contents (TOC) at the top listing every changed file with its line range. ` +
         `use the TOC line ranges as your checklist and read specific files from the diff instead of reading the entire file. ` +
         `for example, if the TOC says "src/foo.ts → lines 5-42", read lines 5-42 from diffPath to see that file's changes. ` +
-        `review files selectively based on relevance rather than reading everything sequentially. ` +
+        `use unifiedDiffPath for complete review content; use the numbered display to locate inline comment anchors. ` +
         `diffPath is a numbered display for navigation and review anchors; it is NOT a unified patch and GitHub may omit large file patches from it. unifiedDiffPath is the complete raw unified patch for the captured base/head commits. Use unifiedDiffPath for governance manifests, git apply, patch parsers, and any content omitted from diffPath. Do not pass the numbered display or incremental range-diff to a unified-diff parser. ` +
         `if you ever do need a branch-vs-base diff via the git tool, use \`git diff --merge-base <base>\` (single call, includes uncommitted edits) or three-dot \`git diff <base>...HEAD\` (committed-only). bare \`<base>\` and two-dot \`<base>..HEAD\` are symmetric and pull in the inverse of every commit landed on \`<base>\` since the branch forked — the git tool will reject those forms when the divergence is detected. \`$(...)\` subshells are NOT expanded by the git tool. ` +
         `\`git log\` and \`git diff --stat\` are fine for commit-range overview, and \`git diff\` / \`git diff --cached\` are fine for inspecting *your own* uncommitted changes — but PR review content MUST come from diffPath or unifiedDiffPath. ` +
-        `before your review is submitted, a one-time coverage pre-flight may error listing unread TOC regions. ` +
-        `retry the same create_pull_request_review call to proceed — optionally after reading the listed ranges. the pre-flight will not block again this session. ` +
+        (ctx.agentId === "codex"
+          ? `Before final verification, finish all read ranges returned by review_checkpoint action=status. Reading the display is optional when the raw patch has been read. `
+          : `before your review is submitted, a one-time coverage pre-flight may error listing unread TOC regions. Read relevant ranges, then retry the review submission. `) +
         `the local branch is 'localBranch' (pr-{number}), not the remote branch name. ` +
         `when pushing, omit branchName to use the current branch. do not use remoteBranch as a local branch name.` +
         impactInstructions +

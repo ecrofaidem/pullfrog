@@ -47,26 +47,58 @@ record where the agent checked; their baseline and lens passes still apply.
 The checkpoint requires a decision for every lens and evidence for each selected
 pass and applicable sweep. Invariants, procedures, and excluded checks are
 accounted for without asking the reviewer to rerun CI or judge author behavior.
-Full-PR manifest scope is conservative; incremental findings still require a
-causal link to the new delta. Repository guidance supplies domain-specific checks.
+Full-PR manifest scope is conservative. The plan returns `analysisScope`:
+`incremental` requires a complete verified baseline and limits findings to the
+new delta; `full` requires finishing outstanding full-PR work, with prior
+feedback deduplicated. Repository guidance supplies domain-specific checks.
+
+`read_file` returns complete UTF-8 pages with `next_cursor`, `eof`, and
+`complete_through_line`. Use `start_line` to begin a remaining range. Lines
+count toward coverage only after all their fragments are delivered. Reads run
+inside the shell sandbox and enforce checkout/temporary-directory boundaries
+and secret-path exclusions. Captured review artifacts are hash-checked before
+they receive coverage. `review_checkpoint` action `status` lists unread raw
+patch ranges and unfinished passes. The numbered display supplies inline
+anchors; it cannot substitute for raw-patch coverage. Paged reads require Linux
+descriptor-path validation and fail closed on other operating systems.
+
+Published reviews include a hidden, harness-generated coverage receipt. A later
+run accepts it only from a submitted recognized bot review for the exact
+repository, PR, and previous commit, with a matching digest in the existing
+`pullfrog` check's `external_id`. The harness can write that metadata; the
+agent's role-mirrored GitHub token cannot. A missing check, overwritten digest,
+or failed API call disables reuse without blocking review publication.
+Only a completed baseline with an incremental delta permits reuse of unchanged
+raw-patch sections, and only when the base commit and complete guidance-source
+hash set still match. Missing, malformed, oversized, or incompatible receipts
+fall back to full scope. Repositories without hashed guidance do not reuse
+coverage. An incomplete baseline requires a full reread and fresh review; old
+pass evidence is never imported as a fresh conclusion. Receipts persist through
+GitHub reviews and do not require a backend deployment.
 
 Review submission and incremental acknowledgement reject incomplete coverage
 unless the session explicitly declares a limitation. Such reports cannot approve
-and use a harness-generated incomplete summary, with verified findings in inline
-comments. Publication also rechecks the remote head and base revision. The completion
-loop resumes unfinished coverage work. A new revision, altered diff artifact,
-or changed guidance invalidates its prior evidence. Evidence structure is
-validated; source comprehension and finding correctness still require judgment.
+and keep the useful summary and inline findings beneath a short incomplete
+status. The checkpoint's `reason` stays internal; `public_summary` names the
+unchecked work and blocker in plain language. Publication also rechecks the
+remote head and base revision. The completion loop resumes unfinished work.
+Shell results distinguish output pagination, missing tools, missing
+dependencies, missing paths, and timeouts so the reviewer can choose an
+appropriate recovery. Pagination is progress, not a failed retry. Required
+checks that remain blocked cannot approve the PR. Evidence structure and
+delivered reads are validated; comprehension and finding correctness still
+require judgment.
 Detailed records stay in the run transcript, with only actionable findings and
 material limitations in the posted review.
 
 Implementation: `utils/reviewLenses.ts`, `utils/reviewCoverage.ts`,
-`mcp/reviewCheckpoint.ts`, and their checkout, publication, and completion hooks.
+`utils/reviewResume.ts`, `mcp/readFile.ts`, `mcp/reviewCheckpoint.ts`, and their
+checkout, publication, and completion hooks.
 The unit tests exercise invalid manifests, rename scope, stale revisions,
 failed sweeps, missing evidence, and both review modes:
 
 ```bash
-pnpm exec vitest run utils/reviewCoverage.test.ts
+pnpm exec vitest run utils/reviewCoverage.test.ts utils/reviewResume.test.ts mcp/readFile.test.ts mcp/shellRecovery.test.ts
 ```
 
 ## Repository conventions evaluation

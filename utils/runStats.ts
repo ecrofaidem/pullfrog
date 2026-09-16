@@ -75,7 +75,7 @@ function fmtDuration(ms: number): string {
 
 function coverageOf(toolState: ToolState): DiffCoverageBreakdown | null {
   const repo = toolState.repos.get(toolState.primaryRepoKey);
-  const state = repo?.diffCoverage;
+  const state = toolState.agent === "codex" ? repo?.reviewCoverage?.readCoverage?.[0] : repo?.diffCoverage;
   if (!state || !state.totalLines) return null;
   return getDiffCoverageBreakdown({ state });
 }
@@ -85,16 +85,14 @@ export function renderRunStats(input: RunStatsInput): RenderedRunStats | null {
   const usage = { inputTokens: live.input, outputTokens: live.output, cacheReadTokens: live.cacheRead, costUsd: live.costUsd };
   const attempts = toolState.usageEntries.length + 1;
   const elapsed = Date.now() - startedAt;
-  // the coverage tracker recognises read tools, which the Codex harness never
-  // uses (it reads through the shell), so there is nothing honest to show there
-  const coverage = toolState.agent === "codex" ? null : coverageOf(toolState);
+  const coverage = coverageOf(toolState);
   const totalTools = [...toolCalls.values()].reduce((a, b) => a + b, 0);
 
   const line: string[] = [fmtDuration(elapsed)];
   if (usage.inputTokens) line.push(`${fmtTokens(usage.inputTokens)} in`);
   if (usage.outputTokens) line.push(`${fmtTokens(usage.outputTokens)} out`);
   if (subagents.length) line.push(`${subagents.length} subagent${subagents.length === 1 ? "" : "s"}`);
-  if (coverage) line.push(`read ${Math.round(coverage.coveragePercent)}% of the diff`);
+  if (coverage) line.push(toolState.agent === "codex" ? `${Math.round(coverage.coveragePercent)}% diff coverage` : `read ${Math.round(coverage.coveragePercent)}% of the diff`);
 
   const rows: string[] = [];
   rows.push(`- Time: ${fmtDuration(elapsed)} from action start to this post`);
@@ -127,7 +125,7 @@ export function renderRunStats(input: RunStatsInput): RenderedRunStats | null {
       .map((f) => `${f.filename} ${f.totalLines ? Math.round((f.coveredLines / f.totalLines) * 100) : 100}%`)
       .join(" · ");
     rows.push(
-      `- Diff coverage: ${coverage.coveredLines} of ${coverage.totalLines} changed lines read (${Math.round(coverage.coveragePercent)}%)${files ? `; ${files}` : ""}`
+      `- Diff coverage: ${coverage.coveredLines} of ${coverage.totalLines} ${toolState.agent === "codex" ? "raw diff lines covered (may include verified prior reads)" : "changed lines read"} (${Math.round(coverage.coveragePercent)}%)${files ? `; ${files}` : ""}`
     );
   }
   if (review) {

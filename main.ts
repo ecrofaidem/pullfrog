@@ -683,6 +683,7 @@ export async function main(): Promise<MainResult> {
       jobId: runInfo.jobId,
       mcpServerUrl: "",
       tmpdir,
+      secretDenyPaths: [PULLFROG_DATA_DIR, ...(vertexCredentials ? [vertexCredentials.secretDir] : [])],
       oss: runContext.oss,
       plan: runContext.plan,
       resolvedModel,
@@ -942,10 +943,7 @@ export async function main(): Promise<MainResult> {
       // future pullfrog-managed on-disk secrets. bash via MCP tmpfs-overlays
       // it; agent native FS tools deny it via the same secretDenyPaths plumbing
       // used for vertex creds. see wiki/security.md "Filesystem Sandbox".
-      secretDenyPaths: [
-        PULLFROG_DATA_DIR,
-        ...(vertexCredentials ? [vertexCredentials.secretDir] : []),
-      ],
+      secretDenyPaths: toolContext.secretDenyPaths ?? [],
       instructions,
       todoTracker,
       stopScript: runContext.repoSettings.stopScript,
