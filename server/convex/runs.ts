@@ -282,7 +282,12 @@ export const hasReview = internalQuery({
         q.eq("owner", args.owner).eq("repo", args.repo).eq("prNumber", args.prNumber)
       )
       .collect();
-    return rows.some((r) => r.status !== "failed" && r.status !== "cancelled");
+    return rows.some(
+      (r) =>
+        (r.kind === "review" || r.kind === "incremental_review") &&
+        r.status !== "failed" &&
+        r.status !== "cancelled"
+    );
   },
 });
 

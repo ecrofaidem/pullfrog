@@ -30,7 +30,7 @@ function escapeRegex(s: string): string {
  */
 export function hasIgnoreTag(body: string | null | undefined, handle: string): boolean {
   const h = escapeRegex(handle);
-  return new RegExp(`<(?:!--\\s*)?${h}\\s+ignore\\s*(?:--)?>`, "i").test(body ?? "");
+  return new RegExp(`<!--\\s*${h}\\s+ignore\\s*-->|<${h}\\s+ignore>`, "i").test(body ?? "");
 }
 
 /**

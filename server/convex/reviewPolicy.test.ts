@@ -76,6 +76,11 @@ describe("hasIgnoreTag", () => {
     expect(hasIgnoreTag("<!-- frogbot-ignore -->", "frogbot")).toBe(false);
   });
 
+  it("rejects half-formed delimiters", () => {
+    expect(hasIgnoreTag("<!-- frogbot ignore>", "frogbot")).toBe(false);
+    expect(hasIgnoreTag("<frogbot ignore -->", "frogbot")).toBe(false);
+  });
+
   it("does not match prose that mentions ignoring", () => {
     expect(hasIgnoreTag("please have frogbot ignore the vendored files", "frogbot")).toBe(false);
   });
