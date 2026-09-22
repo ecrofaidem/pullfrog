@@ -17,6 +17,7 @@ export const recordDispatch = internalMutation({
     trigger: v.string(),
     prNumber: v.optional(v.number()),
     prTitle: v.optional(v.string()),
+    headSha: v.optional(v.string()),
     triggerer: v.optional(v.string()),
     title: v.string(),
     checkRunId: v.optional(v.number()),
@@ -264,6 +265,37 @@ export const orphans = internalQuery({
       .withIndex("by_repo", (q) => q.eq("owner", args.owner).eq("repo", args.repo))
       .collect();
     return rows.filter((r) => r.kind === "manual" && r.githubRunId !== undefined && !r.dispatchId);
+  },
+});
+
+/**
+ * the PR head the newest full or delta review was dispatched for, so a push is reviewed as the
+ * delta since then even when pushes in between were ignored. Null when the PR never had a
+ * review (ignored, author allowed after opening, or rows from before heads were recorded):
+ * the next push gets a full review. An in-flight run counts: it covers the head it was
+ * dispatched for and the delta covers what came after, which is the coverage a push
+ * mid-review always had. Counting only completed runs would dispatch a second full review
+ * beside the running one.
+ */
+export const lastReviewedHead = internalQuery({
+  args: { owner: v.string(), repo: v.string(), prNumber: v.number() },
+  handler: async (ctx, args): Promise<string | null> => {
+    const run = await ctx.db
+      .query("runs")
+      .withIndex("by_repo_pr", (q) =>
+        q.eq("owner", args.owner).eq("repo", args.repo).eq("prNumber", args.prNumber)
+      )
+      .order("desc")
+      .filter((q) =>
+        q.and(
+          q.or(q.eq(q.field("kind"), "review"), q.eq(q.field("kind"), "incremental_review")),
+          q.neq(q.field("status"), "failed"),
+          q.neq(q.field("status"), "cancelled"),
+          q.neq(q.field("headSha"), undefined)
+        )
+      )
+      .first();
+    return run?.headSha ?? null;
   },
 });
 

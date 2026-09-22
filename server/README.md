@@ -25,7 +25,8 @@ this` asks the agent to make the requested changes. You must have write,
 maintain, or admin access to the repository. Bot comments, edited comments,
 bare mentions, and inline PR review comments do not trigger runs.
 
-`@prfrog review` on a PR keeps the explicit review behavior and skips drafts.
+`@prfrog review` on a PR keeps the explicit review behavior and skips drafts;
+for this request alone the `@` is optional, so a bare `prfrog review` works too.
 Other requests can run on draft PRs and ordinary issues, regardless of the
 automatic review author allowlist. For changes requested on a closed PR, the
 agent is instructed to open a follow-up PR from the default branch. Repository
@@ -35,6 +36,15 @@ branches and blocks direct pushes to the default branch.
 General requests use the existing action's modes and appear as `task` runs.
 Deploy both the Convex backend and webhook Worker to enable them. The existing
 `issue_comment` App subscription and consumer action pin support these requests.
+
+## Ignoring a PR
+
+Put `<!-- prfrog ignore -->` (the configured handle; the bare `<prfrog ignore>`
+form also matches) anywhere in a PR description and the dispatcher skips its
+automatic reviews on open, ready-for-review, and push. Remove the tag and push to
+resume: the next review covers everything since the last reviewed head, including
+pushes made while the tag was present, and a PR that has never had a review gets
+a full review. `@prfrog review` in a comment reviews once regardless of the tag.
 
 ## Layout
 

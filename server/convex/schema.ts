@@ -162,6 +162,8 @@ export default defineSchema({
     trigger: v.string(),
     prNumber: v.optional(v.number()),
     prTitle: v.optional(v.string()),
+    /** the PR head a review was dispatched for; the next delta review starts here */
+    headSha: v.optional(v.string()),
     triggerer: v.optional(v.string()),
     title: v.string(),
     status: runStatus,
@@ -187,6 +189,7 @@ export default defineSchema({
     completedAt: v.optional(v.number()),
   })
     .index("by_repo", ["owner", "repo", "createdAt"])
+    .index("by_repo_pr", ["owner", "repo", "prNumber"])
     .index("by_repo_status", ["owner", "repo", "status", "createdAt"])
     .index("by_github_run", ["githubRunId"])
     .index("by_dispatch", ["dispatchId"]),

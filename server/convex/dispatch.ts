@@ -10,7 +10,7 @@ import type { Doc } from "./_generated/dataModel";
 import { actionWorkflow, resolveActionVersion } from "./actionVersion";
 import { buildEnvelope, buildRunEvent, type RunTrigger } from "./lib/envelope";
 import { isBaseOnlyMerge } from "./lib/baseMerge";
-import { isBot, shouldIgnorePullRequestEvent } from "./reviewPolicy";
+import { hasIgnoreTag, isBot, mentionRequest, shouldIgnorePullRequestEvent } from "./reviewPolicy";
 import {
   addReaction,
   collaboratorPermission,
@@ -122,11 +122,6 @@ function authorAllowed(repo: Doc<"repos">, login: string): boolean {
   return repo.reviewAuthors.includes(login.toLowerCase());
 }
 
-function mentionRegex(handle: string): RegExp {
-  const escaped = handle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(^|\\s)@${escaped}\\s+(\\S[\\s\\S]*)`, "i");
-}
-
 async function repoFor(ctx: ActionCtx, payload: Json): Promise<Doc<"repos"> | null> {
   const repository = payload.repository as Json;
   const owner = String(repository.owner?.login ?? "");
@@ -155,19 +150,26 @@ async function handlePullRequest(ctx: ActionCtx, payload: Json) {
   const pr = payload.pull_request as Json;
   if (pr.draft) return;
   if (shouldIgnorePullRequestEvent(payload)) return;
+  if (hasIgnoreTag(pr.body as string | null, repo.handle)) return;
   if (!authorAllowed(repo, String(pr.user.login))) return;
   if (trigger === "pull_request_synchronize" && !repo.reviewOnSynchronize) return;
 
   const number = Number(pr.number);
-  const prompt =
+  // a push is reviewed as the delta since the last reviewed head, which is older than the
+  // webhook's `before` when pushes in between were ignored. A PR nobody has reviewed yet
+  // (ignored, or its author was not yet allowed) gets a full review instead.
+  const reviewedHead =
     trigger === "pull_request_synchronize"
-      ? `New commits were pushed to pull request #${number}. Review the changes since the previous review.`
-      : `Review pull request #${number}.`;
+      ? await ctx.runQuery(internal.runs.lastReviewedHead, { owner: repo.owner, repo: repo.name, prNumber: number })
+      : null;
+  const prompt = reviewedHead
+    ? `New commits were pushed to pull request #${number}. Review the changes since the previous review.`
+    : `Review pull request #${number}.`;
 
   await dispatchRun(ctx, {
     repo,
     trigger,
-    kind: trigger === "pull_request_synchronize" ? "incremental_review" : "review",
+    kind: reviewedHead ? "incremental_review" : "review",
     issue: {
       number,
       title: String(pr.title ?? ""),
@@ -179,7 +181,7 @@ async function handlePullRequest(ctx: ActionCtx, payload: Json) {
     },
     triggerer: String(payload.sender?.login ?? pr.user.login),
     prompt,
-    ...(trigger === "pull_request_synchronize" ? { beforeSha: String(payload.before ?? ""), baseSha: String(pr.base?.sha ?? "") } : {}),
+    ...(reviewedHead ? { beforeSha: reviewedHead, baseSha: String(pr.base?.sha ?? "") } : {}),
   });
 }
 
@@ -193,9 +195,9 @@ async function handleIssueComment(ctx: ActionCtx, payload: Json) {
   const repo = await repoFor(ctx, payload);
   if (!repo) return;
   const body = String(comment.body ?? "");
-  const mention = mentionRegex(repo.handle).exec(body);
-  if (!mention) return;
-  const review = Boolean(issue.pull_request) && /^review\b/i.test(mention[2]!);
+  const request = mentionRequest(body, repo.handle, Boolean(issue.pull_request));
+  if (!request) return;
+  const review = Boolean(issue.pull_request) && /^review\b/i.test(request);
 
   const installation = await findRepoInstallation(repo.owner, repo.name);
   if (!installation) return;
@@ -369,7 +371,7 @@ async function dispatchRun(ctx: ActionCtx, params: DispatchRunParams) {
     dispatchId,
     kind: params.kind,
     trigger: params.trigger,
-    ...(pr ? { prNumber: issue.number, prTitle: issue.title } : {}),
+    ...(pr ? { prNumber: issue.number, prTitle: issue.title, headSha: pr.headSha } : {}),
     triggerer: params.triggerer,
     title,
     ...(checkRunId !== undefined ? { checkRunId } : {}),
