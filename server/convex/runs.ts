@@ -228,6 +228,25 @@ export const orphans = internalQuery({
   },
 });
 
+/**
+ * whether a review of this PR was ever dispatched and did not fail, so a push can be reviewed
+ * as a delta. An in-flight run counts: it covers the head it was dispatched for, and the delta
+ * review covers what came after, which is the same coverage a push mid-review always had.
+ * Counting only completed runs would dispatch a second full review beside the running one.
+ */
+export const hasReview = internalQuery({
+  args: { owner: v.string(), repo: v.string(), prNumber: v.number() },
+  handler: async (ctx, args): Promise<boolean> => {
+    const rows = await ctx.db
+      .query("runs")
+      .withIndex("by_repo_pr", (q) =>
+        q.eq("owner", args.owner).eq("repo", args.repo).eq("prNumber", args.prNumber)
+      )
+      .collect();
+    return rows.some((r) => r.status !== "failed" && r.status !== "cancelled");
+  },
+});
+
 export const recent = internalQuery({
   args: { owner: v.string(), repo: v.string(), limit: v.number() },
   handler: async (ctx, args): Promise<Doc<"runs">[]> =>

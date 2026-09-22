@@ -118,6 +118,7 @@ export default defineSchema({
     completedAt: v.optional(v.number()),
   })
     .index("by_repo", ["owner", "repo", "createdAt"])
+    .index("by_repo_pr", ["owner", "repo", "prNumber"])
     .index("by_github_run", ["githubRunId"])
     .index("by_dispatch", ["dispatchId"]),
 

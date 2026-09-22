@@ -15,6 +15,7 @@ What it does:
     -d '{"owner":"ecrofaidem","repo":"monorepo","set":{"review.on_push":true}}' https://<site>/api/cli/config
   ```
 - **Dispatcher.** `POST /webhooks/github` receives the App's webhooks and dispatches `pullfrog.yml` with the JSON envelope the action expects. Review policy lives in `convex/dispatch.ts`.
+  - Put `<!-- frogbot ignore -->` (the App's handle) in a PR description to get no automatic reviews. Remove it and push to resume; a PR nobody has reviewed yet gets a full review rather than a delta. A comment of `@frogbot review` (the `@` is optional) from someone with write access reviews once, tag or not.
 
 ## Layout
 

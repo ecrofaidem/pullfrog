@@ -9,7 +9,7 @@ import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { actionWorkflow, resolveActionVersion } from "./actionVersion";
 import { buildEnvelope, buildReviewEvent, type ReviewTrigger } from "./lib/envelope";
-import { isBot, shouldIgnorePullRequestEvent } from "./reviewPolicy";
+import { hasIgnoreTag, isBot, mentionRegex, shouldIgnorePullRequestEvent } from "./reviewPolicy";
 import {
   addReaction,
   collaboratorPermission,
@@ -98,11 +98,6 @@ function authorAllowed(repo: Doc<"repos">, login: string): boolean {
   return repo.reviewAuthors.includes(login.toLowerCase());
 }
 
-function mentionRegex(handle: string): RegExp {
-  const escaped = handle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(^|\\s)@${escaped}\\s+review\\b`, "i");
-}
-
 async function repoFor(ctx: ActionCtx, payload: Json): Promise<Doc<"repos"> | null> {
   const repository = payload.repository as Json;
   const owner = String(repository.owner?.login ?? "");
@@ -131,19 +126,24 @@ async function handlePullRequest(ctx: ActionCtx, payload: Json) {
   const pr = payload.pull_request as Json;
   if (pr.draft) return;
   if (shouldIgnorePullRequestEvent(payload)) return;
+  if (hasIgnoreTag(pr.body as string | null, repo.handle)) return;
   if (!authorAllowed(repo, String(pr.user.login))) return;
   if (trigger === "pull_request_synchronize" && !repo.reviewOnSynchronize) return;
 
   const number = Number(pr.number);
-  const prompt =
-    trigger === "pull_request_synchronize"
-      ? `New commits were pushed to pull request #${number}. Review the changes since the previous review.`
-      : `Review pull request #${number}.`;
+  // a push to a PR nobody has reviewed yet (it was ignored, or its author was not yet
+  // allowed) gets a full review; there is no previous review to diff against.
+  const incremental =
+    trigger === "pull_request_synchronize" &&
+    (await ctx.runQuery(internal.runs.hasReview, { owner: repo.owner, repo: repo.name, prNumber: number }));
+  const prompt = incremental
+    ? `New commits were pushed to pull request #${number}. Review the changes since the previous review.`
+    : `Review pull request #${number}.`;
 
   await dispatchReview(ctx, {
     repo,
     trigger,
-    kind: trigger === "pull_request_synchronize" ? "incremental_review" : "review",
+    kind: incremental ? "incremental_review" : "review",
     pr: {
       number,
       title: String(pr.title ?? ""),
@@ -153,7 +153,7 @@ async function handlePullRequest(ctx: ActionCtx, payload: Json) {
     },
     triggerer: String(payload.sender?.login ?? pr.user.login),
     prompt,
-    ...(trigger === "pull_request_synchronize" ? { beforeSha: String(payload.before ?? "") } : {}),
+    ...(incremental ? { beforeSha: String(payload.before ?? "") } : {}),
   });
 }
 
