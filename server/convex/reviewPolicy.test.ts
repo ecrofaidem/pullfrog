@@ -93,25 +93,29 @@ describe("hasIgnoreTag", () => {
 
 describe("mentionRequest", () => {
   it("returns the request text after an @-mention", () => {
-    expect(mentionRequest("@frogbot review", "frogbot")).toBe("review");
-    expect(mentionRequest("@frogbot please fix the docs\nfor this", "frogbot")).toBe(
+    expect(mentionRequest("@frogbot review", "frogbot", true)).toBe("review");
+    expect(mentionRequest("@frogbot please fix the docs\nfor this", "frogbot", false)).toBe(
       "please fix the docs\nfor this"
     );
   });
 
-  it("accepts a bare review request without the @", () => {
-    expect(mentionRequest("frogbot review please", "frogbot")).toBe("review please");
-    expect(mentionRequest("Could you\nFROGBOT review this?", "frogbot")).toBe("review this?");
+  it("accepts a bare review request without the @ on a pull request", () => {
+    expect(mentionRequest("frogbot review please", "frogbot", true)).toBe("review please");
+    expect(mentionRequest("Could you\nFROGBOT review this?", "frogbot", true)).toBe("review this?");
+  });
+
+  it("ignores the bare form on a plain issue", () => {
+    expect(mentionRequest("frogbot review this", "frogbot", false)).toBeUndefined();
   });
 
   it("requires the @ for anything other than review", () => {
-    expect(mentionRequest("frogbot please fix this", "frogbot")).toBeUndefined();
-    expect(mentionRequest("frogbot reviewed it already", "frogbot")).toBeUndefined();
+    expect(mentionRequest("frogbot please fix this", "frogbot", true)).toBeUndefined();
+    expect(mentionRequest("frogbot reviewed it already", "frogbot", true)).toBeUndefined();
   });
 
   it("requires the handle to start a word and be followed by a request", () => {
-    expect(mentionRequest("notfrogbot review", "frogbot")).toBeUndefined();
-    expect(mentionRequest("@frogbot", "frogbot")).toBeUndefined();
-    expect(mentionRequest("@frogbot   ", "frogbot")).toBeUndefined();
+    expect(mentionRequest("notfrogbot review", "frogbot", true)).toBeUndefined();
+    expect(mentionRequest("@frogbot", "frogbot", true)).toBeUndefined();
+    expect(mentionRequest("@frogbot   ", "frogbot", true)).toBeUndefined();
   });
 });

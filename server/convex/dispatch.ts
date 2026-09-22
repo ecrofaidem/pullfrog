@@ -195,7 +195,7 @@ async function handleIssueComment(ctx: ActionCtx, payload: Json) {
   const repo = await repoFor(ctx, payload);
   if (!repo) return;
   const body = String(comment.body ?? "");
-  const request = mentionRequest(body, repo.handle);
+  const request = mentionRequest(body, repo.handle, Boolean(issue.pull_request));
   if (!request) return;
   const review = Boolean(issue.pull_request) && /^review\b/i.test(request);
 

@@ -34,12 +34,13 @@ export function hasIgnoreTag(body: string | null | undefined, handle: string): b
 }
 
 /**
- * `@<handle> <request>` summons the bot by comment and returns the request text. The `@`
- * may be dropped for a bare `<handle> review`, but not for other requests, so ordinary
- * prose that names the bot does not start a task.
+ * `@<handle> <request>` summons the bot by comment and returns the request text. On a pull
+ * request the `@` may be dropped for a bare `<handle> review`; other requests, and anything on
+ * a plain issue, need the `@`, so ordinary prose that names the bot does not start a task.
  */
-export function mentionRequest(body: string, handle: string): string | undefined {
+export function mentionRequest(body: string, handle: string, bareReview: boolean): string | undefined {
   const h = escapeRegex(handle);
-  const m = new RegExp(`(^|\\s)(?:@${h}\\s+(\\S[\\s\\S]*)|${h}\\s+(review\\b[\\s\\S]*))`, "i").exec(body);
+  const bare = bareReview ? `|${h}\\s+(review\\b[\\s\\S]*)` : "";
+  const m = new RegExp(`(^|\\s)(?:@${h}\\s+(\\S[\\s\\S]*)${bare})`, "i").exec(body);
   return m?.[2] ?? m?.[3];
 }
