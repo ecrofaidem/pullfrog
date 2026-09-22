@@ -143,9 +143,10 @@ export function selectWebhook(
       const comment = object(p.comment);
       if (action !== "created" || isBot(comment.user ? object(comment.user) : undefined))
         return null;
-      // A broad candidate check supports every configurable handle. Exact matching and
-      // collaborator authorization remain in dispatch.handleIssueComment.
-      if (!/(^|\s)@\S+\s+\S/.test(text(comment.body))) return null;
+      // A broad candidate check supports every configurable handle, including the bare
+      // `<handle> review` form. Exact matching and collaborator authorization remain in
+      // dispatch.handleIssueComment.
+      if (!/(^|\s)@\S+\s+\S|(^|\s)\S+\s+review\b/i.test(text(comment.body))) return null;
       return {
         event,
         payload: {

@@ -96,6 +96,19 @@ async function request(event: string, payload: unknown, delivery = "fixture-deli
     },
   });
 }
+/** a prior review row: what makes the next push a delta from `headSha`. */
+async function seedReview(t: ReturnType<typeof convexTest>, headSha: string) {
+  await t.mutation(internal.runs.recordDispatch, {
+    owner: "owner",
+    repo: "repo",
+    dispatchId: "seed0001",
+    kind: "review",
+    trigger: "pull_request_opened",
+    prNumber: 42,
+    headSha,
+    title: "prfrog: review #42 · seed0001",
+  });
+}
 beforeEach(() => {
   vi.useFakeTimers();
   vi.stubEnv("GITHUB_WEBHOOK_SECRET", env.GITHUB_WEBHOOK_SECRET);
@@ -243,6 +256,7 @@ describe("webhook ingestion", () => {
         repo: "ecrofaidem/pullfrog@main",
         version: "0.1.67",
       });
+      if (action === "synchronize") await seedReview(t, "before");
       const req = await request("pull_request", pullRequest(action));
       expect(
         (
@@ -320,6 +334,7 @@ describe("webhook ingestion", () => {
                 : [leaf("feature"), leaf("base")];
         return Response.json({ tree, truncated: false });
       });
+      await seedReview(t, before);
       const payload = pullRequest("synchronize");
       payload.before = before;
       payload.pull_request.head.sha = head;
@@ -350,13 +365,13 @@ describe("webhook ingestion", () => {
           headSha: head,
         });
         const runs = await t.run((ctx) => ctx.db.query("runs").collect());
-        expect(runs).toHaveLength(1);
-        expect(runs[0].checkRunId).toBe(11);
+        expect(runs).toHaveLength(2);
+        expect(runs[1].checkRunId).toBe(11);
         return;
       }
       expect(github.dispatchWorkflow).not.toHaveBeenCalled();
       expect(github.addReaction).not.toHaveBeenCalled();
-      expect(await t.run((ctx) => ctx.db.query("runs").collect())).toEqual([]);
+      expect(await t.run((ctx) => ctx.db.query("runs").collect())).toHaveLength(1);
       if (statusChecks) {
         expect(github.createCheckRun).toHaveBeenCalledWith(
           expect.objectContaining({
@@ -378,6 +393,7 @@ describe("webhook ingestion", () => {
       repo: "ecrofaidem/pullfrog@main",
       version: "0.1.67",
     });
+    await seedReview(t, "a".repeat(40));
     const payload = pullRequest("synchronize");
     payload.before = "a".repeat(40);
     payload.pull_request.head.sha = "b".repeat(40);
@@ -390,6 +406,80 @@ describe("webhook ingestion", () => {
       ...selectWebhook("pull_request", payload, "pullfrog.yml")!,
     });
     expect(github.dispatchWorkflow).toHaveBeenCalledTimes(1);
+  });
+
+  async function dispatch(t: ReturnType<typeof convexTest>, event: string, payload: unknown) {
+    const id = (await t.mutation(internal.repos.ensure, { owner: "owner", name: "repo" }))._id;
+    await t.run((ctx) => ctx.db.patch(id, { handle: "custom-handle" }));
+    await t.mutation(internal.actionVersion.set, {
+      repo: "ecrofaidem/pullfrog@main",
+      version: "0.1.67",
+    });
+    await t.action(internal.dispatch.handleEvent, {
+      delivery: "direct",
+      ...selectWebhook(event, payload, "pullfrog.yml")!,
+    });
+  }
+  function envelope() {
+    return JSON.parse(vi.mocked(github.dispatchWorkflow).mock.calls[0][0].inputs.prompt);
+  }
+
+  it("reviews a push in full when the PR has no reviewed head", async () => {
+    const t = convexTest(schema, modules);
+    await dispatch(t, "pull_request", pullRequest("synchronize"));
+    expect(github.dispatchWorkflow).toHaveBeenCalledTimes(1);
+    expect(envelope().prompt).toBe("Review pull request #42.");
+    expect(envelope().event.before_sha).toBe("");
+    const runs = await t.run((ctx) => ctx.db.query("runs").collect());
+    expect(runs.map((r) => [r.kind, r.headSha])).toEqual([["review", "head"]]);
+  });
+
+  it("reviews a push as the delta since the last reviewed head, not the webhook's before", async () => {
+    const t = convexTest(schema, modules);
+    await seedReview(t, "reviewed");
+    await dispatch(t, "pull_request", pullRequest("synchronize"));
+    expect(envelope().prompt).toContain("since the previous review");
+    expect(envelope().event.before_sha).toBe("reviewed");
+    const runs = await t.run((ctx) => ctx.db.query("runs").collect());
+    expect(runs.at(-1)?.kind).toBe("incremental_review");
+  });
+
+  it.each(["opened", "ready_for_review", "synchronize"])(
+    "skips automatic %s reviews while the description carries the ignore tag",
+    async (action) => {
+      const t = convexTest(schema, modules);
+      await seedReview(t, "before");
+      const payload = pullRequest(action);
+      payload.pull_request.body = "WIP\n\n<!-- custom-handle ignore -->";
+      await dispatch(t, "pull_request", payload);
+      expect(github.dispatchWorkflow).not.toHaveBeenCalled();
+    },
+  );
+
+  it("still reviews an ignored PR when asked by comment, with or without the @", async () => {
+    for (const body of ["@custom-handle review", "custom-handle review"]) {
+      vi.resetAllMocks();
+      const t = convexTest(schema, modules);
+      vi.mocked(github.getPullRequest).mockResolvedValue({
+        number: 42,
+        title: "PR",
+        body: "<!-- custom-handle ignore -->",
+        state: "open",
+        draft: false,
+        head: { ref: "branch", sha: "head" },
+      } as never);
+      await dispatch(t, "issue_comment", comment(body));
+      expect(github.dispatchWorkflow).toHaveBeenCalledTimes(1);
+      expect(envelope().prompt).toContain("Review pull request #42");
+    }
+  });
+
+  it("does not take a bare `<handle> review` on a plain issue as a task", async () => {
+    const t = convexTest(schema, modules);
+    const payload = comment("custom-handle review this");
+    payload.issue = { number: 42, title: "Issue title", body: "Issue context" } as never;
+    await dispatch(t, "issue_comment", payload);
+    expect(github.dispatchWorkflow).not.toHaveBeenCalled();
   });
 
   it("keeps exact handle and collaborator checks in the backend", async () => {
