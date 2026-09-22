@@ -27,6 +27,10 @@ export const runtimeSecretPut = httpAction(async (ctx, request) => {
   if (!body || typeof body.name !== "string" || typeof body.value !== "string") {
     return error(400, "expected { name, value }");
   }
+  if (body.name === "CODEX_AUTH_JSON") {
+    const pool = await ctx.runQuery(internal.codexAccounts.getPool, { owner: run.owner, repo: run.repo });
+    if (pool?.enabled) return error(409, "Pooled credentials require assignment finalization");
+  }
   if (body.name === "CODEX_AUTH_JSON" && !parseCodexAuthBody(body.value)) {
     return error(400, "CODEX_AUTH_JSON value is not a Codex auth.json body");
   }

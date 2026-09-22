@@ -18,6 +18,7 @@ export interface ActionsIdentity {
   owner: string;
   repo: string;
   runId: string;
+  runAttempt: string;
   ref: string;
   runnerEnvironment: string;
   actor: string | undefined;
@@ -37,6 +38,7 @@ export async function verifyActionsOidc(token: string): Promise<ActionsIdentity>
     owner,
     repo,
     runId: String(claims.run_id ?? ""),
+    runAttempt: typeof claims.run_attempt === "string" ? claims.run_attempt : "",
     ref: String(claims.ref ?? ""),
     runnerEnvironment: String(claims.runner_environment ?? ""),
     actor: typeof claims.actor === "string" ? claims.actor : undefined,

@@ -6,16 +6,23 @@
   "scripts": {
     "dev": "convex dev",
     "deploy": "convex deploy",
+    "deploy:webhook": "wrangler deploy",
+    "test": "vitest run",
     "codegen": "convex codegen",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@convex-dev/better-auth": "^0.12.5",
     "better-auth": "~1.6.15",
-    "convex": "^1.45.0"
+    "convex": "^1.45.0",
+    "node-diff3": "3.2.1"
   },
   "devDependencies": {
+    "@edge-runtime/vm": "^5.0.0",
     "@types/node": "^24.0.0",
-    "typescript": "^5.9.0"
+    "convex-test": "^0.0.56",
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.129.1"
   }
 }

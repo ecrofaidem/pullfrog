@@ -33,7 +33,13 @@ export function hasIgnoreTag(body: string | null | undefined, handle: string): b
   return new RegExp(`<(?:!--\\s*)?${h}\\s+ignore\\s*(?:--)?>`, "i").test(body ?? "");
 }
 
-/** `@<handle> review` summons the bot by comment; the `@` is optional so `frogbot review` also works. */
-export function mentionRegex(handle: string): RegExp {
-  return new RegExp(`(^|\\s)@?${escapeRegex(handle)}\\s+review\\b`, "i");
+/**
+ * `@<handle> <request>` summons the bot by comment and returns the request text. The `@`
+ * may be dropped for a bare `<handle> review`, but not for other requests, so ordinary
+ * prose that names the bot does not start a task.
+ */
+export function mentionRequest(body: string, handle: string): string | undefined {
+  const h = escapeRegex(handle);
+  const m = new RegExp(`(^|\\s)(?:@${h}\\s+(\\S[\\s\\S]*)|${h}\\s+(review\\b[\\s\\S]*))`, "i").exec(body);
+  return m?.[2] ?? m?.[3];
 }

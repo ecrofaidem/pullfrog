@@ -1,4 +1,4 @@
-// Turns GitHub webhook events into action runs. Review policy lives here:
+// Turns GitHub webhook events into action runs. Dispatch policy lives here:
 // which PRs get reviewed, who may summon the bot by comment, and what the
 // action is told about the event.
 
@@ -8,8 +8,9 @@ import { internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { actionWorkflow, resolveActionVersion } from "./actionVersion";
-import { buildEnvelope, buildReviewEvent, type ReviewTrigger } from "./lib/envelope";
-import { hasIgnoreTag, isBot, mentionRegex, shouldIgnorePullRequestEvent } from "./reviewPolicy";
+import { buildEnvelope, buildRunEvent, type RunTrigger } from "./lib/envelope";
+import { isBaseOnlyMerge } from "./lib/baseMerge";
+import { hasIgnoreTag, isBot, mentionRequest, shouldIgnorePullRequestEvent } from "./reviewPolicy";
 import {
   addReaction,
   collaboratorPermission,
@@ -20,7 +21,9 @@ import {
   findRepoInstallation,
   getPullRequest,
   getWorkflowRun,
+  type WorkflowRunInfo,
 } from "./lib/github";
+import { selectWebhook } from "./lib/webhookEvent";
 
 /** the check-run name the action finalizes; it is also what branch protection matches on. */
 const RUN_STATUS_CHECK_NAME = "pullfrog";
@@ -28,8 +31,13 @@ const RUN_STATUS_CHECK_NAME = "pullfrog";
 type Json = Record<string, any>;
 
 export const handleEvent = internalAction({
-  args: { event: v.string(), delivery: v.string(), payload: v.any() },
-  handler: async (ctx, args) => {
+  args: {
+    event: v.string(),
+    delivery: v.string(),
+    payload: v.any(),
+    retry: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<void> => {
     const payload = args.payload as Json;
     switch (args.event) {
       case "installation":
@@ -41,7 +49,23 @@ export const handleEvent = internalAction({
       case "issue_comment":
         return handleIssueComment(ctx, payload);
       case "workflow_run":
-        return handleWorkflowRun(ctx, payload);
+        try {
+          await handleWorkflowRun(ctx, payload);
+        } catch (error) {
+          const retry = args.retry ?? 0;
+          if (retry >= 2) throw error;
+          const selected = selectWebhook(args.event, payload, actionWorkflow());
+          if (!selected) return;
+          // Lifecycle reconciliation is idempotent. Review dispatch and
+          // installation deltas deliberately do not enter this retry path.
+          await ctx.scheduler.runAfter(5_000 * 6 ** retry, internal.dispatch.handleEvent, {
+            ...args,
+            payload: selected.payload,
+            retry: retry + 1,
+          });
+          console.warn(`Retrying workflow state for delivery ${args.delivery}: ${String(error)}`);
+        }
+        return;
       default:
         return;
     }
@@ -113,7 +137,7 @@ async function repoFor(ctx: ActionCtx, payload: Json): Promise<Doc<"repos"> | nu
 
 async function handlePullRequest(ctx: ActionCtx, payload: Json) {
   const action = String(payload.action);
-  const triggers: Record<string, ReviewTrigger> = {
+  const triggers: Record<string, RunTrigger> = {
     opened: "pull_request_opened",
     ready_for_review: "pull_request_ready_for_review",
     synchronize: "pull_request_synchronize",
@@ -140,37 +164,45 @@ async function handlePullRequest(ctx: ActionCtx, payload: Json) {
     ? `New commits were pushed to pull request #${number}. Review the changes since the previous review.`
     : `Review pull request #${number}.`;
 
-  await dispatchReview(ctx, {
+  await dispatchRun(ctx, {
     repo,
     trigger,
     kind: incremental ? "incremental_review" : "review",
-    pr: {
+    issue: {
       number,
       title: String(pr.title ?? ""),
       body: (pr.body as string | null) ?? null,
+    },
+    pr: {
       headRef: String(pr.head?.ref ?? ""),
       headSha: String(pr.head?.sha ?? ""),
     },
     triggerer: String(payload.sender?.login ?? pr.user.login),
     prompt,
-    ...(incremental ? { beforeSha: String(payload.before ?? "") } : {}),
+    ...(incremental
+      ? { beforeSha: String(payload.before ?? ""), baseSha: String(pr.base?.sha ?? "") }
+      : {}),
   });
 }
 
 async function handleIssueComment(ctx: ActionCtx, payload: Json) {
   if (payload.action !== "created") return;
   const issue = payload.issue as Json;
-  if (!issue?.pull_request) return;
+  if (!issue) return;
   const comment = payload.comment as Json;
   if (isBot(comment.user)) return;
 
   const repo = await repoFor(ctx, payload);
   if (!repo) return;
-  if (!mentionRegex(repo.handle).test(String(comment.body ?? ""))) return;
+  const body = String(comment.body ?? "");
+  const request = mentionRequest(body, repo.handle);
+  if (!request) return;
+  const review = Boolean(issue.pull_request) && /^review\b/i.test(request);
 
   const installation = await findRepoInstallation(repo.owner, repo.name);
   if (!installation) return;
-  const token = (await createInstallationToken(installation.id, { repositories: [repo.name] })).token;
+  const token = (await createInstallationToken(installation.id, { repositories: [repo.name] }))
+    .token;
 
   const commenter = String(comment.user.login);
   const permission = await collaboratorPermission({
@@ -182,8 +214,16 @@ async function handleIssueComment(ctx: ActionCtx, payload: Json) {
   if (!["admin", "maintain", "write"].includes(permission)) return;
 
   const number = Number(issue.number);
-  const pr = await getPullRequest({ token, owner: repo.owner, repo: repo.name, number });
-  if (pr.draft) return;
+  const pr = issue.pull_request
+    ? await getPullRequest({ token, owner: repo.owner, repo: repo.name, number })
+    : undefined;
+  if (review && pr?.draft) return;
+
+  const target = pr ? `pull request #${number}` : `issue #${number}`;
+  const branchInstruction =
+    pr && pr.state !== "open"
+      ? " If changes are requested, open a follow-up PR from the default branch because this PR is closed."
+      : "";
 
   await addReaction({
     token,
@@ -193,19 +233,20 @@ async function handleIssueComment(ctx: ActionCtx, payload: Json) {
     content: "eyes",
   }).catch(() => undefined);
 
-  await dispatchReview(ctx, {
+  await dispatchRun(ctx, {
     repo,
     trigger: "issue_comment_created",
-    kind: "review",
-    pr: {
+    kind: review ? "review" : "task",
+    issue: {
       number,
-      title: pr.title,
-      body: pr.body,
-      headRef: pr.head.ref,
-      headSha: pr.head.sha,
+      title: pr?.title ?? String(issue.title ?? ""),
+      body: pr ? pr.body : (issue.body as string | null) ?? null,
     },
+    ...(pr ? { pr: { headRef: pr.head.ref, headSha: pr.head.sha } } : {}),
     triggerer: commenter,
-    prompt: `Review pull request #${number}, as requested in the comment below.\n\n${String(comment.body ?? "")}`,
+    prompt: review
+      ? `Review pull request #${number}, as requested in the comment below.\n\n${body}`
+      : `Handle the request below for ${target}.${branchInstruction}\n\n${body}`,
     commentId: Number(comment.id),
     token,
     authorPermission: permission,
@@ -214,22 +255,24 @@ async function handleIssueComment(ctx: ActionCtx, payload: Json) {
 
 // ── dispatch ─────────────────────────────────────────────────────────────────
 
-interface DispatchReviewParams {
+interface DispatchRunParams {
   repo: Doc<"repos">;
-  trigger: ReviewTrigger;
+  trigger: RunTrigger;
   kind: string;
-  pr: { number: number; title: string; body: string | null; headRef: string; headSha: string };
+  issue: { number: number; title: string; body: string | null };
+  pr?: { headRef: string; headSha: string };
   triggerer: string;
   prompt: string;
   beforeSha?: string;
+  baseSha?: string;
   commentId?: number;
   /** already-minted installation token and resolved permission, when the caller has them */
   token?: string;
   authorPermission?: Awaited<ReturnType<typeof collaboratorPermission>>;
 }
 
-async function dispatchReview(ctx: ActionCtx, params: DispatchReviewParams) {
-  const { repo, pr } = params;
+async function dispatchRun(ctx: ActionCtx, params: DispatchRunParams) {
+  const { repo, issue, pr } = params;
   let token = params.token;
   if (!token) {
     const installation = await findRepoInstallation(repo.owner, repo.name);
@@ -238,6 +281,39 @@ async function dispatchReview(ctx: ActionCtx, params: DispatchReviewParams) {
       return;
     }
     token = (await createInstallationToken(installation.id, { repositories: [repo.name] })).token;
+  }
+  if (
+    params.trigger === "pull_request_synchronize" &&
+    pr &&
+    (await isBaseOnlyMerge({
+      token,
+      owner: repo.owner,
+      repo: repo.name,
+      beforeSha: params.beforeSha ?? "",
+      headSha: pr.headSha,
+      baseSha: params.baseSha ?? "",
+    }))
+  ) {
+    // Resolve the check on this SHA so repositories requiring it are not left waiting.
+    try {
+      if (repo.statusChecks) {
+        await createCheckRun({
+          token,
+          owner: repo.owner,
+          repo: repo.name,
+          name: RUN_STATUS_CHECK_NAME,
+          headSha: pr.headSha,
+          skippedSummary:
+            "Review skipped: this update only merges the PR base branch, with no conflicts or additional changes.",
+        });
+      }
+      console.log(
+        `Skipping base-only merge review for ${repo.owner}/${repo.name}#${issue.number} at ${pr.headSha}`,
+      );
+      return;
+    } catch (err) {
+      console.warn(`skipped check-run creation failed, dispatching review: ${String(err)}`);
+    }
   }
   const authorPermission =
     params.authorPermission ??
@@ -249,10 +325,11 @@ async function dispatchReview(ctx: ActionCtx, params: DispatchReviewParams) {
     }));
 
   const dispatchId = crypto.randomUUID().replace(/-/g, "").slice(0, 8);
-  const title = `${repo.handle}: review #${pr.number} · ${dispatchId}`;
+  const kind = params.kind === "task" ? "task" : "review";
+  const title = `${repo.handle}: ${kind} ${pr ? "" : "issue "}#${issue.number} · ${dispatchId}`;
 
   let checkRunId: number | undefined;
-  if (repo.statusChecks && pr.headSha) {
+  if (repo.statusChecks && pr?.headSha) {
     try {
       checkRunId = (
         await createCheckRun({
@@ -269,12 +346,12 @@ async function dispatchReview(ctx: ActionCtx, params: DispatchReviewParams) {
   }
 
   const version = await resolveActionVersion(ctx);
-  const event = buildReviewEvent({
+  const event = buildRunEvent({
     trigger: params.trigger,
-    prNumber: pr.number,
-    title: pr.title,
-    body: pr.body,
-    branch: pr.headRef,
+    issueNumber: issue.number,
+    title: issue.title,
+    body: issue.body,
+    ...(pr ? { branch: pr.headRef } : {}),
     authorPermission,
     ...(params.beforeSha !== undefined ? { beforeSha: params.beforeSha } : {}),
     ...(params.commentId !== undefined ? { commentId: params.commentId } : {}),
@@ -294,8 +371,7 @@ async function dispatchReview(ctx: ActionCtx, params: DispatchReviewParams) {
     dispatchId,
     kind: params.kind,
     trigger: params.trigger,
-    prNumber: pr.number,
-    prTitle: pr.title,
+    ...(pr ? { prNumber: issue.number, prTitle: issue.title } : {}),
     triggerer: params.triggerer,
     title,
     ...(checkRunId !== undefined ? { checkRunId } : {}),
@@ -331,15 +407,18 @@ async function dispatchReview(ctx: ActionCtx, params: DispatchReviewParams) {
 
 const DISPATCH_ID_RE = /· ([a-z0-9]{8})$/;
 
-async function resolveRunTitle(owner: string, repo: string, runId: number): Promise<string | null> {
+async function resolveWorkflowRun(
+  owner: string,
+  repo: string,
+  runId: number,
+): Promise<WorkflowRunInfo | null> {
   try {
     const installation = await findRepoInstallation(owner, repo);
     if (!installation) return null;
     const token = (await createInstallationToken(installation.id, { repositories: [repo] })).token;
-    const info = await getWorkflowRun({ token, owner, repo, runId });
-    return info?.display_title ?? null;
+    return await getWorkflowRun({ token, owner, repo, runId });
   } catch (err) {
-    console.warn(`could not resolve run title for ${owner}/${repo}#${runId}: ${String(err)}`);
+    console.warn(`could not resolve run for ${owner}/${repo}#${runId}: ${String(err)}`);
     return null;
   }
 }
@@ -352,29 +431,32 @@ export const relinkOrphans = internalAction({
     let relinked = 0;
     let unresolved = 0;
     for (const row of orphans) {
-      const title = await resolveRunTitle(args.owner, args.repo, row.githubRunId!);
-      const dispatchId = title ? DISPATCH_ID_RE.exec(title)?.[1] : undefined;
-      if (!dispatchId) {
+      const current = await resolveWorkflowRun(args.owner, args.repo, row.githubRunId!);
+      const dispatchId = current ? DISPATCH_ID_RE.exec(current.display_title)?.[1] : undefined;
+      if (!current || !dispatchId || !Number.isInteger(current.run_attempt)) {
         unresolved += 1;
         continue;
       }
-      await ctx.runMutation(internal.runs.observeWorkflowRun, {
-        owner: args.owner,
-        repo: args.repo,
-        dispatchId,
-        githubRunId: row.githubRunId!,
-        htmlUrl: row.htmlUrl ?? "",
-        title: title!,
-        status: row.status,
-        ...(row.conclusion ? { conclusion: row.conclusion } : {}),
-      });
+      await handleWorkflowRun(
+        ctx,
+        {
+          repository: { name: args.repo, owner: { login: args.owner } },
+          action: current.status,
+          workflow_run: { ...current, path: `.github/workflows/${actionWorkflow()}` },
+        },
+        true,
+      );
       relinked += 1;
     }
     return { relinked, unresolved };
   },
 });
 
-async function handleWorkflowRun(ctx: ActionCtx, payload: Json) {
+async function handleWorkflowRun(
+  ctx: ActionCtx,
+  payload: Json,
+  currentAttemptVerified = false,
+): Promise<void> {
   const run = payload.workflow_run as Json;
   const path = String(run?.path ?? "");
   if (!path.endsWith(`/${actionWorkflow()}`)) return;
@@ -384,12 +466,13 @@ async function handleWorkflowRun(ctx: ActionCtx, payload: Json) {
   const name = String(repository.name ?? "");
   let title = String(run.display_title ?? run.name ?? "");
   let dispatchId = DISPATCH_ID_RE.exec(title)?.[1];
+  let current: WorkflowRunInfo | null = null;
   // the webhook's display_title is the workflow name for a workflow_dispatch
   // run; the API has the real run-name, which carries our dispatch id.
-  if (!dispatchId) {
-    const resolved = await resolveRunTitle(owner, name, Number(run.id));
-    if (resolved) {
-      title = resolved;
+  if (!dispatchId && !currentAttemptVerified) {
+    current = await resolveWorkflowRun(owner, name, Number(run.id));
+    if (current) {
+      title = current.display_title;
       dispatchId = DISPATCH_ID_RE.exec(title)?.[1];
     }
   }
@@ -407,14 +490,31 @@ async function handleWorkflowRun(ctx: ActionCtx, payload: Json) {
         ? "in_progress"
         : "queued";
 
-  await ctx.runMutation(internal.runs.observeWorkflowRun, {
+  const observed = await ctx.runMutation(internal.runs.observeWorkflowRun, {
     owner,
     repo: name,
     ...(dispatchId ? { dispatchId } : {}),
     githubRunId: Number(run.id),
+    githubRunAttempt: Number(run.run_attempt ?? 1),
+    currentAttemptVerified,
     htmlUrl: String(run.html_url ?? ""),
     title,
     status,
     ...(conclusion ? { conclusion } : {}),
   });
+  if (observed === null) {
+    current ??= await resolveWorkflowRun(owner, name, Number(run.id));
+    if (!current || !Number.isInteger(current.run_attempt)) {
+      throw new Error(`Cannot establish the current GitHub attempt for ${owner}/${name}#${run.id}`);
+    }
+    await handleWorkflowRun(
+      ctx,
+      {
+        repository,
+        action: current.status,
+        workflow_run: { ...current, path },
+      },
+      true,
+    );
+  }
 }

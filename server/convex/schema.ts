@@ -18,6 +18,20 @@ export const runStatus = v.union(
   v.literal("cancelled")
 );
 
+const codexWeeklyUsage = v.object({
+  plan: v.optional(v.string()), usedPercent: v.number(), windowSeconds: v.number(), resetAt: v.number(),
+});
+export const codexQuotaResult = v.union(
+  v.object({ status: v.union(v.literal("available"), v.literal("exhausted")), weekly: codexWeeklyUsage }),
+  v.object({ status: v.literal("authentication") }),
+  v.object({ status: v.literal("provider_denied"), weekly: v.optional(codexWeeklyUsage) }),
+  v.object({ status: v.literal("unknown"), reason: v.union(
+    v.literal("malformed"), v.literal("http"), v.literal("timeout"), v.literal("network"), v.literal("aborted"),
+  ) }),
+);
+
+export const codexDenialReason = v.union(v.literal("busy"), v.literal("exhausted"), v.literal("authentication"), v.literal("configuration"), v.literal("unknown"));
+
 export default defineSchema({
   /** one row per GitHub account the App is installed on. */
   installations: defineTable({
@@ -81,6 +95,60 @@ export default defineSchema({
     leaseUntil: v.optional(v.number()),
   }).index("by_scope_name", ["owner", "repo", "name"]),
 
+  /** Canonical subscription identity; pooled credentials never enter legacy visibleTo. */
+  codexAccounts: defineTable({
+    owner: v.string(),
+    repo: v.union(v.string(), v.null()),
+    label: v.string(),
+    providerAccountId: v.string(),
+    generation: v.number(),
+    credentialVersion: v.number(),
+    ciphertext: v.string(),
+    iv: v.string(),
+    enabled: v.boolean(),
+    authState: v.union(v.literal("ready"), v.literal("rejected"), v.literal("uncertain")),
+    /** Occupancy survives reenrollment until the owning execution has stopped. */
+    activeAssignmentId: v.optional(v.string()),
+    activeOwnershipToken: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_owner_provider", ["owner", "providerAccountId"])
+    .index("by_scope", ["owner", "repo"]),
+
+  /** Durable attempt ownership; v2 hands out access tokens and locks only preflight. */
+  codexAssignments: defineTable({
+    owner: v.string(), repo: v.string(), runId: v.string(), runAttempt: v.string(),
+    runtimeInstance: v.string(), accountId: v.id("codexAccounts"),
+    generation: v.number(), credentialVersion: v.number(), ownershipToken: v.string(),
+    accountAlias: v.string(),
+    accessOnly: v.optional(v.boolean()),
+    phase: v.union(v.literal("reserved"), v.literal("refreshing"), v.literal("active"), v.literal("released"), v.literal("quarantined")),
+    denialReason: v.optional(codexDenialReason), retryAt: v.optional(v.number()),
+    /** Permanent receipt distinguishes completion from a retryable preflight skip. */
+    finalizationStatus: v.optional(v.union(v.literal("released"), v.literal("quarantined"), v.literal("stale"))),
+    createdAt: v.number(), updatedAt: v.number(),
+  }).index("by_attempt", ["owner", "repo", "runId", "runAttempt"])
+    .index("by_finalization", ["finalizationStatus"]),
+
+  /** Latest observation only; generation and credential version are part of its validity. */
+  codexQuotaObservations: defineTable({
+    accountId: v.id("codexAccounts"),
+    generation: v.number(),
+    credentialVersion: v.number(),
+    observedAt: v.number(),
+    result: codexQuotaResult,
+  }).index("by_account", ["accountId"]),
+
+  /** Explicit ordered membership. Creating a configuration does not activate it. */
+  codexPools: defineTable({
+    owner: v.string(),
+    repo: v.string(),
+    accountIds: v.array(v.id("codexAccounts")),
+    enabled: v.boolean(),
+    updatedAt: v.number(),
+  }).index("by_repo", ["owner", "repo"]),
+
   /** one row per dispatched or observed action run. */
   runs: defineTable({
     owner: v.string(),
@@ -88,6 +156,7 @@ export default defineSchema({
     /** short id we bake into the run-name so workflow_run webhooks can find us */
     dispatchId: v.optional(v.string()),
     githubRunId: v.optional(v.number()),
+    githubRunAttempt: v.optional(v.number()),
     htmlUrl: v.optional(v.string()),
     kind: v.string(),
     trigger: v.string(),
@@ -119,6 +188,7 @@ export default defineSchema({
   })
     .index("by_repo", ["owner", "repo", "createdAt"])
     .index("by_repo_pr", ["owner", "repo", "prNumber"])
+    .index("by_repo_status", ["owner", "repo", "status", "createdAt"])
     .index("by_github_run", ["githubRunId"])
     .index("by_dispatch", ["dispatchId"]),
 
@@ -132,7 +202,7 @@ export default defineSchema({
     fetchedAt: v.number(),
   }).index("by_secret", ["secretId"]),
 
-  /** GitHub redelivers on any non-2xx; this makes a redelivery a no-op. */
+  /** Deduplication for manual or automated webhook redeliveries. Expires after seven days. */
   webhookDeliveries: defineTable({
     deliveryId: v.string(),
     receivedAt: v.number(),

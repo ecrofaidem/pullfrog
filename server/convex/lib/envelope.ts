@@ -5,18 +5,19 @@
 
 import type { AuthorPermission } from "./github";
 
-export type ReviewTrigger =
+export type RunTrigger =
   | "pull_request_opened"
   | "pull_request_ready_for_review"
   | "pull_request_synchronize"
   | "issue_comment_created";
 
-export interface ReviewEventInput {
-  trigger: ReviewTrigger;
-  prNumber: number;
+export interface RunEventInput {
+  trigger: RunTrigger;
+  issueNumber: number;
   title: string;
   body: string | null;
-  branch: string;
+  /** Present only for pull requests. */
+  branch?: string;
   authorPermission: AuthorPermission;
   /** synchronize only */
   beforeSha?: string;
@@ -24,14 +25,13 @@ export interface ReviewEventInput {
   commentId?: number;
 }
 
-export function buildReviewEvent(input: ReviewEventInput): Record<string, unknown> {
+export function buildRunEvent(input: RunEventInput): Record<string, unknown> {
   const base = {
     trigger: input.trigger,
-    issue_number: input.prNumber,
-    is_pr: true,
+    issue_number: input.issueNumber,
     title: input.title,
     body: input.body,
-    branch: input.branch,
+    ...(input.branch !== undefined ? { is_pr: true, branch: input.branch } : {}),
     authorPermission: input.authorPermission,
   };
   if (input.trigger === "pull_request_synchronize") {

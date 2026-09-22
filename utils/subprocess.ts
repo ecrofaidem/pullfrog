@@ -129,6 +129,8 @@ export interface SpawnOptions {
   cwd?: string;
   stdio?: ("pipe" | "ignore" | "inherit")[];
   onStdout?: (chunk: string) => void;
+  /** Fires only after the child has exited and its stdio has closed. */
+  onClose?: () => void;
   onStderr?: (chunk: string) => void;
   // when true, spawn the child detached (its own process group) and route all
   // kill paths (timeout, activity timeout, ctrl-c) through `process.kill(-pid, ...)`
@@ -355,6 +357,13 @@ export async function spawn(options: SpawnOptions): Promise<SpawnResult> {
       if (timeoutId) clearTimeout(timeoutId);
       if (sigkillEscalatorId) clearTimeout(sigkillEscalatorId);
       if (activityCheckIntervalId) clearInterval(activityCheckIntervalId);
+
+      try {
+        options.onClose?.();
+      } catch (error) {
+        reject(error);
+        return;
+      }
 
       if (isTimedOut) {
         reject(

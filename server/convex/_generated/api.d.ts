@@ -10,11 +10,15 @@
 
 import type * as actionVersion from "../actionVersion.js";
 import type * as auth from "../auth.js";
+import type * as codexAccounts from "../codexAccounts.js";
+import type * as codexAssignments from "../codexAssignments.js";
+import type * as codexQuota from "../codexQuota.js";
 import type * as configKeys from "../configKeys.js";
 import type * as crons from "../crons.js";
 import type * as dispatch from "../dispatch.js";
 import type * as handlers_cliConfig from "../handlers/cliConfig.js";
 import type * as handlers_cliSecrets from "../handlers/cliSecrets.js";
+import type * as handlers_codexPool from "../handlers/codexPool.js";
 import type * as handlers_installationToken from "../handlers/installationToken.js";
 import type * as handlers_runContext from "../handlers/runContext.js";
 import type * as handlers_runtimeSecret from "../handlers/runtimeSecret.js";
@@ -23,7 +27,10 @@ import type * as handlers_workflowRun from "../handlers/workflowRun.js";
 import type * as health from "../health.js";
 import type * as http from "../http.js";
 import type * as lib_base64 from "../lib/base64.js";
+import type * as lib_baseMerge from "../lib/baseMerge.js";
+import type * as lib_codexIdentity from "../lib/codexIdentity.js";
 import type * as lib_codexOAuth from "../lib/codexOAuth.js";
+import type * as lib_codexPool from "../lib/codexPool.js";
 import type * as lib_codexRefresh from "../lib/codexRefresh.js";
 import type * as lib_crypto from "../lib/crypto.js";
 import type * as lib_envelope from "../lib/envelope.js";
@@ -33,11 +40,16 @@ import type * as lib_jwt from "../lib/jwt.js";
 import type * as lib_oauthShared from "../lib/oauthShared.js";
 import type * as lib_oidc from "../lib/oidc.js";
 import type * as lib_runToken from "../lib/runToken.js";
+import type * as lib_webhookEvent from "../lib/webhookEvent.js";
+import type * as lib_webhookRecovery from "../lib/webhookRecovery.js";
 import type * as me from "../me.js";
 import type * as repos from "../repos.js";
+import type * as reviewPolicy from "../reviewPolicy.js";
 import type * as runs from "../runs.js";
 import type * as secrets from "../secrets.js";
 import type * as usage from "../usage.js";
+import type * as webhookRecovery from "../webhookRecovery.js";
+import type * as webhooks from "../webhooks.js";
 
 import type {
   ApiFromModules,
@@ -48,11 +60,15 @@ import type {
 declare const fullApi: ApiFromModules<{
   actionVersion: typeof actionVersion;
   auth: typeof auth;
+  codexAccounts: typeof codexAccounts;
+  codexAssignments: typeof codexAssignments;
+  codexQuota: typeof codexQuota;
   configKeys: typeof configKeys;
   crons: typeof crons;
   dispatch: typeof dispatch;
   "handlers/cliConfig": typeof handlers_cliConfig;
   "handlers/cliSecrets": typeof handlers_cliSecrets;
+  "handlers/codexPool": typeof handlers_codexPool;
   "handlers/installationToken": typeof handlers_installationToken;
   "handlers/runContext": typeof handlers_runContext;
   "handlers/runtimeSecret": typeof handlers_runtimeSecret;
@@ -61,7 +77,10 @@ declare const fullApi: ApiFromModules<{
   health: typeof health;
   http: typeof http;
   "lib/base64": typeof lib_base64;
+  "lib/baseMerge": typeof lib_baseMerge;
+  "lib/codexIdentity": typeof lib_codexIdentity;
   "lib/codexOAuth": typeof lib_codexOAuth;
+  "lib/codexPool": typeof lib_codexPool;
   "lib/codexRefresh": typeof lib_codexRefresh;
   "lib/crypto": typeof lib_crypto;
   "lib/envelope": typeof lib_envelope;
@@ -71,11 +90,16 @@ declare const fullApi: ApiFromModules<{
   "lib/oauthShared": typeof lib_oauthShared;
   "lib/oidc": typeof lib_oidc;
   "lib/runToken": typeof lib_runToken;
+  "lib/webhookEvent": typeof lib_webhookEvent;
+  "lib/webhookRecovery": typeof lib_webhookRecovery;
   me: typeof me;
   repos: typeof repos;
+  reviewPolicy: typeof reviewPolicy;
   runs: typeof runs;
   secrets: typeof secrets;
   usage: typeof usage;
+  webhookRecovery: typeof webhookRecovery;
+  webhooks: typeof webhooks;
 }>;
 
 /**

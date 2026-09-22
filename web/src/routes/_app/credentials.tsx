@@ -7,10 +7,11 @@ import { useMutation } from "convex/react";
 import { useState } from "react";
 import { api } from "@server/_generated/api";
 import type { SecretStatus } from "@server/secrets";
+import type { CodexPoolStatus } from "../../../../utils/codexPoolProtocol";
 import { ArrowOut, Check, CopyIcon, Dot, HeadGlyph } from "~/components/glyphs";
 import { SheetSkeleton } from "~/components/skeleton";
 import { relative, stamp } from "~/lib/format";
-import { deriveHealth, describeUsage, reseedCommand } from "~/lib/health";
+import { deriveHealth, describePoolAccount, describeUsage, reseedCommand } from "~/lib/health";
 import { useNow } from "~/lib/now";
 import { fullName, healthQuery, pickRepo, reposQuery, secretsQuery, useCurrentRepo } from "~/lib/repo";
 
@@ -36,12 +37,17 @@ function CredentialsPage() {
   const now = useNow();
   const health = deriveHealth(healthData, now);
   const chain = healthData.chain;
-  const others = secrets.filter((s) => s.name !== "CODEX_AUTH_JSON");
+  const pooled = healthData.codexPool?.pool?.enabled;
+  const others = secrets.filter((s) => s.name !== "CODEX_AUTH_JSON" &&
+    !(pooled && ["CODEX_API_KEY", "OPENAI_API_KEY"].includes(s.name)));
 
   return (
     <div className="max-w-[60ch]">
       <h1 className="sr-only">Credentials for {fullName(repo)}</h1>
-      <section aria-labelledby="chain-heading">
+      {healthData.codexPool && (healthData.codexPool.pool || healthData.codexPool.accounts.length > 0) && (
+        <CodexPoolAccounts status={healthData.codexPool} now={now} />
+      )}
+      {!pooled && <section aria-labelledby="chain-heading">
         <h2 id="chain-heading" className="text-lg font-semibold tracking-[-0.01em]">
           ChatGPT login
         </h2>
@@ -115,7 +121,7 @@ function CredentialsPage() {
             <Reseed expanded={health.kind === "cut" || health.kind === "missing"} healthy={health.kind !== "cut" && health.kind !== "missing"} />
           </div>
         </div>
-      </section>
+      </section>}
 
       <section className="mt-12" aria-labelledby="others-heading">
         {others.length === 0 ? (
@@ -145,6 +151,33 @@ function CredentialsPage() {
         )}
       </section>
     </div>
+  );
+}
+
+function CodexPoolAccounts({ status, now }: { status: CodexPoolStatus; now: number | null }) {
+  return (
+    <section className="mb-10" aria-labelledby="pool-heading">
+      <h2 id="pool-heading" className="text-lg font-semibold tracking-[-0.01em]">Codex accounts</h2>
+      <p className="mt-1 text-sm text-ink-2">
+        {status.pool?.enabled ? "Pool enabled. Each run uses the first available account in pool order." : "Pool disabled. Named accounts are ready to configure; runs use the existing login settings."}
+      </p>
+      <ul className="mt-4 divide-y divide-hair border-y border-hair">
+        {status.accounts.map((account) => {
+          const position = status.pool?.accountIds.indexOf(account.id) ?? -1;
+          return (
+            <li key={account.id} className="py-3">
+              <p className="font-medium">{account.label}</p>
+              <p className="mt-0.5 text-sm text-ink-2">{describePoolAccount(account, now)}</p>
+              <p className="mt-1 text-xs text-ink-3">
+                {position >= 0 ? `Pool position ${position + 1}` : "Outside this pool"} · {account.repo === null ? "Shared account scope" : "This repository"}
+              </p>
+              <code className="break-all text-xs text-ink-3">{account.id}</code>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="mt-3 text-sm text-ink-2">Manage accounts with <code>pullfrog auth codex --help</code>.</p>
+    </section>
   );
 }
 

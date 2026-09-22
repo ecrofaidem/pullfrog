@@ -1,6 +1,26 @@
+import { type } from "arktype";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_PROXY_MODEL, modelAliases, resolveDisplayAlias } from "../models.ts";
-import { ZEN_UNDEPLOYED } from "./coverage.ts";
+
+/**
+ * models Zen LISTS in `/zen/v1/models` but will not actually serve — the
+ * endpoint answers 400 `[NOT_FOUND] ... not deployed`. Membership is not
+ * availability, and the catalog checks read membership, so without this they
+ * stay green on a dead model AND actively block the fix: `opencode mirrors
+ * don't trail their siblings` reads the same list, so it forces a mirror onto
+ * an undeployed build and rejects the step down to a served one.
+ *
+ * Deliberately a hand-maintained literal rather than a live probe. `test:catalog`
+ * is the release gate in `push-to-action.yml` precisely because it makes no
+ * provider calls; adding them would hand any mute provider a veto over shipping.
+ * Add an entry when `models-live` — which does call the model — catches one,
+ * and delete it once the model completes a run again.
+ */
+const ZEN_UNDEPLOYED: string[] = [
+  // 2026-08-28: 400 `[NOT_FOUND] ... not deployed` on both Zen tiers, while
+  // kimi-k2.6 and kimi-k3 answer 200 on the same key.
+  "kimi-k2.7-code",
+];
 
 // ── catalog drift tests ─────────────────────────────────────────────────────
 //
@@ -109,12 +129,24 @@ describe("openRouterResolve models.dev validity", async () => {
 // fetching them per run. drift is not cosmetic: claude-code hard-errors on an
 // out-of-range `--effort` before it makes any API call, so a stale ladder
 // breaks runs outright. see wiki/effort.md.
-describe("effort ladders mirror models.dev", async () => {
+describe("effort ladders mirror published catalogs", async () => {
   const data = await api;
+  // the gateway's own catalog takes precedence: models.dev incorrectly
+  // advertises `none` for Astra, which requires reasoning on every route.
+  const gateway = type({
+    data: type({
+      id: "string",
+      "reasoning_options?": type({ type: "string", "values?": "string[]" }).array(),
+    }).array(),
+  }).assert(await fetch("https://ai-gateway.vercel.sh/v1/models").then((r) => r.json()));
 
   const publishedEffort = (spec: string) => {
     const parsed = parseResolve(spec);
-    const options = data[parsed.provider]?.models[parsed.modelId]?.reasoning_options;
+    const model =
+      parsed.provider === "vercel"
+        ? gateway.data.find((m) => m.id === parsed.modelId)
+        : data[parsed.provider]?.models[parsed.modelId];
+    const options = model?.reasoning_options;
     return options?.find((o) => o.type === "effort")?.values;
   };
 
@@ -129,7 +161,7 @@ describe("effort ladders mirror models.dev", async () => {
   for (const alias of modelAliases) {
     if (alias.routing || alias.fallback) continue;
 
-    it(`${alias.slug} effort matches models.dev`, () => {
+    it(`${alias.slug} effort matches its published catalog`, () => {
       expect(rungs(publishedEffort(alias.resolve))).toEqual(rungs(alias.effort));
     });
 

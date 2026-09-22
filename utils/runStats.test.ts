@@ -1,10 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { initToolState } from "../toolState.ts";
+import { initToolState, primaryRepoState } from "../toolState.ts";
 import { buildPullfrogFooter, stripExistingFooter } from "./buildPullfrogFooter.ts";
 import { frogFacts } from "./frogFacts.ts";
 import { recordTokens, recordToolUse, renderRunStats } from "./runStats.ts";
 
 describe("frog facts in run stats", () => {
+  it("reports measured Codex raw-diff coverage without presenting reused reads as new work", () => {
+    const toolState = initToolState({ owner: "test", name: "repo", dir: "/tmp/repo", progressComment: undefined });
+    toolState.agent = "codex";
+    primaryRepoState(toolState).reviewCoverage = { scope: { id: "scope", pullNumber: 1, headSha: "head", baseSha: "base", changedFiles: [], changedFilesPath: "/tmp/files", diffPath: "/tmp/raw.diff" }, passes: {}, readCoverage: [{ diffPath: "/tmp/raw.diff", totalLines: 10, tocEntries: [], coveredRanges: [{ startLine: 1, endLine: 5 }], coveragePreflightRan: false }] };
+    const stats = renderRunStats({ toolState })!;
+    expect(stats.line).toContain("50% diff coverage");
+    expect(stats.details).toContain("5 of 10 raw diff lines covered");
+    expect(stats.details).toContain("may include verified prior reads");
+    expect(stats.details).not.toContain("changed lines read");
+  });
   it("has at least 250 distinct, short, plain-text facts with source links", () => {
     expect(frogFacts.length).toBeGreaterThanOrEqual(250);
     expect(new Set(frogFacts.map(({ text }) => text)).size).toBe(frogFacts.length);
@@ -44,5 +54,28 @@ describe("frog facts in run stats", () => {
     expect(comment.match(/Frog fact/g)).toHaveLength(1);
     expect(comment).toContain(smallText);
     expect(stripExistingFooter(comment)).toBe(body);
+  });
+
+  it("keeps trial disclosure and fork stats together without restoring hosted action links", () => {
+    const toolState = initToolState({
+      owner: "ecrofaidem", name: "monorepo", dir: "/tmp/monorepo", progressComment: undefined,
+    });
+    toolState.agent = "codex";
+    const body = "Review complete.";
+    const footer = buildPullfrogFooter({
+      owner: "ecrofaidem",
+      model: "openai/gpt-astra",
+      clamped: { from: "openai/gpt-astra", reason: "trial" },
+      toolState,
+      review: { inlineComments: 2, droppedComments: 1 },
+      customParts: ["[Fix all](https://pullfrog.com/trigger)"],
+    });
+    expect(footer).toContain("Pullfrog covered this run's model usage.");
+    expect(footer).toContain("https://pullfrog.com/console/ecrofaidem");
+    expect(footer).toContain("<details><summary>Run stats</summary>");
+    expect(footer).toContain("- Review: 2 inline comments (1 dropped: outside the diff)");
+    expect(footer.match(/Frog fact/g)).toHaveLength(1);
+    expect(footer).not.toContain("https://pullfrog.com/trigger");
+    expect(stripExistingFooter(body + footer)).toBe(body);
   });
 });

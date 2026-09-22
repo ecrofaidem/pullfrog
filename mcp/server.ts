@@ -43,6 +43,8 @@ import { SetOutputTool } from "./output.ts";
 import { CreatePullRequestTool, UpdatePullRequestBodyTool } from "./pr.ts";
 import { PullRequestInfoTool } from "./prInfo.ts";
 import { CreatePullRequestReviewTool } from "./review.ts";
+import { ReadFileTool } from "./readFile.ts";
+import { ReviewCheckpointTool } from "./reviewCheckpoint.ts";
 import {
   GetReviewCommentsTool,
   ListPullRequestReviewsTool,
@@ -97,6 +99,7 @@ export interface ToolContext {
   jobId: string | undefined;
   mcpServerUrl: string;
   tmpdir: string;
+  secretDenyPaths?: string[];
   // repo-level OSS flag + legacy-named account card signal. retained in the
   // runtime context for existing consumers and observability.
   oss: boolean;
@@ -172,6 +175,7 @@ function buildCommonTools(ctx: ToolContext, outputSchema?: JsonSchema): Pullfrog
     GitTool(ctx),
     GitFetchTool(ctx),
     UploadFileTool(ctx),
+    ReadFileTool(ctx),
   ];
 
   // cross-repo tools only surface on --xrepo runs (keeps the single-repo tool
@@ -185,6 +189,7 @@ function buildCommonTools(ctx: ToolContext, outputSchema?: JsonSchema): Pullfrog
   }
 
   const isStandalone = ctx.payload.event.trigger === "unknown";
+  if (ctx.agentId === "codex") tools.push(ReviewCheckpointTool(ctx));
   if (isStandalone || outputSchema) {
     tools.push(SetOutputTool(ctx, outputSchema));
   }

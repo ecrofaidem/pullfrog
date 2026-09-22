@@ -94,6 +94,7 @@ export {
   resolveRung,
   rungLabel,
   rungPosition,
+  SUBSIDY_RUNG,
 } from "./effort.ts";
 // model alias registry lives in models.ts — re-exported here for shared access
 export type { AutoTier, ModelAlias, ModelProvider, ProviderConfig } from "./models.ts";
@@ -223,6 +224,15 @@ interface PullRequestReviewSubmittedEvent extends BasePayloadEvent {
   body: string | null;
   review_state: string;
   branch: string;
+  /**
+   * How far past the dispatching review this run may read: `all` on a
+   * Pullfrog-authored PR, `mentions` when only `@pullfrog`-mentioning threads
+   * are in scope. The server already computes this to decide whether to
+   * dispatch; forwarding it is what lets `get_review_comments` pick up the
+   * comments that land while the run is working. Optional so a payload from an
+   * older server build still parses against a newer action.
+   */
+  address_scope?: "all" | "mentions" | undefined;
 }
 
 interface PullRequestReviewCommentCreatedEvent extends BasePayloadEvent {
@@ -376,6 +386,14 @@ export interface WriteablePayload {
   "~pullfrog": true;
   /** semantic version of the payload to ensure compatibility */
   version: string;
+  /**
+   * which kind of work this run is (`pr-created`, `issue-created`, …). the
+   * server's own run-type vocabulary, opaque here: the action only forwards it
+   * to `run-context`, which resolves the repo's per-trigger model override
+   * against it. absent ⇒ the repo default, which is what every run got before
+   * overrides existed.
+   */
+  type?: string | undefined;
   /** provider/model slug (e.g. "anthropic/claude-opus") */
   model?: string | undefined;
   /**

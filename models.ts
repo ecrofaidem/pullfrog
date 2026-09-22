@@ -179,6 +179,13 @@ export const providers = {
       // brand-tier names the slug convention asks for — the pre-5.6 `gpt` /
       // `gpt-pro` / `gpt-mini` slugs are holdovers from the retired GPT / GPT Pro
       // / GPT Mini tiering and are carried below as deprecated aliases.
+      "gpt-astra": {
+        displayName: "GPT Astra",
+        resolve: "openai/gpt-6-astra",
+        effort: ["low", "medium", "high", "xhigh", "max"],
+        openRouterResolve: "openrouter/openai/gpt-6-astra",
+        subagentModel: "gpt-sol",
+      },
       "gpt-sol": {
         displayName: "GPT Sol",
         resolve: "openai/gpt-5.6-sol",
@@ -287,9 +294,9 @@ export const providers = {
       },
       "gemini-flash": {
         displayName: "Gemini Flash",
-        resolve: "google/gemini-3.6-flash",
-        effort: ["minimal", "low", "medium", "high"],
-        openRouterResolve: "openrouter/google/gemini-3.6-flash",
+        resolve: "google/gemini-3.8-flash",
+        effort: ["low", "medium", "high"],
+        openRouterResolve: "openrouter/google/gemini-3.8-flash",
       },
     },
   }),
@@ -492,6 +499,15 @@ export const providers = {
         // the model does cost nothing.
         isFree: true,
       },
+      // Zen meters Fable like any other model, so this route reaches it without
+      // the Anthropic access grant `anthropic/claude-fable` still needs.
+      "claude-fable": {
+        displayName: "Claude Fable",
+        resolve: "opencode/claude-fable-5-1",
+        effort: ["low", "medium", "high", "xhigh", "max"],
+        openRouterResolve: "openrouter/~anthropic/claude-fable-latest",
+        subagentModel: "claude-sonnet",
+      },
       "claude-opus": {
         displayName: "Claude Opus",
         resolve: "opencode/claude-opus-5",
@@ -530,6 +546,13 @@ export const providers = {
         effort: ["none", "low", "medium", "high", "xhigh", "max"],
         openRouterResolve: "openrouter/openai/gpt-5.6-sol",
         subagentModel: "gpt-terra",
+      },
+      "gpt-astra": {
+        displayName: "GPT Astra",
+        resolve: "opencode/gpt-6-astra",
+        effort: ["low", "medium", "high", "xhigh", "max"],
+        openRouterResolve: "openrouter/openai/gpt-6-astra",
+        subagentModel: "gpt-sol",
       },
       // see openai/gpt-sol-pro — Zen has no -pro id, so direct resolves to plain Sol.
       "gpt-sol-pro": {
@@ -601,9 +624,20 @@ export const providers = {
       },
       "gemini-flash": {
         displayName: "Gemini Flash",
-        resolve: "opencode/gemini-3.6-flash",
-        effort: ["minimal", "low", "medium", "high"],
-        openRouterResolve: "openrouter/google/gemini-3.6-flash",
+        resolve: "opencode/gemini-3.8-flash",
+        effort: ["low", "medium", "high"],
+        openRouterResolve: "openrouter/google/gemini-3.8-flash",
+      },
+      // Zen serves K3, but rule 7 can only move a mirror when its upstream moves,
+      // so the K3 generation could never reach this block by bumping `kimi-k2`.
+      "kimi-k3": {
+        displayName: "Kimi K3",
+        resolve: "opencode/kimi-k3",
+        // Zen publishes a single rung for K3 where OpenRouter publishes three.
+        effort: ["max"],
+        openRouterEffort: ["low", "high", "max"],
+        openRouterResolve: "openrouter/moonshotai/kimi-k3",
+        subagentModel: "kimi-k2",
       },
       "kimi-k2": {
         displayName: "Kimi K2",
@@ -616,11 +650,32 @@ export const providers = {
         resolve: "opencode/kimi-k2.6",
         openRouterResolve: "openrouter/moonshotai/kimi-k2.7-code",
       },
+      // M3 is its own line beside M2, not a bump of it — same reason `kimi-k3`
+      // sits beside `kimi-k2` rather than replacing it.
+      "minimax-m3": {
+        displayName: "MiniMax M3",
+        resolve: "opencode/minimax-m3",
+        openRouterResolve: "openrouter/minimax/minimax-m3",
+      },
       // slug pins the m2 line for DB stability; resolve tracks the current m2.7.
       "minimax-m2.5": {
         displayName: "MiniMax M2",
         resolve: "opencode/minimax-m2.7",
         openRouterResolve: "openrouter/minimax/minimax-m2.7",
+      },
+      // Z.ai and xAI reach Zen subscribers only here — before this, `opencode-go`
+      // was the catalog's only GLM route, and Grok had no Zen route at all.
+      glm: {
+        displayName: "GLM",
+        resolve: "opencode/glm-5.3",
+        effort: ["low", "high", "max"],
+        openRouterResolve: "openrouter/z-ai/glm-5.3",
+      },
+      grok: {
+        displayName: "Grok",
+        resolve: "opencode/grok-4.6",
+        effort: ["low", "medium", "high", "xhigh"],
+        openRouterResolve: "openrouter/x-ai/grok-4.6",
       },
       "gpt-5-nano": {
         displayName: "GPT Nano",
@@ -628,13 +683,24 @@ export const providers = {
         effort: ["minimal", "low", "medium", "high"],
         openRouterResolve: "openrouter/openai/gpt-5-nano",
       },
+      // Zen's live free MiMo, and the second free row in a menu that big-pickle
+      // was alone in since `mimo-v2-pro-free` lost its model.
+      mimo: {
+        displayName: "MiMo",
+        resolve: "opencode/mimo-v2.5-free",
+        // free to run, still gated on the provider's own OPENCODE_API_KEY —
+        // see the big-pickle note above (#1077).
+        isFree: true,
+      },
       "mimo-v2-pro-free": {
         displayName: "MiMo V2 Pro",
         resolve: "opencode/mimo-v2-pro-free",
         // free to run, still gated on the provider's own OPENCODE_API_KEY —
         // see the big-pickle note above (#1077).
         isFree: true,
-        fallback: "opencode/big-pickle",
+        // the model id Zen dropped; land a stored MiMo pick back on MiMo rather
+        // than on the unrelated model it had to settle for while none was live.
+        fallback: "opencode/mimo",
       },
       "minimax-m2.5-free": {
         displayName: "MiniMax M2",
@@ -650,10 +716,11 @@ export const providers = {
   // OpenCode Go is a separate $10/mo subscription from Zen, served on its own
   // base URL (`https://opencode.ai/zen/go/v1`) but authenticated with the SAME
   // `OPENCODE_API_KEY`. it carries the open-weight coding models plus a couple
-  // of frontier ones, and 14 of the ids below are served ONLY here — Zen's
-  // `/v1/models` does not list glm-5.3*, qwen3.7/3.8-*, mimo-*, longcat-2.0,
-  // hy3 or muse-spark. so for a Go subscriber this provider is not a duplicate
-  // route to Zen, it is the only route to most of what they pay for.
+  // of frontier ones, six of which are served ONLY here — Zen's `/v1/models`
+  // does not list qwen3.7/3.8-*, mimo-v2.5-pro, longcat-2.0 or hy3. (it listed
+  // no glm-5.3* either until 2026-09, which is why `opencode/glm` trailed on
+  // 5.2.) so for a Go subscriber this provider is not a duplicate route to Zen,
+  // it is the only route to a large part of what they pay for.
   // like `opencode` and `openrouter` this is a ROUTER, not a vendor: slugs and
   // display names mirror the upstream brand tier, and the picker groups them
   // under the upstream vendor.
@@ -722,12 +789,24 @@ export const providers = {
         // `high` the Go route does not.
         effort: ["low", "medium", "xhigh"],
         openRouterEffort: ["minimal", "low", "medium", "high", "xhigh"],
-        openRouterResolve: "openrouter/qwen/qwen3.8-max",
+        // OpenRouter retired the rolling `qwen3.8-max` for a dated snapshot, so
+        // this side has to pin one; the Go route still carries the rolling id.
+        openRouterResolve: "openrouter/qwen/qwen3.8-max-0902",
       },
       "qwen-plus": {
         displayName: "Qwen Plus",
         resolve: "opencode-go/qwen3.7-plus",
         openRouterResolve: "openrouter/qwen/qwen3.7-plus",
+      },
+      // the cheap rung Alibaba added under Plus (0.15/0.47 against 0.5/3), and
+      // the only model either OpenCode plan has added since this block was written.
+      "qwen-flash": {
+        displayName: "Qwen Flash",
+        resolve: "opencode-go/qwen3.8-flash",
+        effort: ["low", "medium", "xhigh"],
+        // the Go route publishes rungs where OpenRouter publishes none.
+        openRouterEffort: [],
+        openRouterResolve: "openrouter/qwen/qwen3.8-flash",
       },
       // MiniMax — parity with opencode/* and openrouter/*; the m2 slug pins the
       // line for DB stability while the resolve tracks the current m2.7.
@@ -892,6 +971,13 @@ export const providers = {
         openRouterResolve: "openrouter/openai/gpt-5.6-sol",
         subagentModel: "gpt-terra",
       },
+      "gpt-astra": {
+        displayName: "GPT Astra",
+        resolve: "openrouter/openai/gpt-6-astra",
+        effort: ["low", "medium", "high", "xhigh", "max"],
+        openRouterResolve: "openrouter/openai/gpt-6-astra",
+        subagentModel: "gpt-sol",
+      },
       // see openai/gpt-sol-pro. openrouter serves sol-pro directly on both routes.
       "gpt-sol-pro": {
         displayName: "GPT Sol Pro",
@@ -968,10 +1054,9 @@ export const providers = {
       "gemini-flash": {
         displayName: "Gemini Flash",
         resolve: "openrouter/~google/gemini-flash-latest",
-        // no `minimal` here, unlike the google/ and opencode/ entries for the
-        // same model: OpenRouter's floating `~google/gemini-flash-latest` stopped
-        // publishing that rung. mirroring it is not cosmetic — claude-code
-        // hard-errors on an out-of-range `--effort` before it calls the API.
+        // a floating pointer, not a pinned id — it already serves 3.8, so this
+        // entry tracks its siblings' generation bumps for free. the ladder still
+        // mirrors exactly: claude-code hard-errors on an out-of-range `--effort`.
         effort: ["low", "medium", "high"],
         openRouterResolve: "openrouter/~google/gemini-flash-latest",
       },
@@ -1062,6 +1147,12 @@ export const providers = {
         effort: ["none", "low", "medium", "high", "xhigh", "max"],
         subagentModel: "gpt-terra",
       },
+      "gpt-astra": {
+        displayName: "GPT Astra",
+        resolve: "vercel/openai/gpt-6-astra",
+        effort: ["low", "medium", "high", "xhigh", "max"],
+        subagentModel: "gpt-sol",
+      },
       "gpt-terra": {
         displayName: "GPT Terra",
         resolve: "vercel/openai/gpt-5.6-terra",
@@ -1079,8 +1170,8 @@ export const providers = {
       },
       "gemini-flash": {
         displayName: "Gemini Flash",
-        resolve: "vercel/google/gemini-3.6-flash",
-        effort: ["minimal", "low", "medium", "high"],
+        resolve: "vercel/google/gemini-3.8-flash",
+        effort: ["low", "medium", "high"],
       },
       "deepseek-pro": {
         displayName: "DeepSeek Pro",
@@ -1100,6 +1191,7 @@ export const providers = {
       "kimi-k3": {
         displayName: "Kimi K3",
         resolve: "vercel/moonshotai/kimi-k3",
+        effort: ["low", "high", "max"],
       },
     },
   }),
@@ -1158,18 +1250,44 @@ export function getModelManagedCredentials(slug: string): string[] {
 }
 
 /**
+ * Anthropic credentials that ONLY claude-code can present. opencode's anthropic
+ * provider authenticates from `ANTHROPIC_API_KEY` and nothing else (see
+ * `packages/llm/src/providers/anthropic.ts` upstream), so holding one of these
+ * is not evidence opencode can serve a Claude model.
+ *
+ * `ANTHROPIC_AUTH_TOKEN` (the gateway variable) is kept out of
+ * `providers.anthropic.envVars` entirely. `CLAUDE_CODE_OAUTH_TOKEN` cannot be:
+ * the console offers it as a paste target and `credentialFallback` preflights
+ * it, both of which read `getModelEnvVars`. So it stays in `envVars` and is
+ * subtracted here instead, via `getOpenCodeEnvVars` at every opencode-facing
+ * gate. Leaving it un-subtracted let `autoSelectModel` pin
+ * `anthropic/claude-opus-5` on a subscription-only account and hand it to
+ * opencode, which died with `Model not found` before the first turn.
+ */
+export const CLAUDE_CODE_ONLY_CREDENTIALS = ["ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"];
+
+/**
  * Credentials that can serve a provider's models without belonging in its
- * `envVars`, because only one harness understands them. `ANTHROPIC_AUTH_TOKEN`
- * is claude-code's gateway variable: opencode cannot use it, so it must stay
- * out of `providers.anthropic.envVars` (which `getModelEnvVars` feeds to the
- * opencode-validation path) — but an account holding one DOES have a working
- * Anthropic credential, and reading it as "no BYOK" routes the run onto a
- * billed proxy, which `resolveAgent` then hands to opencode, bypassing the
- * gateway entirely.
+ * `envVars`, because only one harness understands them. An account holding one
+ * DOES have a working Anthropic credential, and reading it as "no BYOK" routes
+ * the run onto a billed proxy, which `resolveAgent` then hands to opencode,
+ * bypassing the gateway entirely. Listing a credential that IS in `envVars`
+ * (`CLAUDE_CODE_OAUTH_TOKEN`) is harmless — every consumer asks `.some()`.
  */
 const HARNESS_ONLY_CREDENTIALS: Record<string, string[]> = {
-  anthropic: ["ANTHROPIC_AUTH_TOKEN"],
+  anthropic: CLAUDE_CODE_ONLY_CREDENTIALS,
 };
+
+/**
+ * `getModelEnvVars` minus the credentials only claude-code can present — the
+ * right question for every opencode-facing gate (auto-select, key validation).
+ * `getModelEnvVars` answers "which credentials can serve this model", which is
+ * the product's question; this answers "which can serve it UNDER OPENCODE",
+ * which is the only one those gates may act on.
+ */
+export function getOpenCodeEnvVars(slug: string): string[] {
+  return getModelEnvVars(slug).filter((v) => !CLAUDE_CODE_ONLY_CREDENTIALS.includes(v));
+}
 
 /**
  * Whether one of `secretNames` can run `model` — the Router opt-out predicate,

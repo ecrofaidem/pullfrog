@@ -522,11 +522,33 @@ export async function runSandboxed(params: {
 }
 
 export function capOutput(output: string): string {
-  if (output.length <= MAX_OUTPUT_CHARS) return output;
+  return captureOutput(output).output;
+}
+
+function captureOutput(output: string): { output: string; output_path?: string } {
+  if (output.length <= MAX_OUTPUT_CHARS) return { output };
   const fullPath = join(getTempDir(), `shell-${randomUUID().slice(0, 8)}.log`);
   writeFileSync(fullPath, output);
   const elided = output.length - MAX_OUTPUT_CHARS;
-  return `... [${elided} chars truncated; full output saved to ${fullPath}] ...\n${output.slice(-MAX_OUTPUT_CHARS)}`;
+  return { output: `... [${elided} chars truncated; full output saved to ${fullPath}] ...\n${output.slice(-MAX_OUTPUT_CHARS)}`, output_path: fullPath };
+}
+
+/** Recovery hints describe the observed failure; they never turn errors into passes. */
+export function formatShellResult(result: { output: string; exitCode: number; timedOut: boolean }) {
+  const captured = captureOutput(result.output);
+  let recovery: { kind: string; next_step: string } | undefined;
+  if (result.timedOut) {
+    recovery = { kind: "timeout", next_step: "Inspect the saved output and narrow the check, or run genuinely long work in the background and poll it. Do not rerun the same timed-out command unchanged." };
+  } else if (result.exitCode === 127 && /command not found|not found|No such file/i.test(result.output)) {
+    recovery = { kind: "missing_tool", next_step: "Inspect the affected package's packageManager field, lockfile and CI setup (including subdirectories). Provision that pinned tool through the supported setup procedure, then rerun the focused check. Do not repeat the missing command unchanged." };
+  } else if (result.exitCode !== 0 && /Cannot find (?:module|package)|ModuleNotFoundError|ERR_MODULE_NOT_FOUND/i.test(result.output)) {
+    recovery = { kind: "missing_dependencies", next_step: "Use the affected package's locked dependency installation and required generated setup from its CI instructions, then rerun the focused check. Avoid unrelated full suites." };
+  } else if (result.exitCode !== 0 && /No such file or directory|cannot access.*does not exist/i.test(result.output)) {
+    recovery = { kind: "missing_path", next_step: "Check the working directory and current tracked paths. If a review rule references a removed source path, report a broken check configuration; an execution error is not zero matches. Use an equivalent current-path check only when its scope is preserved." };
+  } else if (captured.output_path) {
+    recovery = { kind: "output_pagination", next_step: "Read output_path with read_file, following next_cursor until eof. Pagination is normal progress, not a failed command or a reason to abandon review." };
+  }
+  return { ...captured, exit_code: result.exitCode, timed_out: result.timedOut, recovery };
 }
 
 /** detect git as a command invocation (not as part of another word like .gitignore) */
@@ -624,11 +646,7 @@ Do NOT use this tool for git commands — use the dedicated git tools instead.`,
         if (result.output) log.info(`output: ${result.output}`);
       }
 
-      return {
-        output: capOutput(result.output),
-        exit_code: result.exitCode,
-        timed_out: result.timedOut,
-      };
+      return formatShellResult(result);
     }),
   });
 }

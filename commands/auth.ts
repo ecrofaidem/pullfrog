@@ -44,12 +44,15 @@ import {
   fetchStatus,
   getGhToken,
   handleCancel,
+  manageCodexPool,
   PULLFROG_API_URL,
   parseGitRemote,
   promptScope,
   setActiveSpin,
   setPullfrogSecret,
+  type SecretScope,
 } from "./_shared.ts";
+import type { CodexPoolStatus } from "../utils/codexPoolProtocol.ts";
 
 const CODEX_AUTH_SECRET = "CODEX_AUTH_JSON";
 const CLAUDE_OAUTH_SECRET = "CLAUDE_CODE_OAUTH_TOKEN";
@@ -126,10 +129,18 @@ function printAuthUsage(params: { stream: typeof console.log; prog: string }): v
 }
 
 function printCodexUsage(params: { stream: typeof console.log; prog: string }): void {
-  params.stream(`usage: ${params.prog} auth codex [options]\n`);
-  params.stream("mint a Codex subscription credential and save it as CODEX_AUTH_JSON.");
+  params.stream(`usage: ${params.prog} auth codex [command] [options]\n`);
+  params.stream("without a command, save a legacy CODEX_AUTH_JSON login.");
+  params.stream("commands:");
+  params.stream("  enroll <label>          sign in and save a new named account");
+  params.stream("  replace <account-id>    sign in again for that same account");
+  params.stream("  list                    inspect accounts and pool order");
+  params.stream("  enable|disable <id>     allow or stop new runs on an account");
+  params.stream("  pool <id> [id ...]      set account order; preserve pool enablement");
   params.stream("");
   params.stream("options:");
+  params.stream("  --scope repo|account    named account scope (default: repo)");
+  params.stream("  --enable, --disable     explicitly enable/disable the pool (pool command only)");
   params.stream("  -h, --help   show help");
 }
 
@@ -188,6 +199,9 @@ function parseCodexArgs(args: string[]) {
     {
       "--help": Boolean,
       "-h": "--help",
+      "--scope": String,
+      "--enable": Boolean,
+      "--disable": Boolean,
     },
     { argv: args }
   );
@@ -209,10 +223,51 @@ async function runCodex(params: CodexCliParams): Promise<void> {
     return;
   }
 
-  await runCodexAuth();
+  const [command, ...targets] = parsed._;
+  if (!command) {
+    if (parsed["--scope"] || parsed["--enable"] || parsed["--disable"]) bail("choose a named account command first; see auth codex --help");
+    await runCodexAuth();
+    return;
+  }
+  const scope = parsed["--scope"] ?? "repo";
+  if (scope !== "repo" && scope !== "account") bail("scope must be repo or account");
+  if (!["list", "enroll", "replace", "enable", "disable", "pool"].includes(command)) bail(`unknown Codex command: ${command}`);
+  if ((command === "list" && targets.length !== 0) ||
+      (["enroll", "replace", "enable", "disable"].includes(command) && targets.length !== 1) ||
+      (command === "pool" && targets.length === 0)) bail("wrong number of arguments; see auth codex --help");
+  if ((parsed["--enable"] || parsed["--disable"]) && command !== "pool") bail("--enable and --disable apply only to the pool command");
+  if (parsed["--enable"] && parsed["--disable"]) bail("choose either --enable or --disable");
+  if (command === "enroll" || command === "replace") {
+    await runCodexAuth({ scope, ...(command === "enroll" ? { label: targets[0]! } : { accountId: targets[0]! }) });
+    return;
+  }
+  try {
+    const result = await manageCodexPool({
+      token: getGhToken(), ...parseGitRemote(), scope,
+      ...(command === "pool" ? { operation: "codex-pool", accountIds: targets,
+        ...(parsed["--enable"] ? { enabled: true } : parsed["--disable"] ? { enabled: false } : {}),
+      } : command === "list" ? {} : { operation: "codex-enable", accountId: targets[0]!, enabled: command === "enable" }),
+    });
+    printCodexPoolStatus(result);
+  } catch (error) {
+    bail(error instanceof Error ? error.message : "Codex pool request failed");
+  }
 }
 
-async function runCodexAuth(): Promise<void> {
+function printCodexPoolStatus(status: CodexPoolStatus): void {
+  p.log.info(`Pool: ${status.pool?.enabled ? "enabled" : "disabled"}. Order: ${status.pool?.accountIds.join(" → ") || "none"}`);
+  for (const account of status.accounts) {
+    const state = [account.enabled ? "enabled" : "disabled", account.busy ? "run still finishing" : "idle", account.authState];
+    const quota = account.quota;
+    if (quota && "weekly" in quota.result && quota.result.weekly) {
+      state.push(`${Math.ceil(100 - quota.result.weekly.usedPercent)}% weekly remaining${quota.fresh ? "" : " (stale)"}`);
+    } else state.push("weekly quota unknown");
+    p.log.info(`${account.label} (${account.id}, ${account.repo === null ? "account scope" : "repo scope"}): ${state.join(" · ")}`);
+  }
+  if (!status.accounts.length) p.log.info("No named Codex accounts enrolled in this scope.");
+}
+
+async function runCodexAuth(named?: { scope: SecretScope; label?: string; accountId?: string }): Promise<void> {
   p.intro(pc.bgGreen(pc.black(" pullfrog auth codex ")));
 
   const spin = p.spinner();
@@ -238,7 +293,7 @@ async function runCodexAuth(): Promise<void> {
     }
     spin.stop(`pullfrog app is installed on ${pc.cyan(`@${remote.owner}`)}`);
 
-    if (status.pullfrogSecrets.includes(CODEX_AUTH_SECRET)) {
+    if (!named && status.pullfrogSecrets.includes(CODEX_AUTH_SECRET)) {
       const overwrite = await p.select({
         message: `${pc.cyan(CODEX_AUTH_SECRET)} is already configured — overwrite?`,
         options: [
@@ -256,9 +311,16 @@ async function runCodexAuth(): Promise<void> {
     // user-owned repos can only ever be "account" (Pullfrog has no per-repo
     // store for user accounts), so we never bother prompting. on org-owned
     // repos, prompt interactively — matches `init`'s behavior.
-    const scope = status.isOrg
+    const scope = named?.scope ?? (status.isOrg
       ? await promptScope({ owner: remote.owner, repo: remote.repo })
-      : "account";
+      : "account");
+
+    if (named) {
+      const existing = await manageCodexPool({ token, ...remote, scope });
+      if (named.accountId && !existing.accounts.some((account) => account.id === named.accountId)) {
+        throw new Error("The replacement account was not found in this scope. Run auth codex list with the same --scope first.");
+      }
+    }
 
     p.log.info(
       [
@@ -327,6 +389,22 @@ async function runCodexAuth(): Promise<void> {
         return retry;
       },
     });
+
+    if (named) {
+      spin.start("saving named Codex account");
+      // This isolated login has no other writer. Save its current chain directly;
+      // startup owns the first refresh under the account's exclusive assignment.
+      const result = await manageCodexPool({
+        token, ...remote, scope,
+        ...(named.accountId ? { operation: "codex-replace", accountId: named.accountId } : { operation: "codex-enroll", label: named.label! }),
+        value: auth.json,
+      });
+      spin.stop("saved named Codex account");
+      printCodexPoolStatus(result);
+      setActiveSpin(null);
+      p.outro("done.");
+      return;
+    }
 
     // eager refresh: bump the OAuth chain once before persisting so the
     // saved token is one Pullfrog has used. otherwise the user's laptop's

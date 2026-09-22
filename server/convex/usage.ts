@@ -9,14 +9,9 @@ import { internalAction, internalMutation, internalQuery } from "./_generated/se
 import { parseCodexAuthBody } from "./lib/codexOAuth";
 import { open } from "./lib/crypto";
 import { decodeClaims } from "./lib/jwt";
+import { parseCodexQuota } from "../../utils/codexQuota";
 
 const USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
-
-interface Window {
-  used_percent?: number;
-  limit_window_seconds?: number;
-  reset_at?: number;
-}
 
 export const chains = internalQuery({
   args: {},
@@ -83,23 +78,9 @@ export const refresh = internalAction({
           signal: AbortSignal.timeout(10_000),
         });
         if (!response.ok) throw new Error(`usage ${response.status}`);
-        const data = (await response.json()) as {
-          plan_type?: string;
-          rate_limit?: { primary_window?: Window | null; secondary_window?: Window | null };
-        };
-        const windows = [data.rate_limit?.primary_window, data.rate_limit?.secondary_window].filter(
-          (w): w is Window =>
-            !!w && typeof w.used_percent === "number" && typeof w.limit_window_seconds === "number"
-        );
-        const longest = windows.sort((a, b) => b.limit_window_seconds! - a.limit_window_seconds!)[0];
-        if (!longest) throw new Error("no rate-limit window in response");
-        await ctx.runMutation(internal.usage.record, {
-          secretId: row._id,
-          ...(data.plan_type ? { plan: data.plan_type } : {}),
-          usedPercent: Math.max(0, Math.min(100, Math.round(longest.used_percent!))),
-          windowSeconds: longest.limit_window_seconds!,
-          resetAt: longest.reset_at ?? 0,
-        });
+        const quota = parseCodexQuota(await response.json());
+        if (!("weekly" in quota) || !quota.weekly) throw new Error("no valid weekly window in response");
+        await ctx.runMutation(internal.usage.record, { secretId: row._id, ...quota.weekly });
         refreshed += 1;
       } catch (err) {
         failed += 1;

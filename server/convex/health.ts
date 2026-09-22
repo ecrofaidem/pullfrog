@@ -6,6 +6,8 @@ import { v } from "convex/values";
 import { query } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { requireDashboardUser } from "./auth";
+import { readCodexPoolStatus } from "./codexAccounts";
+import type { CodexPoolStatus } from "../../utils/codexPoolProtocol";
 
 export interface ChainHealth {
   scope: "account" | "repo";
@@ -33,6 +35,7 @@ export interface UsageHealth {
 }
 
 export interface HealthData {
+  codexPool?: CodexPoolStatus | null;
   chain: ChainHealth | null;
   usage: UsageHealth | null;
   recent: RecentRun[];
@@ -90,6 +93,7 @@ export const get = query({
     return {
       chain,
       usage,
+      codexPool: await readCodexPoolStatus(ctx, { ...args, scope: "repo" }),
       recent: runs.map((r) => ({
         id: r._id,
         status: r.status,

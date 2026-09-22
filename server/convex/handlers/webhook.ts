@@ -6,14 +6,8 @@ import { httpAction } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { hmacSha256Hex, timingSafeEqual } from "../lib/crypto";
 import { error, json } from "../lib/http";
-
-const HANDLED = new Set([
-  "installation",
-  "installation_repositories",
-  "pull_request",
-  "issue_comment",
-  "workflow_run",
-]);
+import { selectWebhook } from "../lib/webhookEvent";
+import { actionWorkflow } from "../actionVersion";
 
 export const githubWebhook = httpAction(async (ctx, request) => {
   const secret = process.env.GITHUB_WEBHOOK_SECRET;
@@ -25,12 +19,9 @@ export const githubWebhook = httpAction(async (ctx, request) => {
   if (!timingSafeEqual(signature, expected)) return error(401, "bad signature");
 
   const event = request.headers.get("x-github-event") ?? "";
-  const delivery = request.headers.get("x-github-delivery") ?? crypto.randomUUID();
+  const delivery = request.headers.get("x-github-delivery");
   if (event === "ping") return json({ ok: true });
-  if (!HANDLED.has(event)) return json({ ok: true, ignored: event });
-
-  const fresh = await ctx.runMutation(internal.runs.claimDelivery, { deliveryId: delivery });
-  if (!fresh) return json({ ok: true, duplicate: true });
+  if (!delivery) return error(400, "missing delivery id");
 
   let payload: unknown;
   try {
@@ -38,6 +29,9 @@ export const githubWebhook = httpAction(async (ctx, request) => {
   } catch {
     return error(400, "body is not JSON");
   }
-  await ctx.scheduler.runAfter(0, internal.dispatch.handleEvent, { event, delivery, payload });
+  const selected = selectWebhook(event, payload, actionWorkflow());
+  if (!selected) return json({ ok: true, ignored: event });
+  const fresh = await ctx.runMutation(internal.webhooks.accept, { delivery, ...selected });
+  if (!fresh) return json({ ok: true, duplicate: true });
   return json({ ok: true }, 202);
 });

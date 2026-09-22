@@ -46,7 +46,7 @@ function codexChainIsDead(body: string): boolean {
 
 /** force one refresh round-trip against the OAuth provider. returns the
  * rotated Codex-shaped blob. does NOT persist — the caller holds the lease. */
-export async function refreshCodexAuthBody(body: CodexAuthBody): Promise<CodexAuthBody> {
+export async function refreshCodexAuthBody(body: CodexAuthBody, signal?: AbortSignal): Promise<CodexAuthBody> {
   const response = await fetch(CODEX_OAUTH_TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -55,7 +55,7 @@ export async function refreshCodexAuthBody(body: CodexAuthBody): Promise<CodexAu
       refresh_token: body.tokens.refresh_token,
       client_id: CODEX_OAUTH_CLIENT_ID,
     }).toString(),
-    signal: AbortSignal.timeout(10_000),
+    signal: signal ?? AbortSignal.timeout(10_000),
   });
   if (!response.ok) {
     const text = await response.text().catch(() => "");
@@ -122,11 +122,11 @@ const STALE_SESSION_MS = 7 * 24 * 60 * 60 * 1000;
 /** whether a run starting now should get a rotated chain rather than this one.
  * an unreadable exp counts as expired; a session older than a week is refreshed
  * proactively, matching the Codex CLI's own ~8-day staleness rule. */
-export function codexNeedsRefresh(body: CodexAuthBody, now = Date.now()): boolean {
+export function codexNeedsRefresh(body: CodexAuthBody, now = Date.now(), minimumRemainingMs = ACCESS_TOKEN_MARGIN_MS): boolean {
   if (body.refresh_rejected_at) return false;
   const exp = decodeJwtExpMs(body.tokens.access_token);
   if (exp === null) return true;
-  if (exp - now < ACCESS_TOKEN_MARGIN_MS) return true;
+  if (exp - now < minimumRemainingMs) return true;
   if (body.last_refresh) {
     const last = Date.parse(body.last_refresh);
     if (Number.isFinite(last) && now - last > STALE_SESSION_MS) return true;

@@ -47,7 +47,7 @@ export interface BuildPullfrogFooterParams {
    * provider-key nudge — so the downgrade is visible rather than silently
    * presenting Kimi as the pick.
    */
-  clamped?: { from: string; reason: "card" | "noRouterPath" | "oss" } | undefined;
+  clamped?: { from: string; reason: "card" | "noRouterPath" | "oss" | "trial" } | undefined;
   /**
    * true when the run used the default proxy model only because no model was
    * selected (Router billing + "auto"). the footer appends a note nudging the
@@ -55,12 +55,6 @@ export interface BuildPullfrogFooterParams {
    * than a frontier model.
    */
   unselectedProxyDefault?: boolean | undefined;
-  /**
-   * true when the action is pinned to a full commit SHA — the footer leads
-   * with a maintenance nudge to switch to the moving `@v0` tag (a SHA pin
-   * freezes the post-run cleanup step, which silently fails the workflow).
-   */
-  shaPinned?: boolean | undefined;
   /**
    * true when the run's model costs are covered by the Pullfrog for OSS
    * program — the footer renders `Using <model> (free via Pullfrog for OSS)`
@@ -71,6 +65,9 @@ export interface BuildPullfrogFooterParams {
   toolState?: ToolState | undefined;
   /** FORK: inline-comment counts, review submissions only */
   review?: ReviewStats | undefined;
+  /** repo owner, used to deep-link the trial disclosure at that account's own
+   * console rather than the generic landing page. */
+  owner?: string | undefined;
 }
 
 /** Provider display name (e.g. "Anthropic") for the slug, or the raw provider segment as a fallback. */
@@ -90,7 +87,7 @@ function providerDisplayName(slug: string): string {
 function formatModelLabel(params: {
   model: string;
   fallbackFrom?: string | undefined;
-  clamped?: { from: string; reason: "card" | "noRouterPath" | "oss" } | undefined;
+  clamped?: { from: string; reason: "card" | "noRouterPath" | "oss" | "trial" } | undefined;
   unselectedProxyDefault?: boolean | undefined;
   oss?: boolean | undefined;
 }): string {
@@ -125,6 +122,12 @@ function formatModelLabel(params: {
     // the provider turned it down.
     return `${base} (credentials for ${providerDisplayName(params.fallbackFrom)} were rejected by the provider)`;
   }
+  if (params.clamped?.reason === "trial") {
+    // short form only: the IMPORTANT call-out above the footer already explains
+    // what the trial is and how to leave it. repeating it here would say the
+    // same thing twice in one comment.
+    return `${base} (model usage covered by Pullfrog)`;
+  }
   if (params.clamped) {
     // name the tier (not its backing model) when the user picked a tier, so the
     // public copy reads right and doesn't couple to the tier's current target.
@@ -139,6 +142,44 @@ function formatModelLabel(params: {
     return `${base} (default — [pick a model](https://docs.pullfrog.com/models) for stronger reviews)`;
   }
   return base;
+}
+
+/**
+ * Bottom-of-comment disclosure for a run served by the free trial subsidy.
+ *
+ * Deliberately NOT a footer part: the `<sup>` line is where every other model
+ * substitution is disclosed, and a trial review is a different claim — the
+ * reader is being asked to discount findings about their own code, which a
+ * subscript pipe-separated fragment cannot carry.
+ *
+ * Emitted AFTER `PULLFROG_DIVIDER` so `stripExistingFooter` removes it on every
+ * edit. The progress comment is rewritten many times per run; anything placed
+ * before the marker would survive each strip and accumulate.
+ *
+ * The rule is a top-level `---`, not `> ---` — inside the blockquote it would
+ * render as a line across the middle of the alert instead of a separator above it.
+ *
+ * The copy names the RUN rather than a review, because one footer builder feeds
+ * four surfaces — a review, a plan or issue comment, a created PR body, and a
+ * terminal failure comment — and only the first of those is a review at all.
+ */
+function buildTrialDisclosure(owner: string | undefined): string {
+  // a literal rather than `getApiUrl()`: this module is re-exported through
+  // `action/internal/index.ts` into CLIENT components, and `apiUrl.ts` reaches
+  // `@actions/core` through `cli.ts` — importing it here pulls node builtins
+  // into the browser bundle and fails the Turbopack build. every other link in
+  // this footer is already an absolute pullfrog.com URL for the same reason.
+  const consoleUrl = owner
+    ? `https://pullfrog.com/console/${owner}`
+    : "https://pullfrog.com/console";
+  return [
+    "---",
+    "",
+    "> [!IMPORTANT]",
+    "> **Pullfrog covered this run's model usage.** `DeepSeek Flash` is fast and cheap — expect lighter " +
+      "work than a frontier model. This model allowance is temporary and separate from your Pullfrog plan. " +
+      `[Connect a model-provider subscription or API key →](${consoleUrl})`,
+  ].join("\n");
 }
 
 /**
@@ -181,9 +222,12 @@ export function buildPullfrogFooter(params: BuildPullfrogFooterParams): string {
   const usage = currentCodexUsage();
   if (usage) parts.push(renderCodexUsage(usage));
 
-  if (parts.length === 0) return "";
+  const disclosure =
+    params.clamped?.reason === "trial" ? `${buildTrialDisclosure(params.owner)}\n\n` : "";
+
+  if (parts.length === 0 && !disclosure) return "";
   const line = `<sup>${parts.join(" ｜ ")}</sup>`;
-  return `\n\n${PULLFROG_DIVIDER}\n${line}${stats ? `\n\n${stats.details}` : ""}`;
+  return `\n\n${PULLFROG_DIVIDER}\n${disclosure}${line}${stats ? `\n\n${stats.details}` : ""}`;
 }
 
 /**
