@@ -162,6 +162,8 @@ export default defineSchema({
     trigger: v.string(),
     prNumber: v.optional(v.number()),
     prTitle: v.optional(v.string()),
+    /** the PR head a review was dispatched for; the next delta review starts here */
+    headSha: v.optional(v.string()),
     triggerer: v.optional(v.string()),
     title: v.string(),
     status: runStatus,

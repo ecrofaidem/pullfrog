@@ -155,19 +155,21 @@ async function handlePullRequest(ctx: ActionCtx, payload: Json) {
   if (trigger === "pull_request_synchronize" && !repo.reviewOnSynchronize) return;
 
   const number = Number(pr.number);
-  // a push to a PR nobody has reviewed yet (it was ignored, or its author was not yet
-  // allowed) gets a full review; there is no previous review to diff against.
-  const incremental =
-    trigger === "pull_request_synchronize" &&
-    (await ctx.runQuery(internal.runs.hasReview, { owner: repo.owner, repo: repo.name, prNumber: number }));
-  const prompt = incremental
+  // a push is reviewed as the delta since the last reviewed head, which is older than the
+  // webhook's `before` when pushes in between were ignored. A PR nobody has reviewed yet
+  // (ignored, or its author was not yet allowed) gets a full review instead.
+  const reviewedHead =
+    trigger === "pull_request_synchronize"
+      ? await ctx.runQuery(internal.runs.lastReviewedHead, { owner: repo.owner, repo: repo.name, prNumber: number })
+      : null;
+  const prompt = reviewedHead
     ? `New commits were pushed to pull request #${number}. Review the changes since the previous review.`
     : `Review pull request #${number}.`;
 
   await dispatchRun(ctx, {
     repo,
     trigger,
-    kind: incremental ? "incremental_review" : "review",
+    kind: reviewedHead ? "incremental_review" : "review",
     issue: {
       number,
       title: String(pr.title ?? ""),
@@ -179,9 +181,7 @@ async function handlePullRequest(ctx: ActionCtx, payload: Json) {
     },
     triggerer: String(payload.sender?.login ?? pr.user.login),
     prompt,
-    ...(incremental
-      ? { beforeSha: String(payload.before ?? ""), baseSha: String(pr.base?.sha ?? "") }
-      : {}),
+    ...(reviewedHead ? { beforeSha: reviewedHead, baseSha: String(pr.base?.sha ?? "") } : {}),
   });
 }
 
@@ -371,7 +371,7 @@ async function dispatchRun(ctx: ActionCtx, params: DispatchRunParams) {
     dispatchId,
     kind: params.kind,
     trigger: params.trigger,
-    ...(pr ? { prNumber: issue.number, prTitle: issue.title } : {}),
+    ...(pr ? { prNumber: issue.number, prTitle: issue.title, headSha: pr.headSha } : {}),
     triggerer: params.triggerer,
     title,
     ...(checkRunId !== undefined ? { checkRunId } : {}),

@@ -42,8 +42,9 @@ Deploy both the Convex backend and webhook Worker to enable them. The existing
 Put `<!-- prfrog ignore -->` (the configured handle; the bare `<prfrog ignore>`
 form also matches) anywhere in a PR description and the dispatcher skips its
 automatic reviews on open, ready-for-review, and push. Remove the tag and push to
-resume. A push to a PR that has never had a review runs a full review rather
-than a delta. `@prfrog review` in a comment reviews once regardless of the tag.
+resume: the next review covers everything since the last reviewed head, including
+pushes made while the tag was present, and a PR that has never had a review gets
+a full review. `@prfrog review` in a comment reviews once regardless of the tag.
 
 ## Layout
 
