@@ -268,10 +268,12 @@ export const orphans = internalQuery({
 });
 
 /**
- * whether a review of this PR was ever dispatched and did not fail, so a push can be reviewed
- * as a delta. An in-flight run counts: it covers the head it was dispatched for, and the delta
- * review covers what came after, which is the same coverage a push mid-review always had.
- * Counting only completed runs would dispatch a second full review beside the running one.
+ * whether a full review of this PR was ever dispatched and did not fail, so a push can be
+ * reviewed as a delta. Delta rows do not count on their own: a PR that only ever had deltas
+ * (author allowlisted after opening, before this check existed) gets its full review next push.
+ * An in-flight run counts: it covers the head it was dispatched for, and the delta review covers
+ * what came after, which is the same coverage a push mid-review always had. Counting only
+ * completed runs would dispatch a second full review beside the running one.
  */
 export const hasReview = internalQuery({
   args: { owner: v.string(), repo: v.string(), prNumber: v.number() },
@@ -282,12 +284,7 @@ export const hasReview = internalQuery({
         q.eq("owner", args.owner).eq("repo", args.repo).eq("prNumber", args.prNumber)
       )
       .collect();
-    return rows.some(
-      (r) =>
-        (r.kind === "review" || r.kind === "incremental_review") &&
-        r.status !== "failed" &&
-        r.status !== "cancelled"
-    );
+    return rows.some((r) => r.kind === "review" && r.status !== "failed" && r.status !== "cancelled");
   },
 });
 
