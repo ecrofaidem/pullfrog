@@ -10,6 +10,7 @@ import {
   resolveCliModel,
   resolveDisplayAlias,
   resolveModelSlug,
+  resolveModelRung,
   resolveOpenRouterModel,
 } from "./models.ts";
 
@@ -92,6 +93,16 @@ describe("resolveModelSlug", () => {
 });
 
 describe("resolveCliModel", () => {
+  it("recognizes an explicit GPT-6 Sol selection and applies high effort", () => {
+    const slug = "openai/gpt-6-sol";
+    expect(resolveCliModel(slug)).toBe(slug);
+    expect(resolveModelRung({ slug, position: 0.5, useOpenRouter: false })).toBe("high");
+    expect(resolveDisplayAlias(slug)?.displayName).toBe("GPT-6 Sol");
+    // An explicit upgrade must not roll other repositories' existing presets forward.
+    expect(resolveCliModel("openai/gpt-sol")).toBe("openai/gpt-5.6-sol");
+    expect(resolveCliModel("openai/gpt-astra")).toBe("openai/gpt-6-astra");
+  });
+
   it("returns same as resolveModelSlug (models.dev specifier)", () => {
     const slug = "anthropic/claude-opus";
     expect(resolveCliModel(slug)).toBe(resolveModelSlug(slug));

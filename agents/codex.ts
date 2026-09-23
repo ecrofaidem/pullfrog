@@ -145,7 +145,7 @@ const CODEX_DISABLED_FEATURES = [
 ] as const;
 
 /** exec surfaces gated on `payload.shell` rather than always-off. */
-const CODEX_SHELL_FEATURES = ["shell_tool", "unified_exec"] as const;
+const CODEX_SHELL_FEATURES = ["shell_tool", "unified_exec", "unified_exec_tty"] as const;
 
 function tomlBool(entries: readonly string[], value: boolean): string {
   return entries.map((name) => `${name} = ${value}`).join("\n");
@@ -553,6 +553,7 @@ const CODEX_MODEL_PRICING: Record<
   string,
   { input: number; cacheRead: number; cacheWrite: number; output: number }
 > = {
+  "gpt-6-sol": { input: 2, cacheRead: 0.2, cacheWrite: 2.5, output: 10 },
   "gpt-6-astra": { input: 10, cacheRead: 1, cacheWrite: 12.5, output: 50 },
   "gpt-5.6-sol": { input: 5, cacheRead: 0.5, cacheWrite: 6.25, output: 30 },
   "gpt-5.6-luna": { input: 0.2, cacheRead: 0.02, cacheWrite: 0.25, output: 1.2 },
