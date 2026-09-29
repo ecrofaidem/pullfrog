@@ -93,6 +93,18 @@ describe("resolveModelSlug", () => {
 });
 
 describe("resolveCliModel", () => {
+  it("recognizes GPT-6.1 Sol without changing existing selections", () => {
+    const slug = "openai/gpt-6.1-sol";
+    expect(resolveCliModel(slug)).toBe(slug);
+    expect(resolveDisplayAlias(slug)?.displayName).toBe("GPT-6.1 Sol");
+    expect(resolveOpenRouterModel(slug)).toBe("openrouter/openai/gpt-6.1-sol");
+    expect(resolveModelRung({ slug, position: 0, useOpenRouter: false })).toBe("low");
+    expect(resolveModelRung({ slug, position: 0.5, useOpenRouter: false })).toBe("high");
+    expect(resolveModelRung({ slug, position: 1, useOpenRouter: false })).toBe("max");
+    expect(resolveCliModel("openai/gpt-6-sol")).toBe("openai/gpt-6-sol");
+    expect(resolveCliModel("openai/gpt-sol")).toBe("openai/gpt-5.6-sol");
+  });
+
   it("recognizes an explicit GPT-6 Sol selection and applies high effort", () => {
     const slug = "openai/gpt-6-sol";
     expect(resolveCliModel(slug)).toBe(slug);

@@ -201,6 +201,12 @@ export const providers = {
         openRouterResolve: "openrouter/openai/gpt-6-sol",
         effort: ["none", "low", "medium", "high", "xhigh", "max"],
       },
+      "gpt-6.1-sol": {
+        displayName: "GPT-6.1 Sol",
+        resolve: "openai/gpt-6.1-sol",
+        openRouterResolve: "openrouter/openai/gpt-6.1-sol",
+        effort: ["low", "medium", "high", "xhigh", "max"],
+      },
       // Sol served at reasoning.mode=pro — same $/token as Sol, just more tokens
       // burned; not a pricier premium tier. models.dev has no -pro id, so direct-key
       // (BYOK) resolves to plain Sol; only the Router/OpenRouter path gets sol-pro.

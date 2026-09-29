@@ -35,7 +35,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import * as core from "@actions/core";
-import type { ThreadEvent, ThreadItem } from "@openai/codex-sdk";
+import type { ModelReasoningEffort, ThreadEvent, ThreadItem } from "@openai/codex-sdk";
 import { pullfrogMcpName } from "../external.ts";
 import { getModelProvider, stripProviderPrefix } from "../models.ts";
 import { recordTokens } from "../utils/runStats.ts";
@@ -130,6 +130,10 @@ const CODEX_DISABLED_FEATURES = [
   "browser_use_full_cdp_access",
   "computer_use",
   "in_app_browser",
+  // Newly default-on in 0.159.0; the action owns its processes and checkout.
+  "daemon_auto_start",
+  "realtime_conversation",
+  "worktrees",
   // third-party code loaded into the agent process
   "plugins",
   "remote_plugin",
@@ -253,11 +257,13 @@ function securityOverrideFlags(params: {
 
 /**
  * levels `model_reasoning_effort` accepts, verbatim from the pinned CLI's
- * `ModelReasoningEffort` (codex-sdk 0.147.0). rungs come from models.dev, a
+ * `ModelReasoningEffort` (codex-sdk 0.159.0). rungs come from models.dev, a
  * different source, so the two are free to drift — anything outside this set is
  * dropped rather than sent. REVALIDATE ON EVERY codex BUMP.
  */
-const CODEX_EFFORTS: readonly string[] = ["minimal", "low", "medium", "high", "xhigh"];
+const CODEX_EFFORTS: readonly string[] = [
+  "minimal", "low", "medium", "high", "xhigh", "max",
+] satisfies readonly ModelReasoningEffort[];
 
 /**
  * The bare model id to pin, or undefined to let codex pick its own default.
@@ -553,6 +559,7 @@ const CODEX_MODEL_PRICING: Record<
   string,
   { input: number; cacheRead: number; cacheWrite: number; output: number }
 > = {
+  "gpt-6.1-sol": { input: 2, cacheRead: 0.1, cacheWrite: 2.5, output: 10 },
   "gpt-6-sol": { input: 2, cacheRead: 0.2, cacheWrite: 2.5, output: 10 },
   "gpt-6-astra": { input: 10, cacheRead: 1, cacheWrite: 12.5, output: 50 },
   "gpt-5.6-sol": { input: 5, cacheRead: 0.5, cacheWrite: 6.25, output: 30 },
