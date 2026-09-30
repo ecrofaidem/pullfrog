@@ -1,6 +1,5 @@
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PayloadEvent } from "../external.ts";
 import type { Mode } from "../modes.ts";
@@ -83,7 +82,7 @@ export function validateDocsPaths(rows: Array<{ path: string; mode: string }>, g
 }
 
 export async function prepareDocsUpdate(args: {
-  cwd: string; owner: string; repo: string; base: string; event: PayloadEvent; octokit: OctokitWithPlugins; token: string;
+  cwd: string; tmpdir: string; owner: string; repo: string; base: string; event: PayloadEvent; octokit: OctokitWithPlugins; token: string;
 }): Promise<DocsUpdateState> {
   const { cwd, owner, repo, base, event, octokit, token } = args;
   const number = event.issue_number;
@@ -105,7 +104,7 @@ export async function prepareDocsUpdate(args: {
   git(cwd, "merge-base", "--is-ancestor", mergeSha, baseline);
   const skillText = git(cwd, "show", `${baseline}:${skill}`);
   if (!skillText.trim()) throw new Error("Documentation skill is empty");
-  const directory = mkdtempSync(join(tmpdir(), "pullfrog-docs-"));
+  const directory = mkdtempSync(join(args.tmpdir, "pullfrog-docs-"));
   const diff = join(directory, "merged.diff");
   writeFileSync(diff, git(cwd, "diff", "--no-ext-diff", "--no-textconv", "-C", "--find-copies-harder", "-l0", `${mergeSha}^1`, mergeSha));
   writeFileSync(join(directory, "title.txt"), source.title);

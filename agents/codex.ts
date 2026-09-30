@@ -434,7 +434,7 @@ function writeCodexConfig(params: {
   effortRung: string | undefined;
 }): void {
   const shellEnabled = params.ctx.payload.shell === "enabled";
-  const sandboxMode = params.ctx.payload.push === "disabled" ? "read-only" : "workspace-write";
+  const sandboxMode = codexSandboxMode(params.ctx);
   const repoDir = process.cwd();
 
   const config = [
@@ -504,6 +504,13 @@ function writeCodexConfig(params: {
 
   writeFileSync(join(params.codexHome, "config.toml"), config, { mode: 0o600 });
   log.info(`» codex config: sandbox=${sandboxMode}, nativeShell=${shellEnabled}`);
+}
+
+function codexSandboxMode(ctx: AgentRunContext): "read-only" | "workspace-write" {
+  // Docs tasks edit and commit locally; only the runtime may publish them.
+  // Keep push disabled so their Git credential remains read-only.
+  return ctx.payload.event.trigger === "pull_request_merged" || ctx.payload.push !== "disabled"
+    ? "workspace-write" : "read-only";
 }
 
 // ── runner ─────────────────────────────────────────────────────────────────────
@@ -935,7 +942,7 @@ export const codex = agent({
     // securityOverrideFlags.
     const securityFlags = securityOverrideFlags({
       ctx,
-      sandboxMode: ctx.payload.push === "disabled" ? "read-only" : "workspace-write",
+      sandboxMode: codexSandboxMode(ctx),
       repoDir: process.cwd(),
       mcpServerUrl: ctx.mcpServerUrl,
       model: resolveCodexModel(ctx),
