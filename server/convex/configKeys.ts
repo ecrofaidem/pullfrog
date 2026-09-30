@@ -9,6 +9,8 @@ export const CONFIG_KEYS = {
   "review.authors": { field: "reviewAuthors", type: "string[]" },
   "review.authors_mode": { field: "reviewAuthorsMode", type: "'allowlist' | 'all'" },
   "review.on_push": { field: "reviewOnSynchronize", type: "boolean" },
+  "docs.update": { field: "docsUpdateEnabled", type: "boolean" },
+  "docs.skill": { field: "docsUpdateSkill", type: "string" },
   "comment.handle": { field: "handle", type: "string" },
   "comment.signature": { field: "signature", type: "string" },
   model: { field: "model", type: "string | null" },
@@ -32,6 +34,8 @@ export const CONFIG_KEY_LIST = Object.keys(CONFIG_KEYS) as ConfigKey[];
 export function toConfig(repo: Doc<"repos">): Record<ConfigKey, unknown> {
   const out = {} as Record<ConfigKey, unknown>;
   for (const key of CONFIG_KEY_LIST) out[key] = repo[CONFIG_KEYS[key].field];
+  out["docs.update"] ??= false;
+  out["docs.skill"] ??= ".claude/skills/doc-update/SKILL.md";
   return out;
 }
 

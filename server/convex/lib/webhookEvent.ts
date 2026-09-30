@@ -24,9 +24,11 @@ export type WebhookEvent =
           title: string;
           body: string | null;
           draft: boolean;
+          merged: boolean;
+          merge_commit_sha: string;
           user: User;
           head: { ref: string; sha: string };
-          base: { sha: string };
+          base: { sha: string; ref: string };
         };
       };
     }
@@ -110,9 +112,11 @@ export function selectWebhook(
   switch (event) {
     case "pull_request": {
       const pr = object(p.pull_request);
-      if (!["opened", "ready_for_review", "synchronize"].includes(action) || pr.draft) return null;
+      const merged = action === "closed" && pr.merged === true;
+      if (!["opened", "ready_for_review", "synchronize"].includes(action) && !merged) return null;
+      if (pr.draft) return null;
       if (
-        shouldIgnorePullRequestEvent({
+        !merged && shouldIgnorePullRequestEvent({
           action,
           ...(p.sender ? { sender: object(p.sender) } : {}),
           pull_request: pr.user ? { user: object(pr.user) } : {},
@@ -131,9 +135,11 @@ export function selectWebhook(
             title: text(pr.title),
             body: pr.body == null ? null : text(pr.body),
             draft: Boolean(pr.draft),
+            merged: pr.merged === true,
+            merge_commit_sha: text(pr.merge_commit_sha),
             user: user(pr.user),
             head: { ref: text(object(pr.head).ref), sha: text(object(pr.head).sha) },
-            base: { sha: text(object(pr.base).sha) },
+            base: { sha: text(object(pr.base).sha), ref: text(object(pr.base).ref) },
           },
         },
       };

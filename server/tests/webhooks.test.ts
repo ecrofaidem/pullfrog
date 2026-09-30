@@ -7,8 +7,10 @@ import { selectWebhook } from "../convex/lib/webhookEvent";
 import worker, { type Env } from "../webhook/worker";
 import * as github from "../convex/lib/github";
 
-vi.mock("../convex/lib/github", async (original) => ({
-  ...(await original<typeof import("../convex/lib/github")>()),
+vi.mock("../convex/lib/github", async (original) => {
+  const actual = await original<typeof import("../convex/lib/github")>();
+  return {
+  ...actual,
   findRepoInstallation: vi.fn(async () => ({ id: 1 })),
   createInstallationToken: vi.fn(async () => ({ token: "fixture-installation-token" })),
   collaboratorPermission: vi.fn(async () => "write"),
@@ -25,7 +27,8 @@ vi.mock("../convex/lib/github", async (original) => ({
     head: { ref: "branch", sha: "head" },
   })),
   getWorkflowRun: vi.fn(async () => null),
-}));
+  gh: vi.fn(actual.gh),
+}; });
 
 const modules = import.meta.glob("../convex/**/*.ts");
 const env: Env = {
@@ -130,6 +133,61 @@ afterEach(() => {
 });
 
 describe("webhook ingestion", () => {
+  it("retains merge identity through the webhook selector, including bot-authored merges", () => {
+    const event = pullRequest("closed");
+    const selected = selectWebhook("pull_request", { ...event, sender: bot,
+      pull_request: { ...event.pull_request, user: bot, merged: true, merge_commit_sha: "a".repeat(40), base: { ref: "main", sha: "b".repeat(40) } },
+    }, "pullfrog.yml");
+    expect(selected?.payload).toMatchObject({ pull_request: { merged: true, merge_commit_sha: "a".repeat(40), base: { ref: "main" } } });
+    expect(selectWebhook("pull_request", event, "pullfrog.yml")).toBeNull();
+  });
+
+  it.each([
+    { enabled: false, merged: true, base: "main", branch: "feature", files: ["app.ts"], count: 0 },
+    { enabled: true, merged: false, base: "main", branch: "feature", files: ["app.ts"], count: 0 },
+    { enabled: true, merged: true, base: "release", branch: "feature", files: ["app.ts"], count: 0 },
+    { enabled: true, merged: true, base: "main", branch: "docs/auto-update-pr-12", files: ["app.ts"], count: 0 },
+    { enabled: true, merged: true, base: "main", branch: "feature", files: ["README.md", "docs/guide.md"], count: 0 },
+    { enabled: true, merged: true, base: "main", branch: "feature", files: ["app.ts"], count: 1 },
+    ...[".claude/settings.json", ".claude/hooks/push-review-guard.sh", ".claude/skills/doc-update/SKILL.md", "AGENTS.md"].map((file) => ({ enabled: true, merged: true, base: "main", branch: "feature", files: [file], count: 1 })),
+  ])("gates automatic docs updates: %j", async ({ enabled, merged, base, branch, files, count }) => {
+    const t = convexTest(schema, modules);
+    const repo = await t.mutation(internal.repos.ensure, { owner: "owner", name: "repo" });
+    await t.run((ctx) => ctx.db.patch(repo._id, { docsUpdateEnabled: enabled }));
+    await t.mutation(internal.actionVersion.set, { repo: "ecrofaidem/pullfrog@main", version: "0.1.72" });
+    vi.mocked(github.gh).mockResolvedValue(files.map((filename) => ({ filename })));
+    const original = pullRequest("closed");
+    const payload = { ...original, sender: bot, pull_request: { ...original.pull_request, merged,
+      merge_commit_sha: "a".repeat(40), base: { ref: base }, head: { ref: branch, sha: "b".repeat(40) } } };
+    await t.action(internal.dispatch.handleEvent, { event: "pull_request", delivery: "docs-one", payload });
+    // A different delivery for the same merge must not create another run.
+    await t.action(internal.dispatch.handleEvent, { event: "pull_request", delivery: "docs-two", payload });
+    expect(github.dispatchWorkflow).toHaveBeenCalledTimes(count);
+    expect(github.createCheckRun).not.toHaveBeenCalled();
+    const runs = await t.run((ctx) => ctx.db.query("runs").collect());
+    expect(runs).toHaveLength(count);
+    if (count) {
+      const envelope = JSON.parse(vi.mocked(github.dispatchWorkflow).mock.calls[0][0].inputs.prompt);
+      expect(envelope.type).toBe("docs_update");
+      expect(envelope.event).toMatchObject({ trigger: "pull_request_merged", merge_sha: "a".repeat(40), body: null, authorPermission: "none" });
+      expect(runs[0].kind).toBe("docs_update");
+    }
+  });
+
+  it("does not skip a code change hidden beyond the first files page", async () => {
+    const t = convexTest(schema, modules);
+    const repo = await t.mutation(internal.repos.ensure, { owner: "owner", name: "repo" });
+    await t.run((ctx) => ctx.db.patch(repo._id, { docsUpdateEnabled: true }));
+    await t.mutation(internal.actionVersion.set, { repo: "ecrofaidem/pullfrog@main", version: "0.1.72" });
+    vi.mocked(github.gh).mockResolvedValueOnce(Array.from({ length: 100 }, (_, i) => ({ filename: `docs/${i}.md` })))
+      .mockResolvedValueOnce([{ filename: "app.ts" }]);
+    const original = pullRequest("closed");
+    await t.action(internal.dispatch.handleEvent, { event: "pull_request", delivery: "paged", payload: {
+      ...original, pull_request: { ...original.pull_request, merged: true, merge_commit_sha: "a".repeat(40), base: { ref: "main" } },
+    } });
+    expect(github.gh).toHaveBeenCalledTimes(2);
+    expect(github.dispatchWorkflow).toHaveBeenCalledTimes(1);
+  });
   it.each([
     ["workflow_run", workflow(".github/workflows/dashboard.yml")],
     ["pull_request", pullRequest("edited")],

@@ -21,6 +21,7 @@ import {
   findRepoInstallation,
   getPullRequest,
   getWorkflowRun,
+  gh,
   type WorkflowRunInfo,
 } from "./lib/github";
 import { selectWebhook } from "./lib/webhookEvent";
@@ -137,6 +138,7 @@ async function repoFor(ctx: ActionCtx, payload: Json): Promise<Doc<"repos"> | nu
 
 async function handlePullRequest(ctx: ActionCtx, payload: Json) {
   const action = String(payload.action);
+  if (action === "closed") return handleDocsUpdate(ctx, payload);
   const triggers: Record<string, RunTrigger> = {
     opened: "pull_request_opened",
     ready_for_review: "pull_request_ready_for_review",
@@ -182,6 +184,41 @@ async function handlePullRequest(ctx: ActionCtx, payload: Json) {
     triggerer: String(payload.sender?.login ?? pr.user.login),
     prompt,
     ...(reviewedHead ? { beforeSha: reviewedHead, baseSha: String(pr.base?.sha ?? "") } : {}),
+  });
+}
+
+async function handleDocsUpdate(ctx: ActionCtx, payload: Json) {
+  const repo = await repoFor(ctx, payload);
+  const pr = payload.pull_request;
+  if (!repo?.docsUpdateEnabled || !pr?.merged || pr.base?.ref !== repo.defaultBranch ||
+      String(pr.head?.ref).startsWith("docs/auto-update-pr-") || hasIgnoreTag(pr.body, repo.handle)) return;
+  if (!/^[0-9a-f]{40}$/.test(pr.merge_commit_sha)) throw new Error("Merged PR has no valid merge SHA");
+  const installation = await findRepoInstallation(repo.owner, repo.name);
+  if (!installation) throw new Error("Docs update repository has no App installation");
+  const token = (await createInstallationToken(installation.id, { repositories: [repo.name] })).token;
+  // Read every page. Renames out of an ignored path still have documentation impact.
+  const ignored = (path: string) => !path.split("/").includes(".claude") &&
+    (path.split("/").at(-1) === "README.md" || (path.endsWith(".md") && path.split("/").slice(0, -1).includes("docs")));
+  let needsDocs = false;
+  for (let page = 1; ; page++) {
+    const files = await gh<Array<{ filename: string; previous_filename?: string }>>(
+      `/repos/${repo.owner}/${repo.name}/pulls/${pr.number}/files?per_page=100&page=${page}`, { token });
+    if (files.some((file) => !ignored(file.filename) || (file.previous_filename && !ignored(file.previous_filename)))) needsDocs = true;
+    // GitHub caps this endpoint at 3,000 files. At that boundary defer the
+    // decision to the complete local merge diff instead of trusting a prefix.
+    if (page === 30) { needsDocs = true; break; }
+    if (files.length < 100) break;
+  }
+  if (!needsDocs) return;
+  await dispatchRun(ctx, {
+    repo, token, kind: "docs_update", trigger: "pull_request_merged",
+    issue: { number: pr.number, title: pr.title, body: null },
+    pr: { headRef: repo.defaultBranch, headSha: pr.merge_commit_sha },
+    triggerer: String(payload.sender?.login ?? pr.user.login),
+    // Publication is owned by the runtime, not by the triggering user's role.
+    authorPermission: "none",
+    prompt: "Update the repository documentation for this merged pull request using DocsUpdate mode.",
+    docs: { mergeSha: pr.merge_commit_sha, skill: repo.docsUpdateSkill ?? ".claude/skills/doc-update/SKILL.md" },
   });
 }
 
@@ -269,6 +306,7 @@ interface DispatchRunParams {
   /** already-minted installation token and resolved permission, when the caller has them */
   token?: string;
   authorPermission?: Awaited<ReturnType<typeof collaboratorPermission>>;
+  docs?: { mergeSha: string; skill: string };
 }
 
 async function dispatchRun(ctx: ActionCtx, params: DispatchRunParams) {
@@ -325,11 +363,11 @@ async function dispatchRun(ctx: ActionCtx, params: DispatchRunParams) {
     }));
 
   const dispatchId = crypto.randomUUID().replace(/-/g, "").slice(0, 8);
-  const kind = params.kind === "task" ? "task" : "review";
+  const kind = params.kind === "docs_update" ? "docs" : params.kind === "task" ? "task" : "review";
   const title = `${repo.handle}: ${kind} ${pr ? "" : "issue "}#${issue.number} · ${dispatchId}`;
 
   let checkRunId: number | undefined;
-  if (repo.statusChecks && pr?.headSha) {
+  if (!params.docs && repo.statusChecks && pr?.headSha) {
     try {
       checkRunId = (
         await createCheckRun({
@@ -364,6 +402,10 @@ async function dispatchRun(ctx: ActionCtx, params: DispatchRunParams) {
     timeout: repo.timeout,
     ...(checkRunId !== undefined ? { checkRunId } : {}),
   });
+  if (params.docs) {
+    envelope.type = "docs_update";
+    Object.assign(event, { merge_sha: params.docs.mergeSha, docs_skill: params.docs.skill, title: "Documentation update", body: null });
+  }
 
   const runId = await ctx.runMutation(internal.runs.recordDispatch, {
     owner: repo.owner,
@@ -376,6 +418,7 @@ async function dispatchRun(ctx: ActionCtx, params: DispatchRunParams) {
     title,
     ...(checkRunId !== undefined ? { checkRunId } : {}),
   });
+  if (!runId) return;
 
   try {
     await dispatchWorkflow({

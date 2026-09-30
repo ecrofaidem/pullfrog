@@ -337,9 +337,17 @@ interface UnknownEvent extends BasePayloadEvent {
   trigger: "unknown";
 }
 
+interface PullRequestMergedEvent extends BasePayloadEvent {
+  trigger: "pull_request_merged";
+  issue_number: number;
+  merge_sha: string;
+  docs_skill: string;
+}
+
 // discriminated union for payload event based on trigger
 // note: all events use issue_number for consistency (PRs are issues in GitHub's API)
 export type PayloadEvent =
+  | PullRequestMergedEvent
   | PullRequestOpenedEvent
   | PullRequestReadyForReviewEvent
   | PullRequestSynchronizeEvent

@@ -82,7 +82,7 @@ export function resolveGit(): void {
   log.debug(`» git binary: ${resolvedPath} (sha256: ${sha256.slice(0, 12)}...)`);
 }
 
-function verifyGitBinary(): string {
+export function verifyGitBinary(): string {
   if (!gitBinary) {
     throw new Error("git binary not initialized — call resolveGit() at startup");
   }

@@ -189,6 +189,8 @@ const patchValidator = v.object({
   reviewAuthorsMode: v.optional(reviewAuthorsMode),
   reviewAuthors: v.optional(v.array(v.string())),
   reviewOnSynchronize: v.optional(v.boolean()),
+  docsUpdateEnabled: v.optional(v.boolean()),
+  docsUpdateSkill: v.optional(v.string()),
   timeout: v.optional(v.string()),
 });
 
@@ -197,6 +199,9 @@ export type RepoPatch = typeof patchValidator.type;
 /** normalise and check a patch; throws a plain sentence the dashboard can show beside the field. */
 export function validatePatch(input: RepoPatch): RepoPatch {
   const patch = { ...input };
+  if (patch.docsUpdateSkill !== undefined && !/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[a-zA-Z0-9_.\/-]+\.md$/.test(patch.docsUpdateSkill)) {
+    throw new Error("docs.skill must be a repository-relative Markdown path without parent traversal");
+  }
   if (patch.effort !== undefined && patch.effort !== null) {
     if (!(patch.effort >= 0 && patch.effort <= 1)) throw new Error("effort must be within [0,1]");
   }

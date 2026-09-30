@@ -16,6 +16,8 @@ import { isTransientNetworkError } from "./isTransientNetworkError.ts";
  * Keep in sync with `STRING_FIELDS` in `app/api/workflow-run/[runId]/route.ts`.
  */
 const STRING_KEYS = [
+  "docsOutcome",
+  "docsPullRequestUrl",
   "prNodeId",
   "issueNodeId",
   "reviewNodeId",
