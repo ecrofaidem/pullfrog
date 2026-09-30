@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { finishDocsUpdate, parseDocsResult, prepareDocsUpdate, validateDocsPaths } from "./docsUpdate.ts";
 import type { OctokitWithPlugins } from "./github.ts";
+import { createFileReader } from "../mcp/readFile.ts";
 
 vi.mock("./gitAuth.ts", () => ({ verifyGitBinary: () => "/usr/bin/git", $git: vi.fn(async () => ({})) }));
 
@@ -14,6 +15,8 @@ afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: tru
 function fixture() {
   const cwd = mkdtempSync(join(tmpdir(), "docs-test-"));
   dirs.push(cwd);
+  const runtimeDir = mkdtempSync(join(tmpdir(), "docs-runtime-test-"));
+  dirs.push(runtimeDir);
   const git = (...args: string[]) => execFileSync("/usr/bin/git", ["-C", cwd, ...args], { encoding: "utf8",
     env: { PATH: "/usr/bin:/bin", HOME: cwd, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" } }).trim();
   git("init", "-b", "main");
@@ -40,16 +43,31 @@ function fixture() {
     paginate: vi.fn(async () => [{ name: "docs" }]),
   };
   const octokit = api as unknown as OctokitWithPlugins;
-  const prepare = () => prepareDocsUpdate({ cwd, owner: "owner", repo: "repo", base: "main", octokit, token: "fixture",
+  const prepare = () => prepareDocsUpdate({ cwd, tmpdir: runtimeDir, owner: "owner", repo: "repo", base: "main", octokit, token: "fixture",
     event: { trigger: "pull_request_merged", issue_number: 42, merge_sha: sha, docs_skill: "docs/skill.md" } });
   const change = (path = "README.md") => {
     writeFileSync(join(cwd, path), "Updated documentation\n"); git("add", path); git("commit", "-m", "docs");
     writeFileSync(join(cwd, ".doc-pr-body.md"), "Document the exported value.");
   };
-  return { cwd, git, sha, source, api, octokit, prepare, change };
+  return { cwd, runtimeDir, git, sha, source, api, octokit, prepare, change };
 }
 
 describe("post-merge documentation", () => {
+  it("makes all authoritative inputs readable within the run's file-reader roots", async () => {
+    const f = fixture(); const state = await f.prepare();
+    const read = createFileReader({ roots: () => [f.cwd, f.runtimeDir], deniedPaths: [], cwd: f.cwd, coverage: () => [] });
+    for (const [label, expected] of [
+      ["Authoritative merged diff", "export const value = 1"],
+      ["Untrusted title", f.source.title],
+      ["Untrusted body", f.source.body],
+    ]) {
+      const path = state.prompt.split("\n").find((line) => line.startsWith(`${label}: `))!.slice(label!.length + 2);
+      expect((await read({ path })).content).toContain(expected);
+    }
+    const unrelated = mkdtempSync(join(tmpdir(), "docs-unrelated-")); dirs.push(unrelated);
+    writeFileSync(join(unrelated, "private.txt"), "unrelated run");
+    await expect(read({ path: join(unrelated, "private.txt") })).rejects.toThrow(/access denied/i);
+  });
   it("derives the merge diff, starts at current main, and keeps untrusted text out of the prompt", async () => {
     const f = fixture(); const state = await f.prepare();
     expect(state.baseline).toBe(f.sha);
@@ -64,7 +82,7 @@ describe("post-merge documentation", () => {
   it("rejects a squash commit instead of silently using an incomplete diff", async () => {
     const f = fixture(); f.git("checkout", "feature");
     const sha = f.git("rev-parse", "HEAD"); f.source.merge_commit_sha = sha;
-    await expect(prepareDocsUpdate({ cwd: f.cwd, owner: "owner", repo: "repo", base: "main", octokit: f.octokit, token: "fixture",
+    await expect(prepareDocsUpdate({ cwd: f.cwd, tmpdir: f.runtimeDir, owner: "owner", repo: "repo", base: "main", octokit: f.octokit, token: "fixture",
       event: { trigger: "pull_request_merged", issue_number: 42, merge_sha: sha, docs_skill: "docs/skill.md" } })).rejects.toThrow("two-parent");
   });
   it("requires explicit no_change and does not publish", async () => {

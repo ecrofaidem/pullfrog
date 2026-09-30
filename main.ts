@@ -653,7 +653,7 @@ export async function main(): Promise<MainResult> {
     if (isDocsUpdate) {
       if (process.env.PULLFROG_DOCS_UPDATE_ENABLED !== "true") throw new Error("Docs updater is not activated in this consumer workflow");
       if (!runContext.codexPool || agent.name !== "codex") throw new Error("Docs updater requires the Codex subscription pool");
-      docsUpdate = await prepareDocsUpdate({ cwd: process.cwd(), owner: runContext.repo.owner, repo: runContext.repo.name,
+      docsUpdate = await prepareDocsUpdate({ cwd: process.cwd(), tmpdir, owner: runContext.repo.owner, repo: runContext.repo.name,
         base: runContext.repo.data.default_branch, event: payload.event, octokit, token: tokenRef.gitToken });
       payload.prompt = docsUpdate.prompt;
     }
