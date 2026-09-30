@@ -23,12 +23,23 @@ export const recordDispatch = internalMutation({
     checkRunId: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    // Atomic reservation across webhook deliveries. A failed dispatch is retried
+    // through its Actions run or a manual dispatch, never by redelivering a merge.
+    if (args.kind === "docs_update") {
+      const previous = await ctx.db.query("runs")
+        .withIndex("by_repo_pr", (q) => q.eq("owner", args.owner).eq("repo", args.repo).eq("prNumber", args.prNumber))
+        .filter((q) => q.and(q.eq(q.field("kind"), "docs_update"), q.eq(q.field("headSha"), args.headSha)))
+        .first();
+      if (previous) return null;
+    }
     const now = Date.now();
     return ctx.db.insert("runs", { ...args, status: "dispatched", createdAt: now, updatedAt: now });
   },
 });
 
 const patchableStrings = [
+  "docsOutcome",
+  "docsPullRequestUrl",
   "model",
   "agent",
   "credential",
@@ -158,6 +169,7 @@ export const patchFromAction = internalMutation({
     const patch: Record<string, string | number> = {};
     for (const key of patchableStrings) {
       const value = fields[key];
+      if (key === "docsOutcome" && !["no_change", "published", "blocked", "failed"].includes(String(value))) continue;
       if (typeof value === "string" && value.length > 0) patch[key] = value;
     }
     for (const key of patchableNumbers) {

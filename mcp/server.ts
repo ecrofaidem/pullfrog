@@ -210,7 +210,9 @@ function buildCommonTools(ctx: ToolContext, outputSchema?: JsonSchema): Pullfrog
     tools.push(GhTool(ctx));
   }
 
-  return tools;
+  return ctx.payload.event.trigger === "pull_request_merged"
+    ? tools.filter((entry) => ["git", "read_file", "shell", "kill_background", "set_output"].includes(entry.name))
+    : tools;
 }
 
 export function buildOrchestratorTools(
@@ -232,7 +234,9 @@ export function buildOrchestratorTools(
   if (ctx.signedCommits) {
     tools.push(CommitChangesTool(ctx));
   }
-  return tools;
+  return ctx.payload.event.trigger === "pull_request_merged"
+    ? tools.filter((entry) => ["git", "read_file", "shell", "kill_background", "set_output", "select_mode"].includes(entry.name))
+    : tools;
 }
 
 type McpStartResult = {

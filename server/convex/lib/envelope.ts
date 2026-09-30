@@ -6,6 +6,7 @@
 import type { AuthorPermission } from "./github";
 
 export type RunTrigger =
+  | "pull_request_merged"
   | "pull_request_opened"
   | "pull_request_ready_for_review"
   | "pull_request_synchronize"

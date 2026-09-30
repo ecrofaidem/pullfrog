@@ -72,6 +72,8 @@ export default defineSchema({
     reviewAuthorsMode,
     reviewAuthors: v.array(v.string()),
     reviewOnSynchronize: v.boolean(),
+    docsUpdateEnabled: v.optional(v.boolean()),
+    docsUpdateSkill: v.optional(v.string()),
     /** action `timeout` input, e.g. `1h` */
     timeout: v.string(),
     updatedAt: v.number(),
@@ -169,6 +171,8 @@ export default defineSchema({
     status: runStatus,
     conclusion: v.optional(v.string()),
     checkRunId: v.optional(v.number()),
+    docsOutcome: v.optional(v.union(v.literal("no_change"), v.literal("published"), v.literal("blocked"), v.literal("failed"))),
+    docsPullRequestUrl: v.optional(v.string()),
     /** fields the action PATCHes back (see action/utils/patchWorkflowRunFields.ts) */
     model: v.optional(v.string()),
     agent: v.optional(v.string()),

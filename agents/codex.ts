@@ -477,7 +477,8 @@ function writeCodexConfig(params: {
     // client abort turns a working checkout into a spurious tool error.
     "tool_timeout_sec = 660",
     "",
-    ...repoMcpApprovals(repoDir),
+    // Docs publication is runtime-owned; repository MCP servers may expose writes.
+    ...(params.ctx.payload.event.trigger === "pull_request_merged" ? [] : repoMcpApprovals(repoDir)),
     // UNTRUSTED, deliberately, and this one line is the whole config-precedence
     // boundary. Codex loads `<repo>/.codex/config.toml` as a layer that
     // OUTRANKS ours (project 25 vs user 20), and its denylist strips none of

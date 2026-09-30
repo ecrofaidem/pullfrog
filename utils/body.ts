@@ -157,6 +157,7 @@ async function fetchBodyHtml(ctx: ResolveBodyContext): Promise<string | undefine
     // triggers without a body field that needs resolution
     case "workflow_dispatch":
     case "fix_review":
+    case "pull_request_merged":
     case "unknown":
       return undefined;
 

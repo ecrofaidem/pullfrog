@@ -12,6 +12,7 @@ import { startInstallation } from "./mcp/dependencies.ts";
 import { startMcpHttpServer, type ToolContext } from "./mcp/server.ts";
 import { getSandboxMethod } from "./mcp/shell.ts";
 import { computeModes } from "./modes.ts";
+import { DOCS_MODE, DOCS_OUTPUT_SCHEMA, prepareDocsUpdate, finishDocsUpdate, type DocsUpdateState } from "./utils/docsUpdate.ts";
 import { getModelProvider } from "./models.ts";
 import { initToolState, primaryRepoState } from "./toolState.ts";
 import {
@@ -159,6 +160,13 @@ export async function main(): Promise<MainResult> {
   timer.checkpoint("runContextData");
 
   const payload = resolvePayload(resolvedPromptInput, runContext.repoSettings);
+  const isDocsUpdate = payload.event.trigger === "pull_request_merged";
+  if (isDocsUpdate) {
+    payload.push = "disabled";
+    payload.shell = "restricted";
+    delete payload.event.authorPermission;
+    payload.xrepo = undefined;
+  }
 
   // seed toolState with the primary repo (keyed in `repos`). dir is the
   // run-entry cwd; configureRepoGit refreshes it after any payload.cwd chdir.
@@ -393,6 +401,7 @@ export async function main(): Promise<MainResult> {
   let progressCallbackDisabled = false;
   let todoTracker: ReturnType<typeof createTodoTracker> | undefined;
   let vertexCredentials: VertexCredentials | undefined;
+  let docsUpdate: DocsUpdateState | undefined;
 
   try {
     if (payload.cwd && process.cwd() !== payload.cwd) {
@@ -641,13 +650,21 @@ export async function main(): Promise<MainResult> {
     }
     timer.checkpoint("lifecycleHooks::setup");
 
+    if (isDocsUpdate) {
+      if (process.env.PULLFROG_DOCS_UPDATE_ENABLED !== "true") throw new Error("Docs updater is not activated in this consumer workflow");
+      if (!runContext.codexPool || agent.name !== "codex") throw new Error("Docs updater requires the Codex subscription pool");
+      docsUpdate = await prepareDocsUpdate({ cwd: process.cwd(), owner: runContext.repo.owner, repo: runContext.repo.name,
+        base: runContext.repo.data.default_branch, event: payload.event, octokit, token: tokenRef.gitToken });
+      payload.prompt = docsUpdate.prompt;
+    }
+
     const agentId = agent.name;
-    const modes = [
+    const modes = isDocsUpdate ? [DOCS_MODE] : [
       ...computeModes(agentId, runContext.repoSettings.signedCommits),
       ...runContext.repoSettings.modes,
     ];
 
-    const outputSchema = resolveOutputSchema();
+    const outputSchema = isDocsUpdate ? DOCS_OUTPUT_SCHEMA : resolveOutputSchema();
 
     // mcpServerUrl and tmpdir are set after server starts
     toolContext = {
@@ -675,7 +692,7 @@ export async function main(): Promise<MainResult> {
       prepushScript: runContext.repoSettings.prepushScript,
       prApproveEnabled: runContext.repoSettings.prApproveEnabled,
       autoMergeEnabled: runContext.repoSettings.autoMergeEnabled,
-      signedCommits: runContext.repoSettings.signedCommits,
+      signedCommits: isDocsUpdate ? false : runContext.repoSettings.signedCommits,
       repoIntelligence: runContext.repoSettings.repoIntelligence,
       modeInstructions: runContext.repoSettings.modeInstructions,
       toolState,
@@ -798,7 +815,7 @@ export async function main(): Promise<MainResult> {
       modes,
       agentId,
       outputSchema,
-      signedCommits: runContext.repoSettings.signedCommits,
+      signedCommits: isDocsUpdate ? false : runContext.repoSettings.signedCommits,
       repoIntelligence: runContext.repoSettings.repoIntelligence,
       learningsFilePath: toolState.learningsFilePath ?? null,
       learningsHeadings: runContext.repoSettings.learningsHeadings,
@@ -1018,6 +1035,15 @@ export async function main(): Promise<MainResult> {
       );
     }
 
+    if (docsUpdate) {
+      if (!result.success) throw new Error(result.error ?? "Docs agent failed");
+      const docsResult = await finishDocsUpdate(docsUpdate, toolState.output, octokit);
+      toolState.output = JSON.stringify(docsResult);
+      await patchWorkflowRunFields(toolContext, { docsOutcome: docsResult.outcome,
+        ...(docsResult.outcome === "published" ? { docsPullRequestUrl: docsResult.url } : {}) });
+      result.output = docsResult.outcome === "published" ? `Documentation PR: ${docsResult.url}` : `No documentation update needed: ${docsResult.reason}`;
+    }
+
     // success-path cleanup: postReview → persistSummary → persistLearnings →
     // failure-error-report → stranded-comment cleanup → job summary → output
     // marker. each step is best-effort; see `finalizeSuccessRun` for ordering
@@ -1033,6 +1059,9 @@ export async function main(): Promise<MainResult> {
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "unknown error occurred";
+    if (isDocsUpdate && toolContext) await patchWorkflowRunFields(toolContext, {
+      docsOutcome: errorMessage.startsWith("DOC BLOCKER:") ? "blocked" : "failed",
+    });
     progressCallbackDisabled = true;
     todoTracker?.cancel();
     killTrackedChildren();

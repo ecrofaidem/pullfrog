@@ -17,6 +17,51 @@ What it does:
   ```
 - **Dispatcher.** A Cloudflare Worker receives the App's webhooks, verifies their signatures, and rejects unrelated events before they reach Convex. Convex applies the same filter, atomically deduplicates and schedules compact events, then dispatches `pullfrog.yml`. Repository review policy and permission checks remain in `convex/dispatch.ts`.
 
+## Post-merge documentation
+
+The `docs.update` repository setting enables documentation tasks for PRs merged
+into the default branch. It defaults to disabled. Set `docs.skill` to the
+repository-relative Markdown skill path; its default is
+`.claude/skills/doc-update/SKILL.md`. These keys use the existing configuration
+API. The consumer must also set `PULLFROG_DOCS_UPDATE_ENABLED=true` on the action
+and require the Codex subscription pool. No Anthropic key is used by this task.
+
+Deploy both Convex and the webhook Worker before enabling the setting. Pin the
+consumer to an action revision with docs support. Suspend any existing docs
+updater before enabling this automation, and allow its in-flight runs to finish.
+For rollback, disable `docs.update`, wait for existing docs runs to finish, then
+restore the previous updater's trigger. Settings only gate new dispatches.
+
+The dispatcher skips docs follow-up branches and changes limited to README files
+or Markdown in `docs/` trees, excluding `.claude/`. Operational files and agent
+instructions still reach the documentation skill. It honors the configured ignore tag. Bot-authored
+merges remain eligible, independent of the review-author allowlist. It reserves
+one docs run per repository, PR, and merge SHA, including repeated deliveries.
+Docs tasks do not post a review status check on the already-merged PR head.
+
+The runtime derives the two-parent merge's first-parent diff locally and starts
+the follow-up branch from current default-branch HEAD. It provides title and body
+as untrusted files. Other merge methods fail explicitly. The agent reads the
+repository skill, commits locally, and reports a schema-validated result.
+Publication stays outside the agent's tool set. The runtime uploads inspected
+blobs through the GitHub API, creates the branch and PR as the App, and verifies
+both before recording `published`. `no_change` requires an explicit reason and
+no new commits or remote docs branch. Blockers and publication failures fail the
+run. The run row records `docsOutcome` and, on publication, `docsPullRequestUrl`.
+
+Only regular, non-executable files and deletions can publish. Workflow YAML never
+publishes. README files and Markdown within `docs/`, excluding `.claude/`, need
+no pre-push review. Other paths require a HEAD-pinned `.review-token` unless the
+repository's tracked `PUSH_REVIEW_GATE_DEFAULT` is `off`. The runtime captures
+that setting before the agent runs. Repositories without that gate use `on`.
+The token is a cooperating-agent review receipt, not an independent security
+boundary. A conflicting remote docs branch is never overwritten.
+
+Retry failed runs through Actions after fixing the cause. If a previous attempt
+created the same tree and source marker, publication can reuse the branch and PR.
+Different output requires human inspection. Webhook redelivery does not retry a
+failed dispatch; dispatch failures appear in run history and need a manual run.
+
 ## Comment requests
 
 Mention the repository's configured handle in a new issue or PR conversation
