@@ -208,6 +208,7 @@ function securityOverrideFlags(params: {
   mcpServerUrl: string;
   model: string | undefined;
   effortRung: string | undefined;
+  fastMode: boolean;
 }): string[] {
   const shellEnabled = params.ctx.payload.shell === "enabled";
   const features = [
@@ -251,6 +252,7 @@ function securityOverrideFlags(params: {
     ...(params.effortRung
       ? ["-c", `model_reasoning_effort=${JSON.stringify(params.effortRung)}`]
       : []),
+    ...(params.fastMode ? ["-c", 'service_tier="fast"', "-c", "features.fast_mode=true"] : []),
     ...features.flatMap((entry) => ["-c", `features.${entry}`]),
   ];
 }
@@ -432,6 +434,7 @@ function writeCodexConfig(params: {
   codexHome: string;
   model: string | undefined;
   effortRung: string | undefined;
+  fastMode: boolean;
 }): void {
   const shellEnabled = params.ctx.payload.shell === "enabled";
   const sandboxMode = codexSandboxMode(params.ctx);
@@ -449,8 +452,10 @@ function writeCodexConfig(params: {
     'web_search = "live"',
     ...(params.model ? [`model = ${JSON.stringify(params.model)}`] : []),
     ...(params.effortRung ? [`model_reasoning_effort = ${JSON.stringify(params.effortRung)}`] : []),
+    ...(params.fastMode ? ['service_tier = "fast"'] : []),
     "",
     "[features]",
+    ...(params.fastMode ? ["fast_mode = true"] : []),
     tomlBool(CODEX_DISABLED_FEATURES, false),
     tomlBool(CODEX_SHELL_FEATURES, shellEnabled),
     "",
@@ -503,7 +508,7 @@ function writeCodexConfig(params: {
   ].join("\n");
 
   writeFileSync(join(params.codexHome, "config.toml"), config, { mode: 0o600 });
-  log.info(`» codex config: sandbox=${sandboxMode}, nativeShell=${shellEnabled}`);
+  log.info(`» codex config: sandbox=${sandboxMode}, nativeShell=${shellEnabled}, requestedServiceTier=${params.fastMode ? "fast" : "default"}`);
 }
 
 function codexSandboxMode(ctx: AgentRunContext): "read-only" | "workspace-write" {
@@ -871,12 +876,14 @@ export const codex = agent({
     installBundledSkills({ home: ctx.tmpdir });
 
     const effort = resolveRunEffort(ctx);
+    const fastMode = process.env.PULLFROG_CODEX_FAST_MODE === "1";
     if (effort.rung && !CODEX_EFFORTS.includes(effort.rung)) {
       log.warning(`» effort ${effort.rung} not sent — codex doesn't accept that level`);
     }
     writeCodexConfig({
       ctx,
       codexHome,
+      fastMode,
       model: resolveCodexModel(ctx),
       effortRung: effort.rung && CODEX_EFFORTS.includes(effort.rung) ? effort.rung : undefined,
     });
@@ -942,6 +949,7 @@ export const codex = agent({
     // securityOverrideFlags.
     const securityFlags = securityOverrideFlags({
       ctx,
+      fastMode,
       sandboxMode: codexSandboxMode(ctx),
       repoDir: process.cwd(),
       mcpServerUrl: ctx.mcpServerUrl,
