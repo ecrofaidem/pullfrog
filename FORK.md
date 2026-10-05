@@ -23,6 +23,22 @@ Deliberate divergences from upstream in the action tree (expect a merge conflict
 - `skills/write-good-docs/`, `skills/simple-english/`, `utils/skills.ts`, `utils/instructions.ts`, and `agents/codex.ts` — all three harnesses load the complete writing skills before drafting review comments or final reports. The installer copies references and scripts into the agent's temporary home. Codex reads the skill files; OpenCode and Claude use their native skill tools. Source versions and SHA-256 hashes are recorded in `skills/report-skills.json`; supplied skill files remain unchanged. The added `write-good-docs/ATTRIBUTION.md` documents the missing source notice. To update a skill, replace its complete directory from the source, update its manifest entry, and run `pnpm exec vitest run utils/skills.test.ts` plus the report-writing agent smoke test.
 - `utils/reviewConventions.ts`, `modes.ts`, and `agents/reviewer.ts` — full reviews, incremental reviews, and review specialists read applicable repository guidance before assessing conventions. Findings cite written requirements, account for exceptions, and use severity based on consequences. UI changes also require an internal map of existing composed components and inspected callers, including inline UI. Findings must identify a written rule, a suitable existing component or compatible extension, and a concrete consequence. Valid feature wrappers and documented exceptions remain permitted. The agent records consulted guidance in its internal run logs. This is prompt guidance, not a machine-enforced read-coverage gate or persistent learning.
 
+## Codex Fast mode
+
+Set `PULLFROG_CODEX_FAST_MODE: "1"` in the action step's `env:` to request
+Fast mode for native Codex runs. The harness sets `service_tier = "fast"`
+and `features.fast_mode = true` for the first turn and resumed turns.
+The model, reasoning effort, account selection, and tool permissions keep
+their configured values. Other harnesses ignore this setting.
+
+The setting is off by default. Remove it or set it to `"0"` to stop requesting
+Fast mode on new runs. The run log records `requestedServiceTier=fast` when
+enabled; this records the request, not a provider speed guarantee.
+Fast mode requires a supported model and account. For included subscription
+usage, it consumes allowance at 2.5 times the Standard rate. See
+[OpenAI's speed documentation](https://learn.chatgpt.com/docs/agent-configuration/speed)
+for availability and current usage rates.
+
 ## Single-session Codex reviews
 
 Native Codex Review and IncrementalReview run baseline correctness, conventions,
