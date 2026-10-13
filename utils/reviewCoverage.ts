@@ -217,6 +217,7 @@ export async function currentReviewCoverage(ctx: Pick<ToolContext, "toolState">,
     cwd: repo.dir,
     env: filterEnv(),
     timeout: 30_000,
+    seal: true,
   });
   if (checked.timedOut || checked.exitCode !== 0) {
     throw new Error("Tracked checkout content changed or could not be verified. Restore the reviewed revision before recording or publishing coverage.");

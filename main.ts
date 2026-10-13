@@ -35,6 +35,11 @@ import { primeCodexUsage } from "./utils/codexUsage.ts";
 import { describeCodexPoolDenial, hasExternalCodexAuth } from "./utils/codexPool.ts";
 import { recordToolUse } from "./utils/runStats.ts";
 import { checkConfiguredCredentials } from "./utils/credentialFallback.ts";
+import {
+  initializeCredentialPool,
+  resolvePoolModel,
+  selectConfiguredCredential,
+} from "./utils/credentialPool.ts";
 import { recordDiffReadFromToolUse } from "./utils/diffCoverage.ts";
 import { onExitSignal } from "./utils/exitHandler.ts";
 import { resolveGit, setGitAuthServer } from "./utils/gitAuth.ts";
@@ -156,6 +161,9 @@ export async function main(): Promise<MainResult> {
     octokit: initialOctokit,
     token: jobToken,
     runType: typeof resolvedPromptInput === "string" ? undefined : resolvedPromptInput.type,
+    plainPrompt: typeof resolvedPromptInput === "string",
+    routedTier:
+      typeof resolvedPromptInput === "string" ? undefined : resolvedPromptInput.routing?.tier,
   });
   timer.checkpoint("runContextData");
 
@@ -226,10 +234,11 @@ export async function main(): Promise<MainResult> {
       authorPermission: undefined,
       oidc: oidcCredentials,
     });
-    const errorMessage =
-      runContext.commercialRefused === "subscription_unpaid"
-        ? "Pro renewal failed for this organization"
-        : "Pro plan required for this organization";
+    const errorMessage = {
+      commercial: "Pro trial expired for this organization",
+      subscription_ended: "Pro subscription ended for this organization",
+      subscription_unpaid: "Pro renewal failed for this organization",
+    }[runContext.commercialRefused];
     log.error(errorMessage);
     const body = formatCommercialGateSummary({
       reason: runContext.commercialRefused,
@@ -249,7 +258,11 @@ export async function main(): Promise<MainResult> {
   // installers key their fs cache off that variable *at call time* — so a
   // second call silently invalidated the cache and re-downloaded plus
   // re-extracted the whole opencode tarball on every run.
-  const tmpdir = createTempDirectory();
+  //
+  // `using` removes it only when main() returns, after both run-end paths
+  // below have persisted the PR summary and learnings they read from here.
+  using tempDir = createTempDirectory();
+  const tmpdir = tempDir.path;
 
   // install OpenCode + capture the BASELINE model set BEFORE dbSecrets and
   // Codex auth.json are in scope. this is the set of models OpenCode can
@@ -271,22 +284,31 @@ export async function main(): Promise<MainResult> {
   const repoDir = payload.cwd;
   const preIntrospectionDirty = !runContext.codexPool && repoDir ? await dirtyTrackedPaths({ cwd: repoDir }) : null;
   const opencodeCliPath = runContext.codexPool ? undefined : await agents.opencode.install();
-  if (opencodeCliPath !== undefined) captureBaselineModels(opencodeCliPath);
+  if (opencodeCliPath !== undefined) captureBaselineModels({ cliPath: opencodeCliPath, tmpdir });
 
+  // DRAGON: nothing above this block may resolve a model or read a provider env var — console-stored
+  // config (`OPENAI_COMPATIBLE_MODEL`, `BEDROCK_MODEL_ID`, …) is not in process.env yet. 0.1.85 did, and broke every such run (#1433).
   // inject account-level secrets into process.env (YAML secrets take precedence).
   // sanitizeSecret trims + masks so accidental trailing whitespace doesn't leak
   // through GitHub Actions' line-based log masking. whitespace-only values
   // return null and skip injection so the user sees a clear missing-key error.
+  const injected: string[] = [];
   if (runContext.dbSecrets) {
     for (const [key, value] of Object.entries(runContext.dbSecrets)) {
       if (!process.env[key]) {
         const sanitized = sanitizeSecret(key, value);
-        if (sanitized !== null) process.env[key] = sanitized;
+        if (sanitized === null) continue;
+        process.env[key] = sanitized;
+        injected.push(key);
       }
     }
     const count = Object.keys(runContext.dbSecrets).length;
     if (count > 0) log.info(`» ${count} db secret(s) loaded`);
   }
+
+  // load one stored subscription per provider for the discovery below. `injected` keeps a
+  // workflow credential distinct from a stored one now that both sit in process.env.
+  await initializeCredentialPool({ ctx: runContext, slug: payload.model, injected });
 
   // materialize the subscription auth.json entries (idempotent — the opencode
   // agent re-calls both inside run() and writes the same file; the writer
@@ -306,7 +328,7 @@ export async function main(): Promise<MainResult> {
   // decision and the opencode-agent path of validateAgentApiKey — strictly
   // more accurate than the static envVars/managedCredentials catalog,
   // which can miss new auth shapes.
-  if (opencodeCliPath !== undefined) captureAuthorizedModels(opencodeCliPath);
+  if (opencodeCliPath !== undefined) captureAuthorizedModels({ cliPath: opencodeCliPath, tmpdir });
 
   // FORK: start reading the subscription's remaining limit for the footer;
   // never awaited here, footers built minutes later read the result.
@@ -360,7 +382,7 @@ export async function main(): Promise<MainResult> {
   // tests they had decided to run and could not (#1093). resolving it to
   // `disabled` up front makes the tool set and the prompt agree with reality,
   // and gives the operator one line they can act on.
-  if (payload.shell === "restricted" && getSandboxMethod() === "none") {
+  if (payload.shell !== "disabled" && process.env.CI === "true" && getSandboxMethod() === "none") {
     payload.shell = "disabled";
     log.warning(
       "» shell commands are disabled for this run: this runner provides no PID-namespace isolation " +
@@ -398,6 +420,8 @@ export async function main(): Promise<MainResult> {
 
   const runInfo = await resolveRun({ octokit });
   let toolContext: ToolContext | undefined;
+  // this start's own result, reported on the end-of-run PATCH in `finally`
+  let succeeded = false;
   let progressCallbackDisabled = false;
   let todoTracker: ReturnType<typeof createTodoTracker> | undefined;
   let vertexCredentials: VertexCredentials | undefined;
@@ -429,6 +453,19 @@ export async function main(): Promise<MainResult> {
     await using gitAuthServer = await startGitAuthServer(tmpdir);
     setGitAuthServer(gitAuthServer);
 
+    let resolvedModel = resolveModel({ slug: payload.model });
+    if (!resolvedModel && !payload.proxyModel && runContext.credentialAccess?.candidates.length) {
+      resolvedModel = resolvePoolModel({
+        codexAgent: runContext.repoSettings.codexAgent || payload.codexArm === true,
+      });
+    }
+    let poolSelected =
+      !payload.proxyModel &&
+      (await selectConfiguredCredential({
+        ctx: runContext,
+        model: resolvedModel,
+      }));
+
     // model-access gate: an explicitly-requested per-run model (`--opus`,
     // `--model=<slug>`) that this run can't serve hard-fails here, before the
     // agent starts. standing defaults keep `modelExplicit = false` and fall
@@ -441,7 +478,7 @@ export async function main(): Promise<MainResult> {
       oss: runContext.oss,
       proxyActive: !!payload.proxyModel,
       subsidyTarget: runContext.proxyModel,
-      resolvedModel: resolveModel({ slug: payload.model }),
+      resolvedModel,
       authorized: getAuthorizedModels(),
     });
     if (access.kind === "error") {
@@ -455,7 +492,14 @@ export async function main(): Promise<MainResult> {
       );
     }
     if (access.kind === "proxy") payload.proxyModel = access.target;
-    if (access.kind === "byok") payload.proxyModel = undefined;
+    if (access.kind === "byok") {
+      payload.proxyModel = undefined;
+      if (!poolSelected)
+        poolSelected = await selectConfiguredCredential({
+          ctx: runContext,
+          model: resolvedModel,
+        });
+    }
 
     // a subsidised run is Pullfrog's spend, so it is pinned to `high` on
     // whatever ladder the funded model publishes — matching what every OSS run
@@ -465,21 +509,18 @@ export async function main(): Promise<MainResult> {
       payload.effort = ossEffortFloor({ payload });
     }
 
-    const configuredModel = payload.proxyModel ? undefined : resolveModel({ slug: payload.model });
+    if (payload.proxyModel) resolvedModel = undefined;
 
     // ask the providers whether the configured model's credentials still work
-    // before committing to it. a rejected credential becomes either a run on
-    // whatever the account CAN still route or an accurate error naming
+    // before committing to it. a rejected credential becomes an accurate error naming
     // the credential — never the 401-three-seconds-in that used to send users
     // to a GitHub Actions secrets page they had never put a key in. skipped
     // for proxy runs for the same reason validateAgentApiKey is: the server
     // minted the key and is the authority on it.
-    const credentials = runContext.codexPool || payload.proxyModel
-      ? { kind: "ok" as const }
-      : await checkConfiguredCredentials({
-          model: configuredModel,
-          authorized: getAuthorizedModels(),
-        });
+    const credentials =
+      runContext.codexPool || payload.proxyModel || poolSelected
+        ? { kind: "ok" as const }
+        : await checkConfiguredCredentials({ model: resolvedModel });
     if (credentials.kind === "dead") {
       throw new Error(
         buildRejectedCredentialError({
@@ -491,20 +532,6 @@ export async function main(): Promise<MainResult> {
         })
       );
     }
-    if (credentials.kind === "fellBack" && configuredModel) {
-      log.warning(
-        `» ${credentials.credential} was rejected by its provider — running ${credentials.replacement} instead of ${configuredModel}`
-      );
-      toolState.modelFallback = { from: configuredModel };
-    }
-    // the replacement is a concrete resolve target, not `undefined`: leaving it
-    // unset would let `effectiveModel` fall through to `payload.model` (the
-    // ALIAS slug), which `authorized` doesn't hold and whose env vars were just
-    // deleted — so `validateAgentApiKey` would throw the missing-key error with
-    // the very GitHub-secrets CTA this whole change exists to stop showing.
-    const resolvedModel =
-      credentials.kind === "fellBack" ? credentials.replacement : configuredModel;
-
     if (!runContext.codexPool) vertexCredentials = materializeVertexCredentials({ model: resolvedModel });
 
     let agent = runContext.codexPool ? agents.codex : resolveAgent({
@@ -643,6 +670,7 @@ export async function main(): Promise<MainResult> {
     const setupHook = await executeLifecycleHook({
       event: "setup",
       script: runContext.repoSettings.setupScript,
+      shell: payload.shell,
       normalizeWorkingTreeAfter: true,
     });
     if (setupHook.warning) {
@@ -691,6 +719,7 @@ export async function main(): Promise<MainResult> {
       postCheckoutScript: runContext.repoSettings.postCheckoutScript,
       prepushScript: runContext.repoSettings.prepushScript,
       prApproveEnabled: runContext.repoSettings.prApproveEnabled,
+      reviewDrafts: runContext.repoSettings.reviewDrafts,
       autoMergeEnabled: runContext.repoSettings.autoMergeEnabled,
       signedCommits: isDocsUpdate ? false : runContext.repoSettings.signedCommits,
       repoIntelligence: runContext.repoSettings.repoIntelligence,
@@ -1053,11 +1082,13 @@ export async function main(): Promise<MainResult> {
     // covers the non-review success paths).
     await finalizeSuccessRun({ toolContext, toolState, result, repo: runContext.repo });
 
-    return await handleAgentResult({
+    const outcome = await handleAgentResult({
       result,
       toolContext,
       silent: payload.event.silent ?? false,
     });
+    succeeded = outcome.success;
+    return outcome;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "unknown error occurred";
     if (isDocsUpdate && toolContext) await patchWorkflowRunFields(toolContext, {
@@ -1111,7 +1142,8 @@ export async function main(): Promise<MainResult> {
       }
     }
 
-    // persist aggregated token + cost usage to the WorkflowRun row.
+    // persist this start's aggregated token + cost usage and result; the server
+    // sums a run's starts onto the WorkflowRun row.
     // this is the single shared cleanup path across every agent implementation:
     // each agent harness returns a single AgentUsage from agent.run() that
     // already aggregates its internal retries via mergeAgentUsage, and the
@@ -1129,9 +1161,8 @@ export async function main(): Promise<MainResult> {
       if (toolState.model) patch.model = toolState.model;
       if (toolState.agent) patch.agent = toolState.agent;
       if (toolState.credential) patch.credential = toolState.credential;
-      if (Object.keys(patch).length > 0) {
-        await patchWorkflowRunFields(toolContext, patch);
-      }
+      patch.succeeded = succeeded;
+      await patchWorkflowRunFields(toolContext, patch);
     }
     cleanupVertexCredentials(vertexCredentials);
   }

@@ -13,27 +13,44 @@
  *      "key budget exhausted" string mid-run. Both render via
  *      `formatBillingErrorSummary` so the user sees actionable copy.
  *
+ *   1a. Pre-rendered bodies — a throw site that already built the markdown
+ *      (`MODEL_ACCESS_MARKER`, `SECRETS_UNAVAILABLE_MARKER`,
+ *      `ROUTER_UNFUNDED_MARKER`, `CREDENTIAL_REJECTED_MARKER`,
+ *      `CREDENTIAL_POOL_REFUSED_MARKER`) passes through verbatim on both surfaces.
+ *
  *   2. BYOK provider billing-exhausted (#835) — DeepSeek "Insufficient
  *      Balance", Anthropic "credit balance is too low", OpenCode Zen
  *      `CreditsError`, Gemini "spending cap". Checked before api-key auth
  *      because billing-exhausted responses often carry 401 status codes
  *      that `isApiKeyAuthError` would otherwise mis-classify.
  *
+ *   2a. Provider usage limit (#1474) — a capped subscription window or a
+ *      configured workspace limit; "wait or raise it", never "top up".
+ *
  *   3. API-key auth error — `isApiKeyAuthError` sniffs the raw error string
  *      (or the activity-timeout hang body when present, since that's where
  *      the underlying provider error often lands); `formatApiKeyErrorSummary`
  *      renders provider + console-link copy.
  *
- *   4. ProviderModelNotFoundError — configured model id no longer in the
- *      OpenCode catalog; renders a nudge to pick a different model.
+ *   4. ProviderModelNotFoundError — configured model id not in the OpenCode
+ *      catalog (opencode ≥1.18 words it `Model not found: <id>`, #1470);
+ *      renders a nudge to pick a different model.
  *
  *   4a. No-provider-available (#1077) — the model IS in the catalog but the
  *      provider declines to route it on this account's plan (OpenCode Zen's
  *      own refusal string). Same "pick another model" CTA, different reason.
  *
+ *   4a'. Zen free-tier gate (#1377) — Zen 403s a free-tier request whose tool
+ *      list is missing a built-in it expects. The harness keeps `bash` listed,
+ *      but opencode's auto-compaction request carries no tools, so a long
+ *      free-Zen run can still die mid-flight on the raw upstream string.
+ *
  *   4b. Context-window overflow (#1116) — terminal `Prompt is too long` /
  *      `maximum context length is N tokens`. Actionable, so it renders on
  *      both surfaces rather than collapsing to the one-line comment.
+ *
+ *   4b'. Run time limit — the agent was still working when the run's own
+ *      timeout fired. Actionable (raise the limit), so both surfaces.
  *
  *   4c. Transient upstream failure (#1173) — Anthropic `529 Overloaded`,
  *      OpenRouter `provider_unavailable` / `timeout`, Zen `Streaming response
@@ -52,22 +69,30 @@
  *      event counts and a benign stderr tail are operator-grade detail that
  *      only alarm the average user.
  *
- *   6. Default — the job summary gets a plain-English lead sentence plus the
+ *   6. Unclassified provider error (#1474) — `errorMessage` starts with
+ *      `provider error: `. opencode prefixes every provider-side turn failure
+ *      with the provider's text; claude-code (a zero-event exit) and codex (no
+ *      turn error, no stderr) prefix only our classifier label. Either names
+ *      something the user can act on, so both surfaces get a lead line plus the
+ *      raw text in a fenced block.
+ *
+ *   7. Default — the job summary gets a plain-English lead sentence plus the
  *      raw error in a fenced code block under the `### ❌ Pullfrog failed`
  *      banner; the PR comment collapses to the same one-line logs link as
  *      the hang case, since the raw internal string helps nobody on the PR.
  *
- * Net: the actionable classifications (billing, API-key, model-not-found,
- * no-provider-available, context-overflow, transient-upstream) render identical
- * bodies on both surfaces; the non-actionable ones (unexplained hang,
- * generic) keep the forensics in the Actions job summary and show a calm
- * one-liner in the PR comment, whose footer already carries Pullfrog
- * branding + rerun links.
+ * Net: the actionable classifications (billing, usage limit, API-key,
+ * model-not-found, no-provider-available, context-overflow, run time limit,
+ * transient-upstream, unclassified provider error) render identical bodies on
+ * both surfaces; the non-actionable ones (unexplained hang, generic) keep the
+ * forensics in the Actions job summary and show a calm one-liner in the PR
+ * comment, whose footer already carries Pullfrog branding + rerun links.
  */
 
 import type { AgentDiagnostic } from "./agentHangReport.ts";
 import { formatAgentHangBody } from "./agentHangReport.ts";
 import {
+  CREDENTIAL_POOL_REFUSED_MARKER,
   CREDENTIAL_REJECTED_MARKER,
   formatApiKeyErrorSummary,
   isApiKeyAuthError,
@@ -78,6 +103,7 @@ import {
 import { getApiUrl } from "./apiUrl.ts";
 import { BillingError, formatBillingErrorSummary } from "./billingErrors.ts";
 import { MODEL_ACCESS_MARKER } from "./modelAccess.ts";
+import { PROVIDER_DASHBOARDS } from "./providerDashboards.ts";
 import {
   extractProviderId,
   findAnthropicSpendCap,
@@ -85,6 +111,7 @@ import {
   isProviderBillingExhausted,
   isProviderMissingCredential,
   isProviderNoRoutableEndpoints,
+  isProviderUsageLimit,
   isRouterKeylimitExhaustedError,
   isTransientUpstreamError,
 } from "./providerErrors.ts";
@@ -94,8 +121,9 @@ export type RenderedRunError = {
   comment: string;
 };
 
+/** opencode <1.18 names the error class; ≥1.18 only publishes `Model not found: <id>` (#1470). */
 function isProviderModelNotFoundError(message: string): boolean {
-  return message.includes("ProviderModelNotFoundError");
+  return /ProviderModelNotFoundError|\bModel not found: /.test(message);
 }
 
 /**
@@ -127,6 +155,34 @@ function isNoProviderAvailableError(message: string): boolean {
   return /\bNo provider available\b/i.test(message);
 }
 
+/**
+ * OpenCode Zen's free-tier request-shape gate (`FreeTierError`): since
+ * 2026-09-17 Zen refuses a free-tier request whose tool list is missing any of
+ * the built-in tools it expects — measured: `bash`, `glob`, `grep` and `read`
+ * each trip it, while `list`, `edit`, `write`, `task`, `todowrite`, `skill`,
+ * `webfetch`, `websearch` and `question` do not. The harness keeps `bash`
+ * listed (blocked by the gate plugin) so the main turn passes, but opencode's
+ * auto-compaction request carries no tools and trips the same gate mid-run
+ * (anomalyco/opencode#49587), and a repo-root `opencode.json` denying one of
+ * the four strips it from the first call. See wiki/models-catalog.md.
+ */
+function isZenFreeTierGateError(message: string): boolean {
+  return /free tier can only be used from within OpenCode/i.test(message);
+}
+
+function formatZenFreeTierGateSummary(input: { owner: string; name: string; raw: string }): string {
+  const settingsUrl = `${getApiUrl()}/console/${input.owner}/${input.name}`;
+  return [
+    "**Zen's free tier refused a request this run made.** OpenCode Zen currently rejects free-model requests whose tool list is missing one of the built-in tools it expects ([upstream issue](https://github.com/anomalyco/opencode/issues/49587)). Pullfrog sends all of them, but opencode's mid-run context-compaction request carries no tools at all, and a repo-level `opencode.json` that denies `bash`, `glob`, `grep` or `read` strips that tool from every request.",
+    "",
+    'Pick a paid model for this repo, drop any `"deny"` on `bash`, `glob`, `grep` or `read` from the repo\'s `opencode.json` if it sets one, or split the PR so the run stays under the compaction threshold and re-trigger.',
+    "",
+    `[Model settings →](${settingsUrl}) · [Ask in Discord →](https://discord.gg/8y96raFg8e)`,
+    "",
+    `\`\`\`\n${input.raw}\n\`\`\``,
+  ].join("\n");
+}
+
 function formatNoProviderAvailableSummary(input: {
   owner: string;
   name: string;
@@ -139,6 +195,29 @@ function formatNoProviderAvailableSummary(input: {
     "This often happens when Pullfrog auto-selects a model your account can't reach. Pin an explicit model for this repo, or add credentials for the provider that was picked.",
     "",
     `[Model settings →](${settingsUrl}) · [Setup docs →](https://docs.pullfrog.com/keys) · [Ask in Discord →](https://discord.gg/8y96raFg8e)`,
+    "",
+    `\`\`\`\n${input.raw}\n\`\`\``,
+  ].join("\n");
+}
+
+/**
+ * The run's own time limit (`main.ts`), not a hang: the activity watchdog
+ * kills a silent turn within minutes, so reaching the limit almost always
+ * means the agent was still working. 393 runs across 88 accounts in 30 days
+ * ended here with a bare `Run failed.`, while the fix is one flag.
+ */
+function isRunTimeoutError(message: string): boolean {
+  return message.startsWith("agent run timed out after");
+}
+
+function formatRunTimeoutSummary(input: { owner: string; name: string; raw: string }): string {
+  const settingsUrl = `${getApiUrl()}/console/${input.owner}/${input.name}`;
+  return [
+    "**This run hit its time limit while still working, so it stopped before finishing.**",
+    "",
+    "Give runs longer with `--timeout=2h` (or `--notimeout`) in this repo's instructions — or raise the workflow's `timeout` input if it sets one, since that input wins. A smaller PR or a lower effort also finishes sooner.",
+    "",
+    `[Repo settings →](${settingsUrl}) · [Flags →](https://docs.pullfrog.com/flags)`,
     "",
     `\`\`\`\n${input.raw}\n\`\`\``,
   ].join("\n");
@@ -191,19 +270,12 @@ function formatMinimalFailureComment(repo: { owner: string; name: string }): str
 }
 
 /**
- * Best-known billing top-up URL per provider. Conservative list: only
- * providers we've actually classified billing-exhaustion shapes for in
- * `providerErrors.ts`. Unknown providers fall through to a generic CTA.
+ * Billing top-up URL per provider id, from the shared dashboard table. A
+ * provider `detectProviderId` cannot name falls through to a generic CTA.
  */
-const PROVIDER_BILLING_URLS: Record<string, string> = {
-  deepseek: "https://platform.deepseek.com/top_up",
-  anthropic: "https://console.anthropic.com/settings/billing",
-  openai: "https://platform.openai.com/account/billing",
-  google: "https://aistudio.google.com/usage",
-  opencode: "https://opencode.ai/zen",
-  xai: "https://console.x.ai/team/default/billing",
-  openrouter: "https://openrouter.ai/settings/credits",
-};
+const PROVIDER_BILLING_URLS: Record<string, string> = Object.fromEntries(
+  Object.entries(PROVIDER_DASHBOARDS).map(([id, dashboard]) => [id, dashboard.billing])
+);
 
 /**
  * `extractProviderId` only fires when the harness emits `providerID=...`
@@ -233,11 +305,10 @@ function detectProviderId(message: string): string | null {
   if (/requires more credits|Key limit exceeded \(total limit\)|openrouter\.ai/i.test(message)) {
     return "openrouter";
   }
+  if (/platform\.openai\.com/i.test(message)) return "openai";
   return null;
 }
 
-/** OpenRouter's key management page, where a key's total limit is raised. */
-const OPENROUTER_KEYS_URL = "https://openrouter.ai/workspaces/default/keys";
 /** OpenRouter's data-policy page, which decides what it may route to. */
 const OPENROUTER_PRIVACY_URL = "https://openrouter.ai/settings/privacy";
 
@@ -254,7 +325,7 @@ function formatProviderBillingExhausted(input: { errorMessage: string }): string
       "",
       "OpenRouter refused the request against the key's own spending ceiling, not your account balance — raising or removing that limit is the fix, and topping up credits alone may not be.",
       "",
-      `[Raise the key's limit →](${OPENROUTER_KEYS_URL}) · [Add credits →](${PROVIDER_BILLING_URLS.openrouter})`,
+      `[Raise the key's limit →](${PROVIDER_DASHBOARDS.openrouter.keys}) · [Add credits →](${PROVIDER_BILLING_URLS.openrouter})`,
       "",
       `\`\`\`\n${input.errorMessage}\n\`\`\``,
     ].join("\n");
@@ -370,11 +441,47 @@ function formatProviderModelNotFoundSummary(input: {
   raw: string;
 }): string {
   return (
-    `The configured model is no longer available in OpenCode's catalog. ` +
-    `Pick a different model in the Pullfrog console for \`${input.owner}/${input.name}\`, ` +
+    `The configured model is not in OpenCode's catalog. ` +
+    `Pick a different model for \`${input.owner}/${input.name}\` where it is set — the Pullfrog console, ` +
+    `the workflow's \`model\` input, or the \`PULLFROG_MODEL\` variable — ` +
     `or contact support if this persists.\n\n` +
     `\`\`\`\n${input.raw}\n\`\`\``
   );
+}
+
+/**
+ * A capped usage window or a configured usage limit, not an empty wallet: the
+ * billing copy's "top up" clears nothing. Codex/ChatGPT and Go plans reset on
+ * their own; a Zen pay-as-you-go workspace limit is one the user set.
+ */
+function formatProviderUsageLimit(input: { owner: string; name: string; raw: string }): string {
+  return [
+    "**The provider's usage limit for this account has been reached.**",
+    "",
+    "A subscription window resets on its own, so re-trigger after it does; a limit set on a pay-as-you-go workspace has to be raised. A model on another provider can run in the meantime.",
+    "",
+    `[Model settings →](${getApiUrl()}/console/${input.owner}/${input.name}) · [Ask in Discord →](https://discord.gg/8y96raFg8e)`,
+    "",
+    `\`\`\`\n${input.raw}\n\`\`\``,
+  ].join("\n");
+}
+
+/**
+ * A `provider error: ` message is the harness's own marker that the failure came
+ * from the model provider's side, carrying either the provider's text (opencode)
+ * or our classifier label for it (`auth error (401)`, claude-code and codex). Unlike an internal string it
+ * names something the user can act on, so it is never collapsed to `Run failed.`.
+ */
+function formatProviderErrorBody(input: { owner: string; name: string; raw: string }): string {
+  return [
+    "**The model provider returned an error, so this run stopped.**",
+    "",
+    "The error is below. If it names your key, plan or balance, fix that with the provider or pick another model before re-triggering.",
+    "",
+    `[Model settings →](${getApiUrl()}/console/${input.owner}/${input.name}) · [Ask in Discord →](https://discord.gg/8y96raFg8e)`,
+    "",
+    `\`\`\`\n${input.raw}\n\`\`\``,
+  ].join("\n");
 }
 
 export function renderRunError(input: {
@@ -431,7 +538,11 @@ export function renderRunError(input: {
   // already names the credential and its real remedy, and it QUOTES the
   // provider's wording — so without this guard the api-key branch below sniffs
   // that quote and rebuilds it into the generic "rotate your key" CTA.
-  if (input.errorMessage.includes(CREDENTIAL_REJECTED_MARKER)) {
+  // the credential pool's refusal quotes one verdict per credential, same contract.
+  if (
+    input.errorMessage.includes(CREDENTIAL_REJECTED_MARKER) ||
+    input.errorMessage.includes(CREDENTIAL_POOL_REFUSED_MARKER)
+  ) {
     return { summary: input.errorMessage, comment: input.errorMessage };
   }
 
@@ -474,6 +585,17 @@ export function renderRunError(input: {
       owner: input.repo.owner,
       name: input.repo.name,
       errorMessage: input.errorMessage,
+    });
+    return { summary: `### ❌ Pullfrog failed\n\n${body}`, comment: body };
+  }
+
+  // a usage window, not a wallet or a key — ahead of the api-key branch for the
+  // same reason the billing branch is.
+  if (isProviderUsageLimit(input.errorMessage)) {
+    const body = formatProviderUsageLimit({
+      owner: input.repo.owner,
+      name: input.repo.name,
+      raw: input.errorMessage,
     });
     return { summary: `### ❌ Pullfrog failed\n\n${body}`, comment: body };
   }
@@ -537,10 +659,28 @@ export function renderRunError(input: {
     return { summary: `### ❌ Pullfrog failed\n\n${body}`, comment: body };
   }
 
+  if (isZenFreeTierGateError(input.errorMessage)) {
+    const body = formatZenFreeTierGateSummary({
+      owner: input.repo.owner,
+      name: input.repo.name,
+      raw: input.errorMessage,
+    });
+    return { summary: `### ❌ Pullfrog failed\n\n${body}`, comment: body };
+  }
+
   // actionable, so it renders identically on both surfaces rather than
   // collapsing the comment to the hang/generic one-liner. see #1116.
   if (isContextOverflowError(input.errorMessage)) {
     const body = formatContextOverflowSummary({
+      owner: input.repo.owner,
+      name: input.repo.name,
+      raw: input.errorMessage,
+    });
+    return { summary: `### ❌ Pullfrog failed\n\n${body}`, comment: body };
+  }
+
+  if (isRunTimeoutError(input.errorMessage)) {
+    const body = formatRunTimeoutSummary({
       owner: input.repo.owner,
       name: input.repo.name,
       raw: input.errorMessage,
@@ -580,6 +720,17 @@ export function renderRunError(input: {
       summary: `### ❌ Pullfrog failed\n\n${hangBody}`,
       comment: explained ? hangBody : formatMinimalFailureComment(input.repo),
     };
+  }
+
+  // after every specific classifier, so it only catches the wording none of them
+  // knows yet — which used to collapse to `Run failed.` (#1474).
+  if (input.errorMessage.startsWith("provider error: ")) {
+    const body = formatProviderErrorBody({
+      owner: input.repo.owner,
+      name: input.repo.name,
+      raw: input.errorMessage,
+    });
+    return { summary: `### ❌ Pullfrog failed\n\n${body}`, comment: body };
   }
 
   const genericBody = formatGenericFailure(input.errorMessage);

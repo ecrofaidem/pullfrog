@@ -1,10 +1,20 @@
+import { randomUUID } from "node:crypto";
 import type { PushPermission, ShellPermission } from "../external.ts";
+import type { RouterTier } from "../models.ts";
 import { apiFetch } from "./apiFetch.ts";
 import { codexPoolRuntimeInstance, decodeCodexPool, hasExternalCodexAuth, rememberCodexPoolAssignment } from "./codexPool.ts";
 import { parseCodexAccessAuth } from "./codexAccessAuth.ts";
 import { CODEX_POOL_VERSION, type CodexPoolAssignment, type CodexPoolDenial } from "./codexPoolProtocol.ts";
 import { parseCodexAuthBody } from "./codexOAuth.ts";
+import type { CommercialRefusal } from "./billingErrors.ts";
 import type { RepoContext } from "./github.ts";
+import type { CredentialAccess } from "./subscriptionCredentials.ts";
+
+/**
+ * One per process, which is one start of the action within its GitHub run. Sent to run-context
+ * first, so a custom run's start is recorded before it reports, and then on each workflow-run PATCH.
+ */
+export const START_KEY = randomUUID();
 
 export interface Mode {
   id: string;
@@ -42,6 +52,8 @@ export interface RepoSettings {
   push: PushPermission;
   shell: ShellPermission;
   prApproveEnabled: boolean;
+  // "Include draft PRs": the post-run safety net re-reviews a moved draft only when set.
+  reviewDrafts: boolean;
   // already globally-gated server-side (run-context ANDs the per-repo toggle with
   // the `isAutonomousMaintenanceEnabled()` kill switch), so the runtime treats it
   // as the final "may auto-merge" verdict. see autoMergeAfterApprove.
@@ -82,17 +94,8 @@ export interface RepoSettings {
  */
 export type AccountPlan = "none" | "payg";
 
-/**
- * The org commercial gate's refusal (billing model v2). Set when run-context
- * returns 402 for a `paused`/`unpaid` org — the backstop for manual re-runs and
- * self-configured triggers that never hit reserveRun. main.ts stops before
- * installing the agent or loading account secrets and writes actionable copy.
- * A forked action can bypass this response, so proxy-token enforces the same
- * verdict before issuing a Pullfrog Router key.
- */
-export type CommercialRefusal = "commercial" | "subscription_unpaid";
-
 export interface RunContext {
+  credentialAccess?: CredentialAccess | undefined;
   settings: RepoSettings;
   apiToken: string;
   codexPool?: CodexPoolAssignment | undefined;
@@ -101,6 +104,14 @@ export interface RunContext {
   plan: AccountPlan;
   proxyModel?: string | undefined;
   dbSecrets?: Record<string, string> | undefined;
+  /**
+   * The org commercial gate's refusal (billing model v2). Set when run-context
+   * returns 402 for a `paused`/`unpaid` org — the backstop for manual re-runs and
+   * self-configured triggers that never hit reserveRun. main.ts stops before
+   * installing the agent or loading account secrets and writes actionable copy.
+   * A forked action can bypass this response, so proxy-token enforces the same
+   * verdict before issuing a Pullfrog Router key.
+   */
   commercialRefused?: CommercialRefusal | undefined;
   /**
    * the server tried and failed to materialize Pullfrog-stored secrets (or we
@@ -136,6 +147,7 @@ const defaultSettings: RepoSettings = {
   push: "restricted",
   shell: "restricted",
   prApproveEnabled: false,
+  reviewDrafts: false,
   autoMergeEnabled: false,
   codexAgent: false,
   signedCommits: false,
@@ -183,6 +195,12 @@ export async function fetchRunContext(params: {
   /** `payload.type` — lets the server apply this repo's per-trigger model
    * override, which it cannot derive from owner/repo alone. */
   runType?: string | undefined;
+  /** a plain-text prompt, which no Pullfrog dispatch sends — so the server
+   * can record this run without waiting for a reservation to claim it. */
+  plainPrompt: boolean;
+  /** `payload.routing.tier` — the model router's tier, which run-context
+   * applies to the Router proxy mint the same way it applies `runType`. */
+  routedTier?: RouterTier | undefined;
 }): Promise<RunContext> {
   const poolRequired = process.env.PULLFROG_CODEX_POOL_REQUIRED === "1";
   const instance = codexPoolRuntimeInstance();
@@ -195,6 +213,7 @@ export async function fetchRunContext(params: {
       Authorization: `Bearer ${params.token}`,
       "X-Pullfrog-Codex-Pool": CODEX_POOL_VERSION,
       "X-Pullfrog-Run-Instance": instance,
+      "X-Pullfrog-Credential-Pools": "1",
     };
     if (poolRequired) headers["X-Pullfrog-Codex-Pool-Required"] = "1";
     if (process.env.PULLFROG_AGENT?.trim()) headers["X-Pullfrog-Agent"] = process.env.PULLFROG_AGENT.trim();
@@ -203,10 +222,13 @@ export async function fetchRunContext(params: {
       headers["X-GitHub-OIDC-Token"] = params.oidcToken;
     }
 
-    const query = params.runType ? `?type=${encodeURIComponent(params.runType)}` : "";
+    const query = new URLSearchParams({ start: START_KEY });
+    if (params.runType) query.set("type", params.runType);
+    if (params.plainPrompt) query.set("prompt", "plain");
+    if (params.routedTier) query.set("tier", params.routedTier);
     const read = async () => {
       const response = await apiFetch({
-        path: `/api/repo/${params.repoContext.owner}/${params.repoContext.name}/run-context${query}`,
+        path: `/api/repo/${params.repoContext.owner}/${params.repoContext.name}/run-context?${query}`,
         headers,
         signal: AbortSignal.timeout(30_000),
       });
@@ -251,14 +273,11 @@ export async function fetchRunContext(params: {
     // other non-ok still degrades to defaults (transient server blip must not
     // block runs).
     if (response.status === 402) {
-      const reason: CommercialRefusal =
-        typeof body === "object" &&
-        body !== null &&
-        "reason" in body &&
-        body.reason === "subscription_unpaid"
-          ? "subscription_unpaid"
-          : "commercial";
-      return { ...defaultRunContext, commercialRefused: reason };
+      const reason =
+        typeof body === "object" && body !== null && "reason" in body ? body.reason : null;
+      const commercialRefused: CommercialRefusal =
+        reason === "subscription_unpaid" || reason === "subscription_ended" ? reason : "commercial";
+      return { ...defaultRunContext, commercialRefused };
     }
 
     if (!response.ok) {
@@ -274,6 +293,7 @@ export async function fetchRunContext(params: {
       plan?: AccountPlan;
       proxyModel?: string;
       dbSecrets?: Record<string, string>;
+      credentialAccess?: CredentialAccess;
       secretsUnavailable?: boolean;
       routerUnfunded?: boolean;
       trialFallback?: boolean;
@@ -303,6 +323,7 @@ export async function fetchRunContext(params: {
       plan: data.plan ?? "none",
       proxyModel: data.proxyModel,
       dbSecrets: data.dbSecrets,
+      credentialAccess: data.credentialAccess,
       secretsUnavailable: data.secretsUnavailable,
       routerUnfunded: data.routerUnfunded,
       trialFallback: data.trialFallback,

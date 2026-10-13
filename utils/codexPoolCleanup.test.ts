@@ -7,7 +7,7 @@ import type { CodexPoolAssignment } from "./codexPoolProtocol.ts";
 const mocks = vi.hoisted(() => ({ state: "", apiFetch: vi.fn(), warning: vi.fn() }));
 vi.mock("@actions/core", () => ({
   saveState: (name: string, value: string) => { if (name === "oauth_writeback") mocks.state = value; },
-  getState: () => mocks.state, setSecret: vi.fn(), info: vi.fn(), warning: mocks.warning,
+  getState: (name: string) => (name === "oauth_writeback" ? mocks.state : ""), setSecret: vi.fn(), info: vi.fn(), warning: mocks.warning,
 }));
 vi.mock("./apiFetch.ts", () => ({ apiFetch: mocks.apiFetch }));
 

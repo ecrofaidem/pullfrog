@@ -70,6 +70,16 @@ function billingConsoleUrl(owner: string): string {
 }
 
 /**
+ * Why the org commercial gate refused a run (billing model v2), resolved by
+ * `resolveTeamRunAccess` and carried unchanged through the paywall comment, the
+ * run-context 402 and the proxy-token 402. `commercial`: the no-card trial
+ * wound down to `paused`. `subscription_ended`: a paid subscription was
+ * canceled and lapsed to `paused`. `subscription_unpaid`: the renewal failed
+ * dunning.
+ */
+export type CommercialRefusal = "commercial" | "subscription_ended" | "subscription_unpaid";
+
+/**
  * Canonical paused-run paywall body (billing model v2). Single source of truth so
  * the two surfaces that show it can never drift: the trigger-time comment (a run
  * refused before it starts, `triggerWorkflow.postPaywallComment`) and the mid-run
@@ -77,31 +87,29 @@ function billingConsoleUrl(owner: string): string {
  * caller's billing surface (each passes its own, internal plan page vs console).
  */
 export function commercialPaywallBody(params: {
-  reason: "commercial" | "subscription_unpaid";
+  reason: CommercialRefusal;
   ownerLogin: string;
   url: string;
+  freshReply?: boolean | undefined;
 }): string {
-  if (params.reason === "commercial") {
-    // "$30/month per organization" is the wording the trial emails use; the price
-    // is hardcoded in those templates too, so the copy stays in one register.
-    // deliberately says nothing about a trial ending: a canceled paid
-    // subscription maps to `paused` and lands here as well, so any past-tense
-    // claim about a free month would be false for a churned payer.
-    return [
-      `**Pullfrog needs Pro on ${params.ownerLogin}, so this run didn't start.**`,
-      "",
-      "Pro is $30/month per organization and covers private repositories. Public repos and personal accounts keep running free.",
-      "",
-      `[Upgrade to Pro →](${params.url})`,
-    ].join("\n");
+  let action: string;
+  switch (params.reason) {
+    case "commercial":
+      action = "upgrade";
+      break;
+    case "subscription_ended":
+      action = "resubscribe";
+      break;
+    case "subscription_unpaid":
+      action = "update billing";
+      break;
+    default:
+      return params.reason satisfies never;
   }
-  params.reason satisfies "subscription_unpaid";
   return [
-    `**Pullfrog paused runs on ${params.ownerLogin}: the Pro renewal failed.**`,
+    `**Pullfrog is ${params.freshReply ? "still paused" : "paused"} for ${params.ownerLogin}.**`,
     "",
-    "Update the card on file to resume runs.",
-    "",
-    `[Update billing →](${params.url})`,
+    `An org owner can [${action}](${params.url}) to resume private-repo runs.`,
   ].join("\n");
 }
 
@@ -115,7 +123,7 @@ export function commercialPaywallBody(params: {
  * production row; see `isSubscriptionHostTrusted` and wiki/billing-model-v2.md.
  */
 export function formatCommercialGateSummary(params: {
-  reason: "commercial" | "subscription_unpaid";
+  reason: CommercialRefusal;
   ownerLogin: string;
 }): string {
   return commercialPaywallBody({
@@ -190,11 +198,11 @@ export function formatBillingErrorSummary(error: BillingError, owner: string): s
 
   if (error.code === "router_monthly_limit") {
     return [
-      "**Pullfrog Router hit its monthly spend limit.**",
+      "**Pullfrog Router is out of credit, and the monthly spend limit blocks the next auto-reload.**",
       "",
-      "Auto-reloads are paused for the rest of this UTC month. Ask your admin to raise the cap, or wait for it to reset at 00:00 UTC on the 1st.",
+      "Top up by hand, ask your admin to raise the cap, or wait for it to reset at 00:00 UTC on the 1st.",
       "",
-      `[Adjust limit →](${billingConsoleUrl(owner)})`,
+      `[Top up balance →](${billingConsoleUrl(owner)}) · [Adjust limit →](${billingConsoleUrl(owner)})`,
     ].join("\n");
   }
 
@@ -206,6 +214,13 @@ export function formatBillingErrorSummary(error: BillingError, owner: string): s
   if (error.code === "commercial_plan_required") {
     return formatCommercialGateSummary({
       reason: "commercial",
+      ownerLogin: owner,
+    });
+  }
+
+  if (error.code === "subscription_ended") {
+    return formatCommercialGateSummary({
+      reason: "subscription_ended",
       ownerLogin: owner,
     });
   }

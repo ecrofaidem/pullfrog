@@ -37,7 +37,7 @@ import { performance } from "node:perf_hooks";
 import * as core from "@actions/core";
 import type { ModelReasoningEffort, ThreadEvent, ThreadItem } from "@openai/codex-sdk";
 import { pullfrogMcpName } from "../external.ts";
-import { getModelProvider, stripProviderPrefix } from "../models.ts";
+import { getModelProvider, getProviderGatewayUrl, stripProviderPrefix } from "../models.ts";
 import { recordTokens } from "../utils/runStats.ts";
 import { AGENT_ACTIVITY_TIMEOUT_MS, getIdleMs, markActivity } from "../utils/activity.ts";
 import { log } from "../utils/cli.ts";
@@ -49,6 +49,7 @@ import { markCodexPoolChild, registerCodexPoolAuth } from "../utils/codexPool.ts
 import { advertisedCodexSpeeds, type CodexSpeed, codexSpeedConfig, pickCodexSpeed, requestedCodexSpeed } from "../utils/codexSpeed.ts";
 import { findProviderErrorMatch } from "../utils/providerErrors.ts";
 import { resolveRunEffort } from "../utils/runEffort.ts";
+import { saveSecretState } from "../utils/secretCommands.ts";
 import { filterEnv } from "../utils/secrets.ts";
 import { installBundledSkills } from "../utils/skills.ts";
 import {
@@ -426,6 +427,31 @@ function warnIfNativeEditsUnavailable(ctx: AgentRunContext): void {
 }
 
 /**
+ * A customer gateway, declared as a provider of its own rather than the
+ * built-in `openai` one re-pointed. codex 0.153.4 never reads `OPENAI_BASE_URL`,
+ * and its `openai_base_url` key keeps `supports_websockets = true`, which config
+ * cannot turn off on a built-in id (`merge_configured_model_providers` only
+ * `or_insert`s). A gateway refusing the Responses WebSocket upgrade — nearly all
+ * of them — then costs five reconnects the harness reports as a failed run. A
+ * declared provider defaults it to false and goes straight to HTTPS (measured
+ * 2026-09-11).
+ */
+const CODEX_GATEWAY_PROVIDER = "pullfrog-gateway";
+
+function gatewayProvider(gatewayUrl: string | undefined): string[] {
+  if (!gatewayUrl) return [];
+  return [
+    `[model_providers.${CODEX_GATEWAY_PROVIDER}]`,
+    'name = "OpenAI gateway"',
+    `base_url = ${JSON.stringify(gatewayUrl)}`,
+    'wire_api = "responses"',
+    // where the harness puts the run's OPENAI_API_KEY
+    'env_key = "CODEX_API_KEY"',
+    "",
+  ];
+}
+
+/**
  * Write `$CODEX_HOME/config.toml`. `auth.json` already sits in this directory
  * (installCodexHome), so codex discovers both from the one env var.
  *
@@ -441,6 +467,7 @@ function writeCodexConfig(params: {
   model: string | undefined;
   effortRung: string | undefined;
   speed: CodexSpeed;
+  gatewayUrl: string | undefined;
 }): void {
   const shellEnabled = params.ctx.payload.shell === "enabled";
   const sandboxMode = codexSandboxMode(params.ctx);
@@ -460,6 +487,7 @@ function writeCodexConfig(params: {
     ...(params.model ? [`model = ${JSON.stringify(params.model)}`] : []),
     ...(params.effortRung ? [`model_reasoning_effort = ${JSON.stringify(params.effortRung)}`] : []),
     ...(speed.serviceTier ? [`service_tier = ${JSON.stringify(speed.serviceTier)}`] : []),
+    ...(params.gatewayUrl ? [`model_provider = ${JSON.stringify(CODEX_GATEWAY_PROVIDER)}`] : []),
     "",
     "[features]",
     ...speed.features.map((name) => `${name} = true`),
@@ -491,6 +519,7 @@ function writeCodexConfig(params: {
     "",
     // Docs publication is runtime-owned; repository MCP servers may expose writes.
     ...(params.ctx.payload.event.trigger === "pull_request_merged" ? [] : repoMcpApprovals(repoDir)),
+    ...gatewayProvider(params.gatewayUrl),
     // UNTRUSTED, deliberately, and this one line is the whole config-precedence
     // boundary. Codex loads `<repo>/.codex/config.toml` as a layer that
     // OUTRANKS ours (project 25 vs user 20), and its denylist strips none of
@@ -582,8 +611,7 @@ const CODEX_MODEL_PRICING: Record<
   "gpt-6.1-sol": { input: 2, cacheRead: 0.1, cacheWrite: 2.5, output: 10 },
   "gpt-6-sol": { input: 2, cacheRead: 0.2, cacheWrite: 2.5, output: 10 },
   "gpt-6-astra": { input: 10, cacheRead: 1, cacheWrite: 12.5, output: 50 },
-  "gpt-5.6-sol": { input: 5, cacheRead: 0.5, cacheWrite: 6.25, output: 30 },
-  "gpt-5.6-luna": { input: 0.2, cacheRead: 0.02, cacheWrite: 0.25, output: 1.2 },
+  "gpt-6-luna": { input: 0.1, cacheRead: 0.01, cacheWrite: 0.125, output: 0.5 },
   "gpt-5.6-terra": { input: 2, cacheRead: 0.2, cacheWrite: 2.5, output: 12 },
 };
 
@@ -939,13 +967,17 @@ export const codex = agent({
       speed,
       model: resolveCodexModel(ctx),
       effortRung: effort.rung && CODEX_EFFORTS.includes(effort.rung) ? effort.rung : undefined,
+      // keyed off OpenAI, not the resolved model: codex serves nothing else, an
+      // auto-selected run has no model, and a ChatGPT-subscription token is
+      // valid only at ChatGPT's own backend
+      gatewayUrl: codexHomeAuth ? undefined : getProviderGatewayUrl("openai/"),
     });
 
     if (codexHomeAuth && !pooled) {
       // the CLI rewrites auth.json in place when the chain rotates; the post
       // hook diffs it and PUTs the new blob back to Pullfrog. see
       // wiki/codex-auth.md — a rotation we fail to persist expires in ~1h.
-      core.saveState(
+      saveSecretState(
         OAUTH_WRITEBACK_STATE,
         JSON.stringify({
           apiToken: ctx.apiToken,
@@ -1030,9 +1062,8 @@ export const codex = agent({
       initialUsage: initial.usage,
       reflectionPrompt: buildReflectionPrompt(ctx.toolState),
       // a resume needs the thread codex recorded. without one there is nothing
-      // to continue, and `resume --last` would be worse than not resuming: it
-      // picks the newest recorded session in this cwd, which on a self-hosted
-      // runner with a shared CODEX_HOME is somebody else's run.
+      // to continue, and `resume --last` could pick another run's session off CI,
+      // where CODEX_HOME is the shared ~/.local/share/codex (in CI it is per run).
       canResume: (r) => r.threadId !== undefined,
       resume: async (c) =>
         runCodex({

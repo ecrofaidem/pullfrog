@@ -3,6 +3,14 @@
  * Re-exports shared types, values, and utilities needed by the Next.js app.
  */
 
+export { CLI_CONTRACT_HEADER, CLI_CONTRACT_VERSION, CLI_UPGRADE_MESSAGE } from "../cliContract.ts";
+export type { ConfigField, ConfigScope, ConfigValue } from "../configuration.ts";
+export {
+  configEntrySchema,
+  configFields,
+  configResponseSchema,
+  configValueSchema,
+} from "../configuration.ts";
 export type {
   AuthorPermission,
   AutoTier,
@@ -11,8 +19,11 @@ export type {
   ModelProvider,
   Payload,
   PayloadEvent,
+  PayloadRouting,
   ProviderConfig,
   PushPermission,
+  RouterSource,
+  RouterTier,
   ShellPermission,
   ToolPermission,
   WriteablePayload,
@@ -21,6 +32,9 @@ export type {
 export {
   AUTO_EFFICIENT,
   AUTO_INTELLIGENT,
+  AUTO_ROUTER,
+  autoLadder,
+  autoRoutedSlug,
   DEFAULT_EFFORT_POSITION,
   DEFAULT_PROXY_MODEL,
   defaultAutoTier,
@@ -31,34 +45,46 @@ export {
   getModelManagedCredentials,
   getModelProvider,
   getProviderDisplayName,
+  isAutoRouted,
+  isAutoSlug,
   isAutoTier,
   isCardGatedModel,
   isEffortPosition,
   isOssAllowedModel,
+  isRouterTier,
+  ladderRungs,
   modelAliases,
   modelHasStoredAuth,
+  modelIdLabel,
   OSS_MODEL_ALLOWLIST,
   OSS_RECOMMENDED_MODEL,
   offeredRungs,
   ossFundedModelNames,
+  PROVIDER_GATEWAY_URL_ENV,
   parseEffortPosition,
   parseModel,
   providers,
   pullfrogMcpName,
+  ROUTED_PROVIDERS,
+  ROUTER_LADDER,
+  ROUTER_TIERS,
   resolveAutoTier,
   resolveCliModel,
   resolveDisplayAlias,
   resolveModelRung,
   resolveModelSlug,
   resolveOpenRouterModel,
+  resolvePickModel,
+  resolveRoutedModel,
   resolveRung,
+  routerProxyOptOut,
   rungLabel,
   rungPosition,
   SUBSIDY_RUNG,
 } from "../external.ts";
 export type { Mode } from "../modes.ts";
 export { modes } from "../modes.ts";
-export { commercialPaywallBody } from "../utils/billingErrors.ts";
+export { type CommercialRefusal, commercialPaywallBody } from "../utils/billingErrors.ts";
 export type {
   BuildPullfrogFooterParams,
   WorkflowRunFooterInfo,
@@ -85,6 +111,7 @@ export {
   LEAPING_INTO_ACTION_PREFIX,
 } from "../utils/leapingComment.ts";
 export { MAX_LEARNINGS_LENGTH, truncateAtLineBoundary } from "../utils/learningsTruncate.ts";
+export { countOutstandingPullfrogThreads } from "../utils/outstandingThreads.ts";
 export type {
   CreateProgressCommentTarget,
   ProgressComment,
@@ -96,6 +123,8 @@ export {
   getProgressComment,
   updateProgressComment,
 } from "../utils/progressComment.ts";
+export { PROVIDER_DASHBOARDS, type ProviderDashboard } from "../utils/providerDashboards.ts";
+export { detectProviderError } from "../utils/providerErrors.ts";
 export type {
   RunStatusCheckConclusion,
   RunStatusCheckOctokit,
@@ -107,6 +136,12 @@ export {
   RUN_STATUS_CHECK_NAME,
   runStatusCheckNeedsFinalizing,
 } from "../utils/runStatusCheck.ts";
+export * from "../utils/subscriptionCredentials.ts";
+export {
+  probeSubscription,
+  SubscriptionCredentialError,
+  subscriptionIdentity,
+} from "../utils/subscriptionProbe.ts";
 export {
   isValidTimeString,
   parseTimeString,

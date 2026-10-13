@@ -38,6 +38,16 @@ export const JsonPayload = type({
   "type?": "string | undefined",
   "model?": "string | undefined",
   "modelExplicit?": "boolean | undefined",
+  // optional so a payload from a pre-router server build still parses against a
+  // newer action across a rolling deploy. a new `source` value is released in the
+  // action before the server emits it: the published action rejects the payload.
+  "routing?": type({
+    tier: "'minimal' | 'light' | 'standard' | 'deep'",
+    stakes: "number",
+    workload: "number",
+    source: "'jev' | 'scorer' | 'heuristic' | 'fixed'",
+    rationale: "string",
+  }).or("undefined"),
   "effort?": "number | string | undefined",
   "debug?": "boolean | undefined",
   prompt: "string",
@@ -355,6 +365,7 @@ export function resolvePayload(
     // explicit only when the model came from a per-run override flag (carried on
     // the JSON payload). a GHA `model` input or the repo default is not explicit.
     modelExplicit: jsonPayload?.modelExplicit ?? false,
+    routing: jsonPayload?.routing,
     effort,
     debug: debug || undefined,
     prompt,

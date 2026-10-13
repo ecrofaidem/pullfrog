@@ -6,7 +6,7 @@ import * as core from "@actions/core";
 vi.mock("./apiFetch.ts", () => ({ apiFetch: vi.fn() }));
 vi.mock("@actions/core", () => ({ saveState: vi.fn(), setSecret: vi.fn() }));
 
-const request = { token: "job-token", repoContext: { owner: "owner", name: "repo" }, oidcToken: "oidc" };
+const request = { token: "job-token", repoContext: { owner: "owner", name: "repo" }, oidcToken: "oidc", plainPrompt: false };
 const instance = "00000000-0000-4000-8000-000000000001";
 const assignment = {
   status: "assigned", version: 1, assignmentId: "assignment-one", capability: "c".repeat(64),

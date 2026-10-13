@@ -18,9 +18,11 @@
  * distinct catalog entry on models.dev (under the `openrouter` / `opencode`
  * provider sections) that can drift independently of the upstream provider
  * mirror — testing the direct google entry tells you nothing about whether
- * the openrouter mirror has the same model id. The only entries pruned are
+ * the openrouter mirror has the same model id. Two kinds of entry are pruned:
  * routing slugs (bedrock/byok) whose `resolve` is a sentinel that picks the
- * actual model id from a per-run env var.
+ * actual model id from a per-run env var, and whatever `isExcluded` rejects —
+ * a provider CI holds no key for, or a metered model on one we decline to pay
+ * for.
  *
  * usage:
  *   node action/test/list-aliases.ts
@@ -54,15 +56,29 @@ const uncredentialedProviders = new Set(
   providers.filter((p) => p.noCiCredential).map((p) => p.name)
 );
 
+/** providers whose metered models CI declines to pay for — see `ciCostExcluded`. */
+const costExcludedProviders = new Set(providers.filter((p) => p.ciCostExcluded).map((p) => p.name));
+
+/**
+ * A cost exclusion spares the provider's free models: they bill nothing, they
+ * keep working after the balance runs dry (all 4 free Zen aliases passed the
+ * 2026-09-10 nightly while all 39 metered ones failed on `Insufficient
+ * balance`), and they are the only live coverage of tiers no other provider
+ * mirrors. A missing credential spares nothing, because nothing can run.
+ */
+function isExcluded(alias: (typeof modelAliases)[number]): boolean {
+  if (uncredentialedProviders.has(alias.provider)) return true;
+  return costExcludedProviders.has(alias.provider) && !alias.isFree;
+}
+
 export function buildAliasMatrix(): MatrixEntry[] {
   return modelAliases
     .filter((alias) => {
       // routing slugs (bedrock/byok) need a per-run env var to pick the actual
       // model — there's no generic smoke test.
       if (alias.routing) return false;
-      // no key in CI, so every cell would fail on auth rather than on anything
-      // the smoke is asking about.
-      if (uncredentialedProviders.has(alias.provider)) return false;
+      // no key in CI, or a metered model on a provider we decline to pay for.
+      if (isExcluded(alias)) return false;
       return true;
     })
     .map(toMatrixEntry);
@@ -80,6 +96,7 @@ export function buildFlagshipMatrix(): MatrixEntry[] {
       }
       return alias;
     })
+    .filter((alias) => !isExcluded(alias))
     .map(toMatrixEntry);
 }
 
