@@ -154,6 +154,7 @@ export function createFileReader(options: {
       env: resolveEnv("restricted"),
       cwd: options.cwd,
       timeout: 30000,
+      seal: true,
     });
     if (result.exitCode !== 0) {
       if (/File changed|Review artifact has changed/.test(result.output)) {

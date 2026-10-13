@@ -2,11 +2,11 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Octokit } from "@octokit/rest";
 import { type } from "arktype";
+import * as yes from "yes";
 import { resolveBodyAssets } from "../utils/body.ts";
 import { stripExistingFooter } from "../utils/buildPullfrogFooter.ts";
 import { isPullfrog } from "../utils/isPullfrog.ts";
 import { log } from "../utils/log.ts";
-import * as yes from "../yes/index.ts";
 import type { ToolContext } from "./server.ts";
 import { execute, tool } from "./shared.ts";
 
@@ -491,8 +491,11 @@ export function buildThreadBlocks(
  * Two-arg form on purpose: `yes.op` excludes the second parameter from the
  * cache key, so the octokit client is never hashed into it.
  */
-const fetchAllReviewThreads = yes.op(
-  async (key: { owner: string; name: string; pullNumber: number }, ctx: { octokit: Octokit }) => {
+const fetchAllReviewThreads = yes.query({
+  run: async (
+    key: { owner: string; name: string; pullNumber: number },
+    ctx: { octokit: Octokit }
+  ) => {
     const threads: (ReviewThread | null)[] = [];
     let cursor: string | null = null;
     // bound the walk so a misbehaving cursor can't loop forever; 50 pages =
@@ -512,19 +515,24 @@ const fetchAllReviewThreads = yes.op(
     }
     return threads;
   },
-  { ttl: 60_000, name: "reviewThreads" }
-);
+  ttl: 60_000,
+  name: "reviewThreads",
+});
 
-const fetchPrFiles = yes.op(
-  async (key: { owner: string; name: string; pullNumber: number }, ctx: { octokit: Octokit }) =>
+const fetchPrFiles = yes.query({
+  run: async (
+    key: { owner: string; name: string; pullNumber: number },
+    ctx: { octokit: Octokit }
+  ) =>
     ctx.octokit.paginate(ctx.octokit.rest.pulls.listFiles, {
       owner: key.owner,
       repo: key.name,
       pull_number: key.pullNumber,
       per_page: 100,
     }),
-  { ttl: 60_000, name: "prFiles" }
-);
+  ttl: 60_000,
+  name: "prFiles",
+});
 
 /**
  * Drop the cached thread graph after a mutation that changes resolved state,
@@ -534,9 +542,7 @@ const fetchPrFiles = yes.op(
  * nothing and cannot miss.
  */
 function invalidateReviewThreadCache(repo: { owner: string; name: string }): void {
-  fetchAllReviewThreads.invalidate(
-    (cached) => cached.owner === repo.owner && cached.name === repo.name
-  );
+  fetchAllReviewThreads.invalidate({ owner: repo.owner, name: repo.name });
 }
 
 async function getReviewThreads(input: GetReviewDataInput) {
@@ -894,11 +900,11 @@ export function GetReviewCommentsTool(ctx: ToolContext) {
         instructions:
           `the file at commentsPath contains ${threadBlocks.length} review threads with full conversation history. ` +
           `comments marked with * are from the target review (${params.review_id}); any other thread is open feedback ` +
-          `on this PR that is also yours to address, including comments that landed after this run started. ` +
+          `on this PR, including comments that landed after this run started. Being returned does not authorize a code change; follow the task's scope and each thread's latest request. ` +
           `the TOC shows each thread's file:line and the line number where it appears in the file. ` +
           `to read a specific thread, use: grep -A 50 "^## <file:line>" ${commentsPath} ` +
           `(replace <file:line> with the path from the TOC, e.g. "^## action/utils/foo.ts:42"). ` +
-          `address each thread in order, working through one file at a time.`,
+          `read each full thread before deciding whether it calls for a reply or a code change.`,
       };
     }),
   });
@@ -972,7 +978,7 @@ export function ResolveReviewThreadTool(ctx: ToolContext) {
     description:
       "Mark a review thread as resolved using GitHub's GraphQL API. " +
       "Only call this after addressing the review feedback, implementing fixes, testing them, and posting a reply. " +
-      "Do not resolve threads that are already resolved, threads where no action was taken, or threads where you disagree with the feedback.",
+      "Do not resolve threads that are already resolved, threads where no action was taken (unless you are withdrawing your own finding), or threads where you disagree with the feedback.",
     parameters: ResolveReviewThread,
     execute: execute(async (params) => {
       try {

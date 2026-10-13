@@ -12,10 +12,10 @@ describe("shell recovery guidance", () => {
   });
   afterEach(() => { vi.unstubAllEnvs(); rmSync(temporary, { recursive: true, force: true }); });
   it("distinguishes missing tooling from a broken check path", async () => {
-    const missingTool = await runSandboxed({ command: "pullfrog_nonexistent_test_tool", cwd: process.cwd(), env: { PATH: process.env.PATH }, timeout: 1000 });
+    const missingTool = await runSandboxed({ command: "pullfrog_nonexistent_test_tool", cwd: process.cwd(), env: { PATH: process.env.PATH }, timeout: 1000, seal: false });
     expect(formatShellResult(missingTool).recovery?.kind).toBe("missing_tool");
     expect(formatShellResult(missingTool).recovery?.next_step).toContain("packageManager");
-    const missingPath = await runSandboxed({ command: "grep pattern /tmp/pullfrog-nonexistent-migration-79205.sql", cwd: process.cwd(), env: { PATH: process.env.PATH }, timeout: 1000 });
+    const missingPath = await runSandboxed({ command: "grep pattern /tmp/pullfrog-nonexistent-migration-79205.sql", cwd: process.cwd(), env: { PATH: process.env.PATH }, timeout: 1000, seal: false });
     expect(formatShellResult(missingPath).recovery?.kind).toBe("missing_path");
     expect(formatShellResult(missingPath).recovery?.next_step).toContain("broken check");
   });

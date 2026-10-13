@@ -32,6 +32,16 @@ export type ProviderEntry = {
    * correct and the cells arm themselves.
    */
   noCiCredential?: true;
+  /**
+   * CI holds a working credential but deliberately spends it elsewhere, so
+   * `models-live` and `providers-live` emit no cell for this provider.
+   *
+   * Distinct from `noCiCredential` on purpose: that one means the cells CANNOT
+   * run, this one means they are not worth what they cost. Collapsing the two
+   * would make a rotation accident look like a budget decision. Delete the flag
+   * to arm the cells again — the rest of the entry stays correct.
+   */
+  ciCostExcluded?: true;
 };
 
 export const providers: ProviderEntry[] = [
@@ -56,9 +66,16 @@ export const providers: ProviderEntry[] = [
     agent: "opencode",
   },
   {
+    // the other account the 2 September runaway drained, and the only thing
+    // left keeping the nightly red once Zen is out. not a spend of Zen's size —
+    // 4 metered aliases — so this is the cheapest exclusion here to undo:
+    // refill the account, delete the flag, and all 5 cells arm themselves.
+    // `openrouter/*` and `vercel/*` mirror 3 of the 4 meanwhile; only
+    // `deepseek-reasoner` goes fully dark.
     name: "deepseek",
     flagship: "deepseek/deepseek-pro",
     agent: "opencode",
+    ciCostExcluded: true,
   },
   {
     name: "moonshotai",
@@ -75,15 +92,28 @@ export const providers: ProviderEntry[] = [
     noCiCredential: true,
   },
   {
+    // no META_MODEL_API_KEY in CI yet. `openrouter/muse-spark` and
+    // `vercel/muse-spark` keep the model itself under test meanwhile.
+    name: "meta",
+    flagship: "meta/muse-spark",
+    agent: "opencode",
+    noCiCredential: true,
+  },
+  {
     // one gateway key fronts every vendor; sonnet is the standard tier there too.
     name: "vercel",
     flagship: "vercel/claude-sonnet",
     agent: "opencode",
   },
   {
+    // Zen is the largest model spend in CI: 39 metered alias cells, more than
+    // any other provider, fanned out over the whole funded OSS menu. 30 of them
+    // are mirrored by `openrouter/*` or `vercel/*` and stay under test there.
+    // the flagship survives the exclusion because `big-pickle` is free.
     name: "opencode",
     flagship: "opencode/big-pickle",
     agent: "opencode",
+    ciCostExcluded: true,
   },
   {
     name: "openrouter",
@@ -91,8 +121,14 @@ export const providers: ProviderEntry[] = [
     agent: "opencode",
   },
   {
+    // the Go endpoint is a different base URL on the SAME `OPENCODE_API_KEY`
+    // and the same Zen balance, so excluding `opencode` above without this one
+    // would leave 15 cells still drawing on the account it was meant to stop
+    // spending from. every model here is metered, so unlike `opencode` this
+    // entry loses its flagship cell too.
     name: "opencode-go",
     flagship: "opencode-go/glm",
     agent: "opencode",
+    ciCostExcluded: true,
   },
 ];

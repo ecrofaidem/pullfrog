@@ -5,6 +5,7 @@
  */
 
 import type { EffortPosition } from "./effort.ts";
+import type { RouterTier } from "./models.ts";
 
 // mcp name constant
 export const pullfrogMcpName = "pullfrog";
@@ -97,10 +98,19 @@ export {
   SUBSIDY_RUNG,
 } from "./effort.ts";
 // model alias registry lives in models.ts — re-exported here for shared access
-export type { AutoTier, ModelAlias, ModelProvider, ProviderConfig } from "./models.ts";
+export type {
+  AutoTier,
+  ModelAlias,
+  ModelProvider,
+  ProviderConfig,
+  RouterTier,
+} from "./models.ts";
 export {
   AUTO_EFFICIENT,
   AUTO_INTELLIGENT,
+  AUTO_ROUTER,
+  autoLadder,
+  autoRoutedSlug,
   DEFAULT_PROXY_MODEL,
   defaultAutoTier,
   getAutoSelectHintModel,
@@ -109,22 +119,34 @@ export {
   getModelManagedCredentials,
   getModelProvider,
   getProviderDisplayName,
+  isAutoRouted,
+  isAutoSlug,
   isAutoTier,
   isCardGatedModel,
   isOssAllowedModel,
+  isRouterTier,
+  ladderRungs,
   modelAliases,
   modelHasStoredAuth,
+  modelIdLabel,
   OSS_MODEL_ALLOWLIST,
   OSS_RECOMMENDED_MODEL,
   ossFundedModelNames,
+  PROVIDER_GATEWAY_URL_ENV,
   parseModel,
   providers,
+  ROUTED_PROVIDERS,
+  ROUTER_LADDER,
+  ROUTER_TIERS,
   resolveAutoTier,
   resolveCliModel,
   resolveDisplayAlias,
   resolveModelRung,
   resolveModelSlug,
   resolveOpenRouterModel,
+  resolvePickModel,
+  resolveRoutedModel,
+  routerProxyOptOut,
 } from "./models.ts";
 
 // tool permission types shared with server dispatch
@@ -389,6 +411,23 @@ export interface XrepoConfig {
   unavailable?: string[] | undefined;
 }
 
+/**
+ * the model router's decision, carried so the runner can log it and forward the
+ * tier to run-context as `?tier=` — the Router proxy mint happens there and
+ * never sees `model` below. see wiki/router.md.
+ */
+export interface PayloadRouting {
+  tier: RouterTier;
+  stakes: number;
+  workload: number;
+  /** who decided: Jev, the chat scorer it falls back to, the heuristic behind that, or the fixed tier a non-review kind of work carries. mirrors the `RouterSource` enum. */
+  source: RouterSource;
+  /** the chat scorer's own sentence or two on what a reviewer must reconstruct; Jev's tier probabilities and axes instead */
+  rationale: string;
+}
+
+export type RouterSource = "jev" | "scorer" | "heuristic" | "fixed";
+
 // writeable payload type for building payloads
 export interface WriteablePayload {
   "~pullfrog": true;
@@ -411,6 +450,8 @@ export interface WriteablePayload {
    * baseInstructions flag) keeps the soft-fallback safety net. see modelAccess.ts.
    */
   modelExplicit?: boolean | undefined;
+  /** the model router's decision, when it made one; `model` above already reflects it */
+  routing?: PayloadRouting | undefined;
   /** reasoning-effort position on [0,1]; 0 is the model's cheapest rung, 1 its priciest */
   effort?: EffortPosition | undefined;
   /**

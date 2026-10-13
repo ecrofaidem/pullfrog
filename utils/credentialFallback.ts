@@ -1,4 +1,4 @@
-import { getModelEnvVars, modelAliases, stripProviderPrefix } from "../models.ts";
+import { getModelEnvVars, getProviderGatewayUrl, stripProviderPrefix } from "../models.ts";
 import { preflightClaudeSubscription } from "./claudeSubscription.ts";
 import { log } from "./cli.ts";
 import { verifyCredential } from "./credentialCheck.ts";
@@ -6,16 +6,13 @@ import { verifyCredential } from "./credentialCheck.ts";
 /**
  * `ok` covers "the credential works", "we couldn't tell", and "something else
  * on this model still works" — the run proceeds as it did before this check
- * existed. The other two are only reached when every credential the configured
- * model could use has been explicitly rejected by its own provider.
- *
- * `replacement` is a concrete model, never a "just auto-select something":
- * deciding an alternative exists and picking it have to be the SAME decision,
- * or the picker can land back on the provider that just failed.
+ * existed. `dead` is only reached when every credential the configured model
+ * could use has been explicitly rejected by its own provider. A run never moves
+ * to a different model: the pool of credentials for THIS provider is where a
+ * rejected one is routed around (see wiki/subscription-credentials.md).
  */
 export type CredentialOutcome =
   | { kind: "ok" }
-  | { kind: "fellBack"; credential: string; reason: string | undefined; replacement: string }
   | { kind: "dead"; credential: string; reason: string | undefined };
 
 /**
@@ -33,19 +30,6 @@ function hasEnvVar(name: string): boolean {
   const value = process.env[name];
   return typeof value === "string" && value.length > 0;
 }
-
-/**
- * Credentials whose provider host the user can re-point, and the env var that
- * does it. Claude Code honors `ANTHROPIC_BASE_URL` (see `docs/keys.mdx`), so
- * under a gateway both Anthropic credentials are sent somewhere api.anthropic.com
- * knows nothing about — asking it either way answers a question we didn't ask.
- * Read here rather than in `credentialCheck.ts`, which also runs on a Vercel
- * lambda and in the CLI, where a host-set base URL means nothing.
- */
-const HOST_OVERRIDES: Record<string, string> = {
-  ANTHROPIC_API_KEY: "ANTHROPIC_BASE_URL",
-  CLAUDE_CODE_OAUTH_TOKEN: "ANTHROPIC_BASE_URL",
-};
 
 /**
  * `getModelEnvVars` THROWS on a slugless model, and bedrock / vertex resolve to
@@ -69,8 +53,10 @@ async function checkOne(params: { envVar: string; model: string }): Promise<Fail
   const value = process.env[params.envVar];
   if (!value) return null;
 
-  const hostOverride = HOST_OVERRIDES[params.envVar];
-  if (hostOverride && hasEnvVar(hostOverride)) return null;
+  // a gateway re-points where this credential is SENT, so the vendor's own host
+  // cannot answer whether it is valid. keyed on the model's provider, so every
+  // credential it accepts is covered at once. see wiki/credential-rejection.md.
+  if (getProviderGatewayUrl(params.model)) return null;
 
   if (params.envVar === "CLAUDE_CODE_OAUTH_TOKEN") {
     const preflight = await preflightClaudeSubscription({
@@ -88,35 +74,11 @@ async function checkOne(params: { envVar: string; model: string }): Promise<Fail
 }
 
 /**
- * The best model this account can still run, excluding everything that depends
- * on a credential we just found dead. Mirrors `autoSelectModel`'s preference
- * order (preferred curated match, then any curated match) deliberately — but it
- * has to be a separate, FILTERED pick, because `autoSelectModel` re-reads the
- * `authorized` snapshot with no idea which providers just died and would
- * happily re-select the one that failed.
- */
-function pickReplacement(params: {
-  authorized: Set<string>;
-  deadVars: Set<string>;
-}): string | undefined {
-  const candidates = modelAliases.filter(
-    (alias) =>
-      !alias.hidden &&
-      !alias.fallback &&
-      params.authorized.has(alias.resolve) &&
-      // a model with no known env vars is routable through credentials we can't
-      // see (Codex auth lands as an on-disk auth.json), so it stays a candidate.
-      !envVarsFor(alias.resolve).some((envVar) => params.deadVars.has(envVar))
-  );
-  return (candidates.find((alias) => alias.preferred) ?? candidates[0])?.resolve;
-}
-
-/**
  * Ask the providers whether the credentials behind the configured model still
- * work, BEFORE the agent spawns — so a rejected one becomes either a run on a
- * model that does work or an accurate error, instead of the agent 401ing three
- * seconds in against a "rotate your GitHub Actions secret" CTA naming a place
- * the user never put a key.
+ * work, BEFORE the agent spawns — so a rejected one becomes either a run on
+ * another credential for the same model or an accurate error, instead of the
+ * agent 401ing three seconds in against a "rotate your GitHub Actions secret"
+ * CTA naming a place the user never put a key.
  *
  * Failed credentials are deleted from `process.env` only when this run can
  * still proceed without them. Nothing downstream infers anything from that
@@ -129,7 +91,6 @@ function pickReplacement(params: {
  */
 export async function checkConfiguredCredentials(params: {
   model: string | undefined;
-  authorized: Set<string>;
 }): Promise<CredentialOutcome> {
   if (!params.model) return { kind: "ok" };
 
@@ -170,11 +131,5 @@ export async function checkConfiguredCredentials(params: {
   failed.forEach(drop);
   const first = failed[0];
   if (!first) return { kind: "ok" };
-  const outcome = { credential: first.envVar, reason: first.failure.reason };
-
-  const replacement = pickReplacement({
-    authorized: params.authorized,
-    deadVars: new Set(failed.map((entry) => entry.envVar)),
-  });
-  return replacement ? { kind: "fellBack", ...outcome, replacement } : { kind: "dead", ...outcome };
+  return { kind: "dead", credential: first.envVar, reason: first.failure.reason };
 }
