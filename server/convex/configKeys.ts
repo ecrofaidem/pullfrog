@@ -16,6 +16,7 @@ export const CONFIG_KEYS = {
   model: { field: "model", type: "string | null" },
   effort: { field: "effort", type: "number | null" },
   "agent.codex": { field: "codexAgent", type: "boolean" },
+  "codex.speed": { field: "codexSpeed", type: "'standard' | 'fast' | 'ultrafast'" },
   "run.timeout": { field: "timeout", type: "string" },
   "run.push": { field: "push", type: "'disabled' | 'restricted' | 'enabled'" },
   "run.shell": { field: "shell", type: "'disabled' | 'restricted' | 'enabled'" },
@@ -34,6 +35,7 @@ export const CONFIG_KEY_LIST = Object.keys(CONFIG_KEYS) as ConfigKey[];
 export function toConfig(repo: Doc<"repos">): Record<ConfigKey, unknown> {
   const out = {} as Record<ConfigKey, unknown>;
   for (const key of CONFIG_KEY_LIST) out[key] = repo[CONFIG_KEYS[key].field];
+  out["codex.speed"] ??= "standard";
   out["docs.update"] ??= false;
   out["docs.skill"] ??= ".claude/skills/doc-update/SKILL.md";
   return out;

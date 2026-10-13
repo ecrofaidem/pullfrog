@@ -5,7 +5,7 @@ import { v } from "convex/values";
 import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { requireDashboardUser } from "./auth";
-import { permissionTier, reviewAuthorsMode } from "./schema";
+import { codexSpeed, permissionTier, reviewAuthorsMode } from "./schema";
 
 function defaultReviewAuthors(): string[] {
   return (process.env.DEFAULT_REVIEW_AUTHORS ?? "")
@@ -135,6 +135,7 @@ export function toActionSettings(repo: Doc<"repos">): Record<string, unknown> {
     prApproveEnabled: false,
     autoMergeEnabled: false,
     codexAgent: repo.codexAgent,
+    ...(repo.codexSpeed ? { codexSpeed: repo.codexSpeed } : {}),
     signedCommits: false,
     repoIntelligence: false,
     progressComments: repo.progressComments,
@@ -182,6 +183,7 @@ const patchValidator = v.object({
   push: v.optional(permissionTier),
   shell: v.optional(permissionTier),
   codexAgent: v.optional(v.boolean()),
+  codexSpeed: v.optional(codexSpeed),
   statusChecks: v.optional(v.boolean()),
   progressComments: v.optional(v.boolean()),
   handle: v.optional(v.string()),

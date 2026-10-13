@@ -46,6 +46,7 @@ import type { OAuthWriteback } from "../utils/codexRefreshDetect.ts";
 import { installFromNpmTarball } from "../utils/install.ts";
 import { OAUTH_WRITEBACK_STATE } from "../utils/oauthWriteback.ts";
 import { markCodexPoolChild, registerCodexPoolAuth } from "../utils/codexPool.ts";
+import { advertisedCodexSpeeds, type CodexSpeed, codexSpeedConfig, pickCodexSpeed, requestedCodexSpeed } from "../utils/codexSpeed.ts";
 import { findProviderErrorMatch } from "../utils/providerErrors.ts";
 import { resolveRunEffort } from "../utils/runEffort.ts";
 import { filterEnv } from "../utils/secrets.ts";
@@ -210,9 +211,10 @@ function securityOverrideFlags(params: {
   mcpServerUrl: string;
   model: string | undefined;
   effortRung: string | undefined;
-  fastMode: boolean;
+  speed: CodexSpeed;
 }): string[] {
   const shellEnabled = params.ctx.payload.shell === "enabled";
+  const speed = codexSpeedConfig(params.speed);
   const features = [
     ...CODEX_DISABLED_FEATURES.map((name) => `${name}=false`),
     ...CODEX_SHELL_FEATURES.map((name) => `${name}=${shellEnabled}`),
@@ -254,7 +256,8 @@ function securityOverrideFlags(params: {
     ...(params.effortRung
       ? ["-c", `model_reasoning_effort=${JSON.stringify(params.effortRung)}`]
       : []),
-    ...(params.fastMode ? ["-c", 'service_tier="fast"', "-c", "features.fast_mode=true"] : []),
+    ...(speed.serviceTier ? ["-c", `service_tier=${JSON.stringify(speed.serviceTier)}`] : []),
+    ...speed.features.flatMap((name) => ["-c", `features.${name}=true`]),
     ...features.flatMap((entry) => ["-c", `features.${entry}`]),
   ];
 }
@@ -437,11 +440,12 @@ function writeCodexConfig(params: {
   codexHome: string;
   model: string | undefined;
   effortRung: string | undefined;
-  fastMode: boolean;
+  speed: CodexSpeed;
 }): void {
   const shellEnabled = params.ctx.payload.shell === "enabled";
   const sandboxMode = codexSandboxMode(params.ctx);
   const repoDir = process.cwd();
+  const speed = codexSpeedConfig(params.speed);
 
   const config = [
     "# written by pullfrog",
@@ -455,10 +459,10 @@ function writeCodexConfig(params: {
     'web_search = "live"',
     ...(params.model ? [`model = ${JSON.stringify(params.model)}`] : []),
     ...(params.effortRung ? [`model_reasoning_effort = ${JSON.stringify(params.effortRung)}`] : []),
-    ...(params.fastMode ? ['service_tier = "fast"'] : []),
+    ...(speed.serviceTier ? [`service_tier = ${JSON.stringify(speed.serviceTier)}`] : []),
     "",
     "[features]",
-    ...(params.fastMode ? ["fast_mode = true"] : []),
+    ...speed.features.map((name) => `${name} = true`),
     tomlBool(CODEX_DISABLED_FEATURES, false),
     tomlBool(CODEX_SHELL_FEATURES, shellEnabled),
     "",
@@ -511,7 +515,7 @@ function writeCodexConfig(params: {
   ].join("\n");
 
   writeFileSync(join(params.codexHome, "config.toml"), config, { mode: 0o600 });
-  log.info(`» codex config: sandbox=${sandboxMode}, nativeShell=${shellEnabled}, requestedServiceTier=${params.fastMode ? "fast" : "default"}`);
+  log.info(`» codex config: sandbox=${sandboxMode}, nativeShell=${shellEnabled}, serviceTier=${speed.serviceTier ?? "default"}`);
 }
 
 function codexSandboxMode(ctx: AgentRunContext): "read-only" | "workspace-write" {
@@ -694,7 +698,9 @@ async function runCodex(params: RunParams): Promise<CodexRunResult> {
         if (params.todoTracker?.enabled) params.todoTracker.update(toTodoWriteInput(item));
         return;
       case "error":
-        log.info(`» ${item.message}`);
+        // FORK: codex runs a tier the catalog doesn't list at Standard, exit 0.
+        if (item.message.includes("service tier")) log.warning(`» ${item.message}`);
+        else log.info(`» ${item.message}`);
         return;
       default:
         item satisfies never;
@@ -859,6 +865,50 @@ async function runCodex(params: RunParams): Promise<CodexRunResult> {
   }
 }
 
+/**
+ * FORK: the speed tier this run asks Codex for. A subscription run reads the
+ * account's model catalog first, because the tiers on offer differ per plan
+ * and Codex silently runs an unlisted tier at Standard. see utils/codexSpeed.ts.
+ */
+async function resolveCodexSpeed(params: {
+  ctx: AgentRunContext;
+  cliPath: string;
+  codexHome: string;
+  subscription: boolean;
+}): Promise<CodexSpeed> {
+  const requested = requestedCodexSpeed(params.ctx.codexSpeed);
+  const model = resolveCodexModel(params.ctx);
+  if (requested === "standard" || !params.subscription || !model) return requested;
+  let advertised: string[] | null = null;
+  try {
+    // the catalog read signs in with the run's auth file, so the pool must see it as a child.
+    markCodexPoolChild("running");
+    const catalog = await spawn({
+      cmd: params.cliPath,
+      args: [
+        "debug", "models",
+        ...CODEX_DISABLED_FEATURES.flatMap((name) => ["-c", `features.${name}=false`]),
+      ],
+      cwd: params.ctx.tmpdir,
+      env: { ...filterEnv(), HOME: params.ctx.tmpdir, CODEX_HOME: params.codexHome },
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 30_000,
+      activityTimeout: 0,
+      killGroup: true,
+      onClose: () => markCodexPoolChild("stopped"),
+    });
+    if (catalog.exitCode === 0) advertised = advertisedCodexSpeeds(catalog.stdout, model);
+  } catch (err) {
+    log.debug(`» codex model catalog read failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  const speed = pickCodexSpeed(requested, advertised);
+  log.info(
+    `» codex speed: requested=${requested}, applied=${speed}, ` +
+      `advertised=${advertised ? advertised.join(",") || "none" : "unknown"}`
+  );
+  return speed;
+}
+
 // ── agent ──────────────────────────────────────────────────────────────────────
 
 export const codex = agent({
@@ -879,14 +929,14 @@ export const codex = agent({
     installBundledSkills({ home: ctx.tmpdir });
 
     const effort = resolveRunEffort(ctx);
-    const fastMode = process.env.PULLFROG_CODEX_FAST_MODE === "1";
+    const speed = await resolveCodexSpeed({ ctx, cliPath, codexHome, subscription: !!codexHomeAuth });
     if (effort.rung && !CODEX_EFFORTS.includes(effort.rung)) {
       log.warning(`» effort ${effort.rung} not sent — codex doesn't accept that level`);
     }
     writeCodexConfig({
       ctx,
       codexHome,
-      fastMode,
+      speed,
       model: resolveCodexModel(ctx),
       effortRung: effort.rung && CODEX_EFFORTS.includes(effort.rung) ? effort.rung : undefined,
     });
@@ -952,7 +1002,7 @@ export const codex = agent({
     // securityOverrideFlags.
     const securityFlags = securityOverrideFlags({
       ctx,
-      fastMode,
+      speed,
       sandboxMode: codexSandboxMode(ctx),
       repoDir: process.cwd(),
       mcpServerUrl: ctx.mcpServerUrl,

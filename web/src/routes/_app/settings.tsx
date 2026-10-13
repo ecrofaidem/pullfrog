@@ -43,6 +43,7 @@ interface Form {
   push: Tier;
   shell: Tier;
   codexAgent: boolean;
+  codexSpeed: NonNullable<Doc<"repos">["codexSpeed"]>;
   statusChecks: boolean;
   progressComments: boolean;
   setupScript: string;
@@ -57,6 +58,8 @@ const EFFORTS: { value: string; label: string }[] = [
   { value: "0.75", label: "xhigh" },
   { value: "1", label: "max" },
 ];
+
+const SPEEDS: Form["codexSpeed"][] = ["standard", "fast", "ultrafast"];
 
 const MODELS = ["gpt-sol", "gpt-sol-pro", "claude-opus", "claude-sonnet", "claude-haiku"];
 
@@ -76,6 +79,7 @@ function toForm(repo: Doc<"repos">): Form {
     push: repo.push,
     shell: repo.shell,
     codexAgent: repo.codexAgent,
+    codexSpeed: repo.codexSpeed ?? "standard",
     statusChecks: repo.statusChecks,
     progressComments: repo.progressComments,
     setupScript: repo.setupScript ?? "",
@@ -105,6 +109,7 @@ function toPatch(form: Form): RepoPatch {
     push: form.push,
     shell: form.shell,
     codexAgent: form.codexAgent,
+    codexSpeed: form.codexSpeed,
     statusChecks: form.statusChecks,
     progressComments: form.progressComments,
     setupScript: form.setupScript.trim() ? form.setupScript : null,
@@ -332,6 +337,19 @@ function SettingsPage() {
         <Row k="agent.codex" help="Use the Codex CLI instead of OpenCode to run the model. Experimental, and it cannot use helper agents.">
           <Toggle checked={form.codexAgent} onChange={(v) => set("codexAgent", v)} label="native codex harness" />
         </Row>
+        <Row
+          k="codex.speed"
+          help="How fast the native codex harness gets its answers. fast uses the usage limit 2.5 times as quickly, ultrafast 8 times. A login whose plan does not have the chosen speed runs at the next one down."
+          control={(ids) => (
+            <select id={ids.control} aria-describedby={ids.help} data-key="codex.speed" className="field w-44" value={form.codexSpeed} onChange={(e) => set("codexSpeed", e.target.value as Form["codexSpeed"])}>
+              {SPEEDS.map((speed) => (
+                <option key={speed} value={speed}>
+                  {speed}
+                </option>
+              ))}
+            </select>
+          )}
+        />
       </Group>
 
       <Group title="Run" hint="Limits and permissions for each run.">

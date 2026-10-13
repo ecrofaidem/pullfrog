@@ -148,6 +148,8 @@ export interface AgentResult {
 export interface AgentRunContext {
   payload: ResolvedPayload;
   resolvedModel?: string | undefined;
+  /** FORK: the repo's `codex.speed` setting; the codex harness lands it on a tier the account has. */
+  codexSpeed?: string | undefined;
   mcpServerUrl: string;
   tmpdir: string;
   /** harness-owned secret paths that agent filesystem tools must never read. */

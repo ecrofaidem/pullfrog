@@ -48,6 +48,15 @@ async function setup(enabled = true, expires = 7200) {
 }
 
 describe("signed pool startup handler", () => {
+  it("sends the Codex speed setting only once it is saved, and refuses an unknown speed", async () => {
+    const { t, request } = await setup();
+    expect((await (await request()).json()).settings).not.toHaveProperty("codexSpeed");
+    const patch = (speed: string) => t.mutation(internal.repos.applyConfig, { owner: "owner", name: "repo", updatedBy: "test", patch: { codexSpeed: speed as "ultrafast" } });
+    await patch("ultrafast");
+    expect((await (await request()).json()).settings.codexSpeed).toBe("ultrafast");
+    await expect(patch("warp")).rejects.toThrow();
+  });
+
   it("returns only selected auth and recovers the same active assignment without another provider call", async () => {
     const { request } = await setup();
     const first = await request();
