@@ -7,6 +7,9 @@ export const permissionTier = v.union(
   v.literal("enabled")
 );
 
+/** ceiling for native Codex runs; the action lands it on a tier the signed-in plan has */
+export const codexSpeed = v.union(v.literal("standard"), v.literal("fast"), v.literal("ultrafast"));
+
 export const reviewAuthorsMode = v.union(v.literal("all"), v.literal("allowlist"));
 
 export const runStatus = v.union(
@@ -62,6 +65,8 @@ export default defineSchema({
     push: permissionTier,
     shell: permissionTier,
     codexAgent: v.boolean(),
+    /** unset until first saved; the action then falls back to its legacy env flag */
+    codexSpeed: v.optional(codexSpeed),
     statusChecks: v.boolean(),
     progressComments: v.boolean(),
 

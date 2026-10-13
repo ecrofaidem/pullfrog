@@ -23,21 +23,34 @@ Deliberate divergences from upstream in the action tree (expect a merge conflict
 - `skills/write-good-docs/`, `skills/simple-english/`, `utils/skills.ts`, `utils/instructions.ts`, and `agents/codex.ts` — all three harnesses load the complete writing skills before drafting review comments or final reports. The installer copies references and scripts into the agent's temporary home. Codex reads the skill files; OpenCode and Claude use their native skill tools. Source versions and SHA-256 hashes are recorded in `skills/report-skills.json`; supplied skill files remain unchanged. The added `write-good-docs/ATTRIBUTION.md` documents the missing source notice. To update a skill, replace its complete directory from the source, update its manifest entry, and run `pnpm exec vitest run utils/skills.test.ts` plus the report-writing agent smoke test.
 - `utils/reviewConventions.ts`, `modes.ts`, and `agents/reviewer.ts` — full reviews, incremental reviews, and review specialists read applicable repository guidance before assessing conventions. Findings cite written requirements, account for exceptions, and use severity based on consequences. UI changes also require an internal map of existing composed components and inspected callers, including inline UI. Findings must identify a written rule, a suitable existing component or compatible extension, and a concrete consequence. Valid feature wrappers and documented exceptions remain permitted. The agent records consulted guidance in its internal run logs. This is prompt guidance, not a machine-enforced read-coverage gate or persistent learning.
 
-## Codex Fast mode
+## Codex speed
 
-Set `PULLFROG_CODEX_FAST_MODE: "1"` in the action step's `env:` to request
-Fast mode for native Codex runs. The harness sets `service_tier = "fast"`
-and `features.fast_mode = true` for the first turn and resumed turns.
-The model, reasoning effort, account selection, and tool permissions keep
-their configured values. Other harnesses ignore this setting.
+The `codex.speed` repository setting (`standard`, `fast` or `ultrafast`) is the
+fastest service tier a native Codex run may use. Set it on the dashboard's
+settings page or through `/api/cli/config`. Other harnesses ignore it.
 
-The setting is off by default. Remove it or set it to `"0"` to stop requesting
-Fast mode on new runs. The run log records `requestedServiceTier=fast` when
-enabled; this records the request, not a provider speed guarantee.
-Fast mode requires a supported model and account. For included subscription
-usage, it consumes allowance at 2.5 times the Standard rate. See
+The setting is a ceiling. Codex does not fail when the signed-in plan lacks a
+tier: it drops the tier and runs at Standard. So before a subscription run the
+harness reads the account's model catalog (`codex debug models`) and requests
+the fastest listed tier at or below the setting. A pool account without
+Ultrafast therefore runs at Fast. If the catalog cannot be read, the harness
+requests at most Fast. API-key runs skip the catalog and request the setting.
+
+The run log records the decision, for example
+`codex speed: requested=ultrafast, applied=fast, advertised=fast`. This is the
+requested tier, not a provider receipt. A warning follows if Codex still drops
+the tier. `utils/codexSpeed.ts` holds the selection; `agents/codex.ts` applies
+it to the first turn and resumed turns, and `main.ts` passes the setting in.
+
+Until the setting is saved for a repository, the legacy
+`PULLFROG_CODEX_FAST_MODE: "1"` workflow variable still requests Fast. A saved
+setting always wins, including `standard`.
+
+For included subscription usage, Fast consumes allowance at 2.5 times the
+Standard rate and Ultrafast at 8 times. Ultrafast needs a Pro $500 or eligible
+Enterprise or Edu plan. See
 [OpenAI's speed documentation](https://learn.chatgpt.com/docs/agent-configuration/speed)
-for availability and current usage rates.
+for availability and current rates.
 
 ## Single-session Codex reviews
 

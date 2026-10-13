@@ -953,6 +953,7 @@ export async function main(): Promise<MainResult> {
     const agentPromise = agent.run({
       payload,
       resolvedModel,
+      codexSpeed: runContext.repoSettings.codexSpeed, // FORK: codex speed tier
       mcpServerUrl: mcpHttpServer.url,
       tmpdir,
       subagentDeniedTools,
