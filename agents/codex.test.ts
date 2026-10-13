@@ -67,7 +67,7 @@ it.each([
   mocks.spawn.mockImplementation(async ({ args }: { args: string[] }) =>
     args[0] === "debug" ? { exitCode: tiers ? 0 : 1, stdout: tiers ? catalog(tiers) : "" } : { exitCode: 0 });
   const ctx = {
-    payload: { event: { trigger: "pull_request" }, push: "disabled", shell: "restricted", effort: 0.5 },
+    payload: { event: { trigger: "pull_request_opened" }, push: "disabled", shell: "restricted", effort: 0.5 },
     resolvedModel: "openai/gpt-6.1-sol", codexSpeed: setting,
     tmpdir: dir, mcpServerUrl: "http://localhost:9999/mcp", instructions: { full: "Review the changes" },
     toolState: {}, apiToken: "", subagentDeniedTools: [],
@@ -104,10 +104,49 @@ it("passes the requested tier through on an API-key run, which has no plan catal
   const dir = mkdtempSync(join(tmpdir(), "codex-speed-test-")); dirs.push(dir);
   mocks.spawn.mockResolvedValue({ exitCode: 0 });
   await codex.run({
-    payload: { event: { trigger: "pull_request" }, push: "disabled", shell: "restricted" },
+    payload: { event: { trigger: "pull_request_opened" }, push: "disabled", shell: "restricted" },
     resolvedModel: "openai/gpt-6.1-sol", codexSpeed: "ultrafast",
     tmpdir: dir, mcpServerUrl: "http://localhost:9999/mcp", instructions: { full: "Review the changes" },
     toolState: {}, apiToken: "", subagentDeniedTools: [],
   } as unknown as AgentRunContext);
   for (const [{ args }] of mocks.spawn.mock.calls) expect(args).toContain('service_tier="ultrafast"');
+});
+
+// A run's classification, not its PR association or prompt text, decides speed.
+it.each([
+  ["review", "issue_comment_created", "ultrafast"],
+  ["incremental_review", "pull_request_synchronize", "ultrafast"],
+  ["docs_update", "pull_request_merged", undefined],
+  ["task", "issue_comment_created", undefined],
+  ["task", "pull_request_opened", undefined],
+  ["future_task", "pull_request_opened", undefined],
+  [undefined, "issue_comment_created", undefined],
+  [undefined, "workflow_dispatch", undefined],
+  [undefined, "unknown", undefined],
+])("run type %s and trigger %s apply %s on initial and resumed turns", async (type, trigger, applied) => {
+  vi.stubEnv("PULLFROG_CODEX_FAST_MODE", "1");
+  const dir = mkdtempSync(join(tmpdir(), "codex-run-speed-test-")); dirs.push(dir);
+  const codexHome = join(dir, ".codex");
+  mocks.codexHome.mockReturnValue({ codexHome, authPath: join(codexHome, "auth.json"), originalRefresh: "fixture" });
+  mocks.spawn.mockImplementation(async ({ args }: { args: string[] }) =>
+    args[0] === "debug" ? { exitCode: 0, stdout: catalog(["fast", "ultrafast"]) } : { exitCode: 0 });
+  await codex.run({
+    payload: { type, event: { trigger, is_pr: true }, push: "disabled", shell: "restricted", effort: 0.5 },
+    resolvedModel: "openai/gpt-6.1-sol", codexSpeed: "ultrafast",
+    tmpdir: dir, mcpServerUrl: "http://localhost:9999/mcp", instructions: { full: "Review or update the docs" },
+    toolState: {}, apiToken: "", subagentDeniedTools: [],
+  } as unknown as AgentRunContext);
+  const config = readFileSync(join(codexHome, "config.toml"), "utf8");
+  expect(config.match(/^service_tier = .*$/m)?.[0]).toBe(applied && `service_tier = "${applied}"`);
+  expect(config).toContain('model_reasoning_effort = "high"');
+  const calls = mocks.spawn.mock.calls.map(([options]) => options);
+  expect(calls.filter(({ args }) => args[0] === "debug")).toHaveLength(applied ? 1 : 0);
+  const turns = calls.filter(({ args }) => args[0] !== "debug");
+  expect(turns).toHaveLength(2);
+  expect(turns[1]!.args).toContain("resume");
+  for (const { args } of turns) {
+    expect(args.find((arg: string) => arg.startsWith("service_tier="))).toBe(applied && `service_tier="${applied}"`);
+    expect(args.includes("features.fast_mode=true")).toBe(Boolean(applied));
+    expect(args.includes("features.ultrafast_mode=true")).toBe(Boolean(applied));
+  }
 });

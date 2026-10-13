@@ -402,8 +402,8 @@ async function dispatchRun(ctx: ActionCtx, params: DispatchRunParams) {
     timeout: repo.timeout,
     ...(checkRunId !== undefined ? { checkRunId } : {}),
   });
+  envelope.type = params.kind;
   if (params.docs) {
-    envelope.type = "docs_update";
     Object.assign(event, { merge_sha: params.docs.mergeSha, docs_skill: params.docs.skill, title: "Documentation update", body: null });
   }
 

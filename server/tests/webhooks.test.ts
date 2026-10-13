@@ -486,6 +486,7 @@ describe("webhook ingestion", () => {
     const t = convexTest(schema, modules);
     await dispatch(t, "pull_request", pullRequest("synchronize"));
     expect(github.dispatchWorkflow).toHaveBeenCalledTimes(1);
+    expect(envelope().type).toBe("review");
     expect(envelope().prompt).toBe("Review pull request #42.");
     expect(envelope().event.before_sha).toBe("");
     const runs = await t.run((ctx) => ctx.db.query("runs").collect());
@@ -496,6 +497,7 @@ describe("webhook ingestion", () => {
     const t = convexTest(schema, modules);
     await seedReview(t, "reviewed");
     await dispatch(t, "pull_request", pullRequest("synchronize"));
+    expect(envelope().type).toBe("incremental_review");
     expect(envelope().prompt).toContain("since the previous review");
     expect(envelope().event.before_sha).toBe("reviewed");
     const runs = await t.run((ctx) => ctx.db.query("runs").collect());
@@ -644,6 +646,7 @@ describe("webhook ingestion", () => {
       expect(github.addReaction).toHaveBeenCalledTimes(1);
       const runs = await t.run((ctx) => ctx.db.query("runs").collect());
       expect(runs).toHaveLength(1);
+      expect(envelope.type).toBe("task");
       expect(runs[0]).toMatchObject({ kind: "task", triggerer: "alice" });
       expect(runs[0]?.prNumber).toBe(isPr ? 42 : undefined);
     },
@@ -670,6 +673,7 @@ describe("webhook ingestion", () => {
         payload: comment(body),
       });
       const args = vi.mocked(github.dispatchWorkflow).mock.calls[0]![0];
+      expect(JSON.parse(args.inputs.prompt).type).toBe("review");
       expect(JSON.parse(args.inputs.prompt).prompt).toBe(
         `Review pull request #42, as requested in the comment below.\n\n${body}`,
       );

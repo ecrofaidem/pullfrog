@@ -1,4 +1,16 @@
-import { Inputs, JsonPayload } from "./payload.ts";
+import { Inputs, JsonPayload, resolvePayload } from "./payload.ts";
+import type { RepoSettings } from "./runContext.ts";
+
+it.each(["review", "incremental_review", "docs_update", "task", undefined])(
+  "preserves dispatcher run type %s for the agent",
+  (runType) => {
+    const payload = resolvePayload({
+      "~pullfrog": true, version: "0.1.98", type: runType, prompt: "Handle this request",
+      event: { trigger: "issue_comment_created", is_pr: true },
+    }, {} as RepoSettings);
+    expect(payload.type).toBe(runType);
+  },
+);
 
 describe("Inputs schema", () => {
   it("accepts prompt or prompt_file, both optional at the schema level", () => {

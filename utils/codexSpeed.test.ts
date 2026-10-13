@@ -1,5 +1,21 @@
 import { expect, it } from "vitest";
-import { advertisedCodexSpeeds, pickCodexSpeed } from "./codexSpeed.ts";
+import { advertisedCodexSpeeds, pickCodexSpeed, requestedCodexSpeed } from "./codexSpeed.ts";
+
+it.each([
+  ["pull_request_opened", "ultrafast"],
+  ["pull_request_ready_for_review", "ultrafast"],
+  ["pull_request_synchronize", "ultrafast"],
+  ["pull_request_review_requested", "ultrafast"],
+  ["pull_request_review_submitted", "standard"],
+  ["pull_request_review_comment_created", "standard"],
+  ["pull_request_merged", "standard"],
+  ["issue_comment_created", "standard"],
+  ["workflow_dispatch", "standard"],
+  ["fix_review", "standard"],
+  ["unknown", "standard"],
+])("classifies legacy %s dispatches as %s", (trigger, expected) => {
+  expect(requestedCodexSpeed("ultrafast", { event: { trigger } })).toBe(expected);
+});
 
 const catalog = JSON.stringify({ models: [
   { slug: "gpt-6.1-sol", additional_speed_tiers: ["fast", "ultrafast"] },

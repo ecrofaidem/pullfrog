@@ -904,7 +904,7 @@ async function resolveCodexSpeed(params: {
   codexHome: string;
   subscription: boolean;
 }): Promise<CodexSpeed> {
-  const requested = requestedCodexSpeed(params.ctx.codexSpeed);
+  const requested = requestedCodexSpeed(params.ctx.codexSpeed, params.ctx.payload);
   const model = resolveCodexModel(params.ctx);
   if (requested === "standard" || !params.subscription || !model) return requested;
   let advertised: string[] | null = null;

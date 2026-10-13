@@ -361,6 +361,7 @@ export function resolvePayload(
   return {
     "~pullfrog": true as const,
     version: jsonPayload?.version ?? packageJson.version,
+    type: jsonPayload?.type,
     model,
     // explicit only when the model came from a per-run override flag (carried on
     // the JSON payload). a GHA `model` input or the repo default is not explicit.

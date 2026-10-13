@@ -33,8 +33,18 @@ Last upstream sync: 0.1.98 (`bb65913`, 2026-10-13).
 ## Codex speed
 
 The `codex.speed` repository setting (`standard`, `fast` or `ultrafast`) is the
-fastest service tier a native Codex run may use. Set it on the dashboard's
+fastest service tier a native Codex PR review may use. Set it on the dashboard's
 settings page or through `/api/cli/config`. Other harnesses ignore it.
+
+Docs updates, general comment requests, and other non-review runs always use
+Standard, including resumed turns. They ignore the legacy Fast flag. The
+dispatcher sends `review` or `incremental_review` in the envelope's `type` to
+identify reviews, including explicit review requests in PR comments.
+
+For older dispatchers without a run type, only automatic PR review triggers
+use the configured speed. Unclassified comment and manual runs use Standard.
+Deploy the dispatcher change after updating consumers to the matching action
+revision to enable the configured speed for explicit comment reviews.
 
 The setting is a ceiling. Codex does not fail when the signed-in plan lacks a
 tier: it drops the tier and runs at Standard. So before a subscription run the
@@ -50,7 +60,7 @@ the tier. `utils/codexSpeed.ts` holds the selection; `agents/codex.ts` applies
 it to the first turn and resumed turns, and `main.ts` passes the setting in.
 
 Until the setting is saved for a repository, the legacy
-`PULLFROG_CODEX_FAST_MODE: "1"` workflow variable still requests Fast. A saved
+`PULLFROG_CODEX_FAST_MODE: "1"` workflow variable still requests Fast for reviews. A saved
 setting always wins, including `standard`.
 
 For included subscription usage, Fast consumes allowance at 2.5 times the
