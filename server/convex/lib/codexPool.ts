@@ -20,7 +20,7 @@ function assigned(assignment: Doc<"codexAssignments">, auth: string, accountId: 
   if (assignment.accessOnly) {
     const body = parseCodexAuthBody(auth);
     if (!body) return { status: "denied", reason: "authentication" };
-    // Codex 0.153.4 constructs external auth from access-token claims when no ID token is supplied.
+    // Codex constructs external auth from access-token claims when no ID token is supplied (verified on 0.162.1).
     auth = JSON.stringify({ auth_mode: "chatgptAuthTokens", tokens: {
       access_token: body.tokens.access_token, refresh_token: "",
       id_token: body.tokens.id_token ?? body.tokens.access_token, account_id: accountId,
