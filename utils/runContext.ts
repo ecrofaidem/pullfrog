@@ -62,7 +62,7 @@ export interface RepoSettings {
   // the `isCodexAgentEnabled()` kill switch — so the runtime treats it as the
   // final "may route to codex" verdict. see resolveAgent + wiki/codex-agent.md.
   codexAgent: boolean;
-  /** FORK: `standard | fast | ultrafast` ceiling for native Codex runs; absent on older servers. */
+  /** FORK: `standard | fast | ultrafast` ceiling for native Codex reviews; other runs use Standard. */
   codexSpeed?: string | undefined;
   signedCommits: boolean;
   repoIntelligence: boolean;

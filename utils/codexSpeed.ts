@@ -6,8 +6,15 @@
 export const CODEX_SPEEDS = ["standard", "fast", "ultrafast"] as const;
 export type CodexSpeed = (typeof CODEX_SPEEDS)[number];
 
-/** the speed the repo asked for: the dashboard setting, else the legacy `PULLFROG_CODEX_FAST_MODE` flag. */
-export function requestedCodexSpeed(setting: unknown): CodexSpeed {
+/** Only reviews use the repo's speed ceiling. Background and unclassified work stays at Standard. */
+export function requestedCodexSpeed(
+  setting: unknown,
+  run: { type?: string | undefined; event: { trigger: string } },
+): CodexSpeed {
+  const review = run.type !== undefined
+    ? run.type === "review" || run.type === "incremental_review"
+    : ["pull_request_opened", "pull_request_ready_for_review", "pull_request_synchronize", "pull_request_review_requested"].includes(run.event.trigger);
+  if (!review || run.event.trigger === "pull_request_merged") return "standard";
   if (CODEX_SPEEDS.includes(setting as CodexSpeed)) return setting as CodexSpeed;
   return process.env.PULLFROG_CODEX_FAST_MODE === "1" ? "fast" : "standard";
 }
