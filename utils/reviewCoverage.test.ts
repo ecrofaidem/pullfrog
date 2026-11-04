@@ -372,6 +372,8 @@ describe("large review continuation through the tools", () => {
     checkpoint = ReviewCheckpointTool(ctx);
     planReview(coverage, decisions(), imported);
     expect(coverage.analysisScope).toBe("incremental");
+    const status = await checkpoint.execute({ action: "status", review_id: coverage.scope.id }, {} as never);
+    expect(JSON.stringify(status)).toContain("\\nfullRereview: false\\n");
     expect(coverage.passes).toEqual({});
     expect(coverage.readCoverage[0]!.coveredRanges).toEqual([{ startLine: 1, endLine: 456 }]);
     await expect(reviewCompletionBody(ctx, "No new issues.", true)).rejects.toThrow("coverage incomplete");

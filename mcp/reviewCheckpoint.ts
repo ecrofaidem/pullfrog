@@ -1,6 +1,6 @@
 import { type } from "arktype";
 import { primaryRepoState } from "../toolState.ts";
-import { currentReviewCoverage, isCodexReview, loadReviewManifest, missingReviewPasses, planReview, recordReviewPasses, verifyGuidanceSources } from "../utils/reviewCoverage.ts";
+import { type ReviewCoverage, currentReviewCoverage, isCodexReview, loadReviewManifest, missingReviewPasses, planReview, recordReviewPasses, verifyGuidanceSources } from "../utils/reviewCoverage.ts";
 import { getDiffCoverageBreakdown } from "../utils/diffCoverage.ts";
 import type { ToolContext } from "./server.ts";
 import { execute, tool } from "./shared.ts";
@@ -47,19 +47,25 @@ export function ReviewCheckpointTool(ctx: ToolContext) {
         coverage.limitation = params.reason.trim();
         coverage.publicSummary = params.public_summary?.trim();
       }
-      return {
-        reviewId: coverage.scope.id,
-        analysisScope: coverage.analysisScope ?? "full",
-        required: coverage.plan?.required ?? [],
-        excluded: coverage.plan?.excluded ?? [],
-        remaining: missingReviewPasses(coverage),
-        priorRemainingPasses: coverage.previousReceipt?.remainingPasses ?? [],
-        reads: coverage.readCoverage?.map(state => {
-          const remaining = getDiffCoverageBreakdown({ state });
-          return { path: state.diffPath, unreadLines: remaining.unreadLines, ranges: remaining.unreadRanges };
-        }) ?? [],
-        limitation: coverage.limitation ?? null,
-      };
+      return reviewCheckpointStatus(coverage);
     }),
   });
+}
+
+/** What the agent sees after every checkpoint action. */
+export function reviewCheckpointStatus(coverage: ReviewCoverage) {
+  return {
+    reviewId: coverage.scope.id,
+    analysisScope: coverage.analysisScope ?? "full",
+    fullRereview: coverage.fullRereview ?? false,
+    required: coverage.plan?.required ?? [],
+    excluded: coverage.plan?.excluded ?? [],
+    remaining: missingReviewPasses(coverage),
+    priorRemainingPasses: coverage.previousReceipt?.remainingPasses ?? [],
+    reads: coverage.readCoverage?.map(state => {
+      const remaining = getDiffCoverageBreakdown({ state });
+      return { path: state.diffPath, unreadLines: remaining.unreadLines, ranges: remaining.unreadRanges };
+    }) ?? [],
+    limitation: coverage.limitation ?? null,
+  };
 }

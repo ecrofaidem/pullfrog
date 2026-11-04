@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createReviewCoverage, planReview, recordReviewPasses } from "./reviewCoverage.ts";
 import { REVIEW_LENSES } from "./reviewLenses.ts";
-import { appendReviewReceipt, attestReviewReceipt, applyReviewResume, createReviewReadState, createReviewReceipt, fetchReviewReceipt, parseReviewReceipt, stripReviewReceipt } from "./reviewResume.ts";
+import { appendReviewReceipt, attestReviewReceipt, applyReviewResume, FULL_REREVIEW_CHANGED_LINES, createReviewReadState, createReviewReceipt, fetchReviewReceipt, parseReviewReceipt, stripReviewReceipt } from "./reviewResume.ts";
+import { reviewCheckpointStatus } from "../mcp/reviewCheckpoint.ts";
 import type { ToolContext } from "../mcp/server.ts";
 
 let root: string;
@@ -21,6 +22,12 @@ function scope(headSha = "b".repeat(40), beforeSha?: string) {
   const coverage = createReviewCoverage({ pullNumber: 42, headSha, baseSha: "c".repeat(40), beforeSha, changedFiles: ["first.ts", "second.ts"], changedFilesPath: join(root, `${headSha}.files`), diffPath, unifiedDiffPath: rawPath, incrementalDiffPath: deltaPath });
   coverage.readCoverage = [createReviewReadState(rawPath), ...(deltaPath ? [createReviewReadState(deltaPath)] : [])];
   return coverage;
+}
+// `changed` changed lines in total. first.ts contributes 2; in big.sql, context
+// lines and file headers are not changes, but a removed SQL comment (`--- note`) is.
+function largePatch(changed: number) {
+  const body = ["--- note", ...Array.from({ length: changed - 3 }, (_, i) => `+line ${i}`)].flatMap(line => [line, " context"]);
+  return patch("first.ts", "one") + `diff --git a/big.sql b/big.sql\n--- a/big.sql\n+++ b/big.sql\n@@ -1,1 +1,1 @@\n${body.join("\n")}\n`;
 }
 function plan(coverage: ReturnType<typeof scope>, instructionSources = sources) {
   planReview(coverage, lenses(), { sources: instructionSources, required: [], excluded: [], manifestHash: "manifest" });
@@ -67,6 +74,32 @@ describe("review receipts", () => {
     expect(current.passes).toEqual({});
   });
 
+  it.each(["incomplete", "base"] as const)("never calls a large PR a re-review when the %s baseline cannot be reused", kind => {
+    const previous = scope(); plan(previous);
+    if (kind === "base") complete(previous); else previous.readCoverage![0]!.coveredRanges = [{ startLine: 1, endLine: 6 }];
+    const current = scope("d".repeat(40), previous.scope.headSha);
+    writeFileSync(current.scope.unifiedDiffPath!, largePatch(FULL_REREVIEW_CHANGED_LINES));
+    current.readCoverage![0] = createReviewReadState(current.scope.unifiedDiffPath!);
+    current.previousReceipt = createReviewReceipt("owner/repo", previous)!;
+    if (kind === "base") current.scope.baseSha = "f".repeat(40);
+    plan(current);
+    applyReviewResume(current);
+    expect(reviewCheckpointStatus(current)).toMatchObject({ analysisScope: "full", fullRereview: false });
+  });
+
+  it.each([[FULL_REREVIEW_CHANGED_LINES - 1, "incremental"], [FULL_REREVIEW_CHANGED_LINES, "full"]] as const)("re-reads the whole PR at %i changed lines: %s", (changed, expected) => {
+    const previous = scope(); plan(previous); complete(previous);
+    const current = scope("d".repeat(40), previous.scope.headSha);
+    writeFileSync(current.scope.unifiedDiffPath!, largePatch(changed));
+    current.readCoverage![0] = createReviewReadState(current.scope.unifiedDiffPath!);
+    current.previousReceipt = createReviewReceipt("owner/repo", previous)!;
+    plan(current);
+    applyReviewResume(current);
+    expect(current.analysisScope).toBe(expected);
+    expect(current.readCoverage![0]!.coveredRanges).toEqual(expected === "full" ? [] : [{ startLine: 1, endLine: 6 }]);
+    expect(reviewCheckpointStatus(current)).toMatchObject({ analysisScope: expected, fullRereview: expected === "full" });
+  });
+
   it.each(["base", "guidance", "baseline", "missing manifest", "missing delta"])("invalidates inherited coverage when %s changes", kind => {
     const previous = scope(); plan(previous); complete(previous);
     const current = scope("d".repeat(40), kind === "baseline" ? "e".repeat(40) : previous.scope.headSha);
@@ -76,6 +109,7 @@ describe("review receipts", () => {
     plan(current, kind === "guidance" ? [{ ...sources[0]!, sha256: "b".repeat(64) }] : kind === "missing manifest" ? [] : sources);
     applyReviewResume(current);
     expect(current.analysisScope).toBe("full");
+    expect(current.fullRereview).toBe(false);
     expect(current.readCoverage![0]!.coveredRanges).toEqual([]);
   });
 
