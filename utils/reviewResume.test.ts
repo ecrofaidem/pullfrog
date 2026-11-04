@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createReviewCoverage, planReview, recordReviewPasses } from "./reviewCoverage.ts";
 import { REVIEW_LENSES } from "./reviewLenses.ts";
-import { appendReviewReceipt, attestReviewReceipt, applyReviewResume, FULL_REREVIEW_CHANGED_LINES, createReviewReadState, createReviewReceipt, fetchReviewReceipt, parseReviewReceipt, stripReviewReceipt } from "./reviewResume.ts";
+import { appendReviewReceipt, attestReviewReceipt, createReviewReadState, createReviewReceipt, fetchReviewReceipt, parseReviewReceipt, stripReviewReceipt, type ReviewReceipt } from "./reviewResume.ts";
 import { reviewCheckpointStatus } from "../mcp/reviewCheckpoint.ts";
 import type { ToolContext } from "../mcp/server.ts";
 
@@ -23,12 +23,6 @@ function scope(headSha = "b".repeat(40), beforeSha?: string) {
   coverage.readCoverage = [createReviewReadState(rawPath), ...(deltaPath ? [createReviewReadState(deltaPath)] : [])];
   return coverage;
 }
-// `changed` changed lines in total. first.ts contributes 2; in big.sql, context
-// lines and file headers are not changes, but a removed SQL comment (`--- note`) is.
-function largePatch(changed: number) {
-  const body = ["--- note", ...Array.from({ length: changed - 3 }, (_, i) => `+line ${i}`)].flatMap(line => [line, " context"]);
-  return patch("first.ts", "one") + `diff --git a/big.sql b/big.sql\n--- a/big.sql\n+++ b/big.sql\n@@ -1,1 +1,1 @@\n${body.join("\n")}\n`;
-}
 function plan(coverage: ReturnType<typeof scope>, instructionSources = sources) {
   planReview(coverage, lenses(), { sources: instructionSources, required: [], excluded: [], manifestHash: "manifest" });
 }
@@ -40,76 +34,71 @@ beforeEach(() => { root = mkdtempSync(join(tmpdir(), "review-resume-")); });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 describe("review receipts", () => {
+  const passAll = (coverage: ReturnType<typeof scope>) => recordReviewPasses(coverage, coverage.plan!.required.map(id => ({ id, status: "completed", evidence: [{ reference: "second.ts", trace: ["read new scope"], outcome: "Checked current inputs." }] })));
+
   it("keeps unfinished work explicit without crediting reads from an incomplete session", () => {
     const previous = scope();
     plan(previous);
     previous.readCoverage![0]!.coveredRanges = [{ startLine: 1, endLine: 6 }];
     const receipt = createReviewReceipt("owner/repo", previous)!;
     expect(receipt.complete).toBe(false);
-    expect(receipt.readSections).toHaveLength(1);
     expect(receipt.remainingPasses).toContain("verification");
     const current = scope("d".repeat(40), previous.scope.headSha);
     current.previousReceipt = receipt;
     plan(current);
-    applyReviewResume(current);
-    expect(current.analysisScope).toBe("full");
+    expect(reviewCheckpointStatus(current)).toMatchObject({ priorReviewComplete: false });
     expect(current.readCoverage![0]!.coveredRanges).toEqual([]);
-    expect(() => recordReviewPasses(current, current.plan!.required.map(id => ({ id, status: "completed", evidence: [{ reference: "second.ts", trace: ["read new scope"], outcome: "Checked current inputs." }] })))).toThrow("diff");
+    expect(() => passAll(current)).toThrow("diff");
     expect(current.passes).toEqual({});
   });
 
-  it("reuses unchanged sections and reviews a new delta only after a complete baseline", () => {
+  it("re-reads the whole PR after a complete baseline, crediting no unchanged section", () => {
     const previous = scope();
     plan(previous);
     complete(previous);
     const current = scope("d".repeat(40), previous.scope.headSha);
+    // first.ts is byte-identical to the reviewed head; only second.ts changed.
     writeFileSync(current.scope.unifiedDiffPath!, patch("first.ts", "one") + patch("second.ts", "three"));
     current.readCoverage![0] = createReviewReadState(current.scope.unifiedDiffPath!);
     current.previousReceipt = createReviewReceipt("owner/repo", previous)!;
     plan(current);
-    applyReviewResume(current);
-    expect(current.analysisScope).toBe("incremental");
-    expect(current.readCoverage![0]!.coveredRanges).toEqual([{ startLine: 1, endLine: 6 }]);
-    expect(current.readCoverage![1]!.coveredRanges).toEqual([]);
-    expect(current.passes).toEqual({});
+    expect(reviewCheckpointStatus(current)).toMatchObject({ priorReviewComplete: true });
+    expect(current.readCoverage![0]!.coveredRanges).toEqual([]);
+    current.readCoverage![1]!.coveredRanges = [{ startLine: 1, endLine: current.readCoverage![1]!.totalLines }];
+    expect(() => passAll(current)).toThrow("diff");
+    current.readCoverage![0]!.coveredRanges = [{ startLine: 1, endLine: current.readCoverage![0]!.totalLines }];
+    expect(() => passAll(current)).not.toThrow();
   });
 
-  it.each(["incomplete", "base"] as const)("never calls a large PR a re-review when the %s baseline cannot be reused", kind => {
-    const previous = scope(); plan(previous);
-    if (kind === "base") complete(previous); else previous.readCoverage![0]!.coveredRanges = [{ startLine: 1, endLine: 6 }];
-    const current = scope("d".repeat(40), previous.scope.headSha);
-    writeFileSync(current.scope.unifiedDiffPath!, largePatch(FULL_REREVIEW_CHANGED_LINES));
-    current.readCoverage![0] = createReviewReadState(current.scope.unifiedDiffPath!);
-    current.previousReceipt = createReviewReceipt("owner/repo", previous)!;
-    if (kind === "base") current.scope.baseSha = "f".repeat(40);
-    plan(current);
-    applyReviewResume(current);
-    expect(reviewCheckpointStatus(current)).toMatchObject({ analysisScope: "full", fullRereview: false });
-  });
-
-  it.each([[FULL_REREVIEW_CHANGED_LINES - 1, "incremental"], [FULL_REREVIEW_CHANGED_LINES, "full"]] as const)("re-reads the whole PR at %i changed lines: %s", (changed, expected) => {
+  it("accepts an attested receipt published with readSections as a complete prior review", async () => {
     const previous = scope(); plan(previous); complete(previous);
+    const { complete: done, remainingPasses, ...head } = createReviewReceipt("owner/repo", previous)!;
+    // Key order of receipts the previous action version published; the digest covers it.
+    const legacy: ReviewReceipt = { ...head, readSections: ["a".repeat(64)], complete: done, remainingPasses } as ReviewReceipt;
+    const check = { name: "pullfrog", head_sha: previous.scope.headSha, app: { slug: "prfrog" }, external_id: "" };
+    const paginate = vi.fn();
+    const ctx = { repo: { owner: "owner", name: "repo" }, payload: { checkRun: { id: "123" } }, octokit: { paginate, rest: { checks: {
+      get: vi.fn().mockImplementation(async () => ({ data: check })),
+      update: vi.fn().mockImplementation(async (params: { external_id: string }) => { check.external_id = params.external_id; }),
+    }, pulls: { listReviews: vi.fn() } } } } as unknown as ToolContext;
+    const attested = await attestReviewReceipt(ctx, legacy);
+    paginate.mockResolvedValue([{ id: 1, user: { login: "prfrog[bot]", type: "Bot" }, state: "COMMENTED", submitted_at: "2026-09-16T16:38:00Z", commit_id: previous.scope.headSha, body: appendReviewReceipt("Reviewed.", attested) }]);
     const current = scope("d".repeat(40), previous.scope.headSha);
-    writeFileSync(current.scope.unifiedDiffPath!, largePatch(changed));
-    current.readCoverage![0] = createReviewReadState(current.scope.unifiedDiffPath!);
-    current.previousReceipt = createReviewReceipt("owner/repo", previous)!;
+    current.previousReceipt = await fetchReviewReceipt(ctx, 42, previous.scope.headSha);
+    expect(current.previousReceipt).toEqual(attested);
     plan(current);
-    applyReviewResume(current);
-    expect(current.analysisScope).toBe(expected);
-    expect(current.readCoverage![0]!.coveredRanges).toEqual(expected === "full" ? [] : [{ startLine: 1, endLine: 6 }]);
-    expect(reviewCheckpointStatus(current)).toMatchObject({ analysisScope: expected, fullRereview: expected === "full" });
+    expect(current.priorReviewComplete).toBe(true);
   });
 
-  it.each(["base", "guidance", "baseline", "missing manifest", "missing delta"])("invalidates inherited coverage when %s changes", kind => {
-    const previous = scope(); plan(previous); complete(previous);
+  it.each(["base", "guidance", "baseline", "missing manifest", "missing delta"])("does not count the prior review as complete when %s changes", kind => {
+    // A repository without hashed guidance has no complete prior review, even on both runs.
+    const previous = scope(); plan(previous, kind === "missing manifest" ? [] : sources); complete(previous);
     const current = scope("d".repeat(40), kind === "baseline" ? "e".repeat(40) : previous.scope.headSha);
     current.previousReceipt = createReviewReceipt("owner/repo", previous)!;
     if (kind === "base") current.scope.baseSha = "f".repeat(40);
     if (kind === "missing delta") current.scope.incrementalDiffPath = undefined;
     plan(current, kind === "guidance" ? [{ ...sources[0]!, sha256: "b".repeat(64) }] : kind === "missing manifest" ? [] : sources);
-    applyReviewResume(current);
-    expect(current.analysisScope).toBe("full");
-    expect(current.fullRereview).toBe(false);
+    expect(reviewCheckpointStatus(current)).toMatchObject({ priorReviewComplete: false });
     expect(current.readCoverage![0]!.coveredRanges).toEqual([]);
   });
 
@@ -130,7 +119,6 @@ describe("review receipts", () => {
     expect(() => recordReviewPasses(previous, previous.plan!.required.map(id => ({ id, status: "completed", evidence: [{ reference: "first.ts", trace: ["looked"], outcome: "done" }] })))).toThrow("diff");
     const receipt = createReviewReceipt("owner/repo", previous)!;
     expect(receipt.complete).toBe(false);
-    expect(receipt.readSections).toEqual([]);
   });
 
   it("loads only a submitted recognized bot review for the exact repository, PR and baseline", async () => {
@@ -151,7 +139,7 @@ describe("review receipts", () => {
       { ...good, user: { login: "prfrog", type: "User" } },
       { ...good, state: "PENDING" },
       { ...good, body: appendReviewReceipt("unattested", createReviewReceipt("owner/repo", previous)) },
-      { ...good, body: appendReviewReceipt("forged body", { ...receipt, readSections: [] }) },
+      { ...good, body: appendReviewReceipt("forged body", { ...receipt, sources: [] }) },
       { ...good, commit_id: "other" },
       { ...good, body: appendReviewReceipt("wrong repo", { ...receipt, repository: "other/repo" }) },
       { ...good, body: appendReviewReceipt("wrong PR", { ...receipt, pullNumber: 43 }) },

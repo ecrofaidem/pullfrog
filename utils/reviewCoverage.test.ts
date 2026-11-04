@@ -320,7 +320,7 @@ describe("review publication freshness", () => {
 });
 
 describe("large review continuation through the tools", () => {
-  it("reads a 77-file patch, publishes coverage, then requires only changed sections and the new delta", async () => {
+  it("reads a 77-file patch, publishes coverage, then requires the whole patch again on the next push", async () => {
     const rawPath = join(root, "review.raw.diff");
     const raw = Array.from({ length: 77 }, (_, index) => `diff --git a/file${index}.ts b/file${index}.ts\n--- a/file${index}.ts\n+++ b/file${index}.ts\n@@ -1 +1 @@\n-old\n+${"content".repeat(30)}${index}\n`).join("");
     writeFileSync(rawPath, raw);
@@ -349,7 +349,6 @@ describe("large review continuation through the tools", () => {
     expect(recorded).not.toHaveProperty("isError", true);
     expect(await reviewCompletionBody(ctx, "No new issues found.", true)).toBe("No new issues found.");
     const receipt = createReviewReceipt("test/repo", coverage)!;
-    expect(receipt.readSections).toHaveLength(77);
     expect(receipt.complete).toBe(true);
     const check = { name: "pullfrog", head_sha: coverage.scope.headSha, app: { slug: "prfrog" }, external_id: "" };
     const checks = {
@@ -371,15 +370,18 @@ describe("large review continuation through the tools", () => {
     coverage.previousReceipt = await fetchReviewReceipt(ctx, 1, beforeSha);
     checkpoint = ReviewCheckpointTool(ctx);
     planReview(coverage, decisions(), imported);
-    expect(coverage.analysisScope).toBe("incremental");
     const status = await checkpoint.execute({ action: "status", review_id: coverage.scope.id }, {} as never);
-    expect(JSON.stringify(status)).toContain("\\nfullRereview: false\\n");
+    expect(JSON.stringify(status)).toContain("\\npriorReviewComplete: true\\n");
     expect(coverage.passes).toEqual({});
-    expect(coverage.readCoverage[0]!.coveredRanges).toEqual([{ startLine: 1, endLine: 456 }]);
+    expect(coverage.readCoverage[0]!.coveredRanges).toEqual([]);
     await expect(reviewCompletionBody(ctx, "No new issues.", true)).rejects.toThrow("coverage incomplete");
     const nextReader = ReadFileTool(ctx);
     await execute(nextReader, { path: rawPath, start_line: 457, max_chars: 12000 });
     await execute(nextReader, { path: deltaPath });
+    const changedOnly = await checkpoint.execute({ action: "record", review_id: coverage.scope.id, passes: coverage.plan!.required.map(pass) }, {} as never);
+    expect(changedOnly).toHaveProperty("isError", true);
+    let again = await execute(nextReader, { path: rawPath, max_chars: 12000 });
+    while (again.next_cursor) again = await execute(nextReader, { path: rawPath, cursor: again.next_cursor, max_chars: 12000 });
     const finished = await checkpoint.execute({ action: "record", review_id: coverage.scope.id, passes: coverage.plan!.required.map(pass) }, {} as never);
     expect(finished).not.toHaveProperty("isError", true);
     expect(await reviewCompletionBody(ctx, "No new issues.", true)).toBe("No new issues.");

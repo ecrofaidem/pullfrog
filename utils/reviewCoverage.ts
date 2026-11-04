@@ -8,7 +8,7 @@ import { filterEnv } from "./secrets.ts";
 import { primaryRepoState } from "../toolState.ts";
 import { BASE_REVIEW_PASSES, REVIEW_LENSES, type ReviewLens } from "./reviewLenses.ts";
 import type { DiffCoverageState } from "./diffCoverage.ts";
-import { applyReviewResume, hasUnreadReviewDiff, stripReviewReceipt, unreadReviewFiles, type ReviewReceipt } from "./reviewResume.ts";
+import { assessPriorReview, hasUnreadReviewDiff, stripReviewReceipt, unreadReviewFiles, type ReviewReceipt } from "./reviewResume.ts";
 
 export interface ReviewScope {
   id: string;
@@ -56,10 +56,8 @@ export interface ReviewCoverage {
   publicSummary?: string | undefined;
   readCoverage?: DiffCoverageState[] | undefined;
   previousReceipt?: ReviewReceipt | undefined;
-  analysisScope?: "full" | "incremental" | undefined;
-  /** Full scope chosen for size although a complete prior review covered the earlier lines. */
-  fullRereview?: boolean | undefined;
-  resumeApplied?: boolean | undefined;
+  /** A complete review covered the previous head under the same base and guidance. */
+  priorReviewComplete?: boolean | undefined;
 }
 
 const hash = (text: string | Buffer) => createHash("sha256").update(text).digest("hex");
@@ -158,11 +156,7 @@ export function planReview(coverage: ReviewCoverage, lenses: LensDecision[], man
   coverage.passes = {};
   coverage.limitation = undefined;
   coverage.publicSummary = undefined;
-  // Replanning can change guidance applicability; don't retain inherited reads
-  // from an earlier plan with a different set of instruction sources.
-  if (coverage.resumeApplied) for (const state of coverage.readCoverage ?? []) state.coveredRanges = [];
-  applyReviewResume(coverage);
-  coverage.resumeApplied = true;
+  assessPriorReview(coverage);
 }
 
 export function recordReviewPasses(coverage: ReviewCoverage, passes: ReviewPass[]): void {
