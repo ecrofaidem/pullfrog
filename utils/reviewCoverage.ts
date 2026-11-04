@@ -57,6 +57,8 @@ export interface ReviewCoverage {
   readCoverage?: DiffCoverageState[] | undefined;
   previousReceipt?: ReviewReceipt | undefined;
   analysisScope?: "full" | "incremental" | undefined;
+  /** Full scope chosen for size although a complete prior review covered the earlier lines. */
+  fullRereview?: boolean | undefined;
   resumeApplied?: boolean | undefined;
 }
 

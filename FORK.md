@@ -25,6 +25,14 @@ Deliberate divergences from upstream in the action tree (expect a merge conflict
 
 - `modes.ts` (IncrementalReview) and the incremental-scope bullet in `utils/reviewConventions.ts` — a re-review on push reports critical or must-address findings anywhere in the PR's changed lines, not only in the latest push. A finding on code from an earlier commit is reported only when no prior review raised it, and its comment opens with `Missed in an earlier review:`. Minor findings on lines a prior review already covered stay dropped. Resolved threads count for deduplication. Upstream scopes findings to the lines the latest push changed.
 
+- `utils/reviewResume.ts` and `mcp/reviewCheckpoint.ts` — a PR with at least
+  1,500 changed lines (`FULL_REREVIEW_CHANGED_LINES`, counted in the raw
+  diff, where copy detection counts only a copied file's edits) gets a full-scope review
+  on every push, even after a complete prior review. The checkpoint reports
+  `fullRereview: true`, and earlier-commit findings follow the re-review rules
+  above. One pass over a large diff misses bugs that a fresh full pass finds.
+  Upstream reuses verified prior coverage at any size.
+
 - `commands/auth.ts` — `pullfrog auth codex` keeps the fork's named-account and pool commands. Upstream 0.1.8x rewrote this command around its hosted subscription API (`/api/.../credentials`), which this server does not implement, so the merge keeps ours wholesale.
 - `utils/runContext.ts`, `utils/runContextData.ts`, and `main.ts` — the fork's Codex account pool (`utils/codexPool*.ts`) sits beside upstream's credential pool (`utils/credentialPool.ts`). Upstream's pool only acts when the server sends `credentialAccess`, which this server never does, so it stays inert. A pooled Codex run skips OpenCode model discovery, the proxy decision, and upstream's credential checks.
 - `mcp/readFile.ts`, `utils/reviewCoverage.ts`, and `mcp/shell.ts` — fork-only callers of `runSandboxed` pass `seal: true`; `captureOutput` keeps the fork's object result with recovery hints.

@@ -156,9 +156,24 @@ export async function fetchReviewReceipt(ctx: Pick<ToolContext, "repo" | "octoki
   }
 }
 
+/** A PR with at least this many changed lines is re-read in full on every push. */
+export const FULL_REREVIEW_CHANGED_LINES = 1500;
+
+function changedLines(diffPath: string): number {
+  let inHunk = false;
+  let count = 0;
+  for (const line of readFileSync(diffPath, "utf8").split("\n")) {
+    if (line.startsWith("diff --git ")) inHunk = false;
+    else if (line.startsWith("@@")) inHunk = true;
+    else if (inHunk && (line.startsWith("+") || line.startsWith("-"))) count++;
+  }
+  return count;
+}
+
 /** Called after current guidance is known. Never import old reasoning as evidence. */
 export function applyReviewResume(coverage: ReviewCoverage): void {
   coverage.analysisScope = "full";
+  coverage.fullRereview = false;
   const previous = coverage.previousReceipt;
   const sources = coverage.plan?.sources ?? [];
   const fingerprint = (items: typeof sources) => JSON.stringify([...items].sort((a, b) => a.path.localeCompare(b.path)));
@@ -168,6 +183,12 @@ export function applyReviewResume(coverage: ReviewCoverage): void {
       !sources.length || fingerprint(sources) !== fingerprint(previous.sources)) return;
   const raw = coverage.readCoverage?.find(state => state.diffPath === coverage.scope.unifiedDiffPath);
   if (!raw) return;
+  // One pass over a large diff misses bugs that a later full pass finds, so
+  // large PRs stay full-scope and report earlier-commit findings each push.
+  if (changedLines(raw.diffPath) >= FULL_REREVIEW_CHANGED_LINES) {
+    coverage.fullRereview = true;
+    return;
+  }
   const read = new Set(previous.readSections);
   for (const section of sections(raw)) {
     if (read.has(section.hash)) recordDeliveredDiffRange({ state: raw, path: raw.diffPath, startLine: section.startLine, endLine: section.endLine });
