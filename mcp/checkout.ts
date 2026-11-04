@@ -1005,7 +1005,7 @@ export function CheckoutPrTool(ctx: ToolContext) {
       instructions:
         incrementalInstructions +
         (ctx.agentId === "codex"
-          ? `Use read_file for diff and guidance reads, following next_cursor until eof or until the required range has been fully delivered. After inspecting the delta and applicable guidance, call review_checkpoint action=plan before rereading the full patch. It validates prior coverage and returns analysisScope plus the remaining raw-diff ranges. Reuse only coverage the harness accepts; a prior incomplete review leaves outstanding full-PR work. `
+          ? `Use read_file for diff and guidance reads, following next_cursor until eof or until the required range has been fully delivered. After inspecting the delta and applicable guidance, call review_checkpoint action=plan, then read the full patch: every push re-reads it. The plan returns the remaining raw-diff ranges and priorReviewComplete, which says whether a complete review covered the previous head. `
           : "") +
         `the diff file at diffPath contains a table of contents (TOC) at the top listing every changed file with its line range. ` +
         `use the TOC line ranges as your checklist and read specific files from the diff instead of reading the entire file. ` +

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { type } from "arktype";
 import type { ToolContext } from "../mcp/server.ts";
 import { parseCheckRunId, RUN_STATUS_CHECK_NAME } from "./runStatusCheck.ts";
-import { countLines, getDiffCoverageBreakdown, recordDeliveredDiffRange, type DiffCoverageState } from "./diffCoverage.ts";
+import { countLines, getDiffCoverageBreakdown, type DiffCoverageState } from "./diffCoverage.ts";
 import type { ReviewCoverage } from "./reviewCoverage.ts";
 
 const MARKER = "PULLFROG_REVIEW_COVERAGE_V1";
@@ -19,7 +19,6 @@ const Receipt = type({
   headSha: "string",
   baseSha: "string",
   sources: type({ path: "string", sha256: "string" }).array(),
-  readSections: "string[]",
   complete: "boolean",
   remainingPasses: "string[]",
   "checkRunId?": "number.integer > 0",
@@ -45,14 +44,6 @@ export function createReviewReadState(path: string): DiffCoverageState {
   };
 }
 
-function sections(state: DiffCoverageState) {
-  const lines = readFileSync(state.diffPath, "utf8").split("\n");
-  return state.tocEntries.map(entry => ({
-    ...entry,
-    hash: hash(lines.slice(entry.startLine - 1, entry.endLine).join("\n")),
-  }));
-}
-
 export function unreadReviewFiles(coverage: ReviewCoverage): number {
   const raw = coverage.readCoverage?.find(state => state.diffPath === coverage.scope.unifiedDiffPath);
   return raw ? getDiffCoverageBreakdown({ state: raw }).files.filter(file => file.unreadRanges.length > 0).length : 0;
@@ -65,8 +56,6 @@ export function hasUnreadReviewDiff(coverage: ReviewCoverage): boolean {
 export function createReviewReceipt(repository: string, coverage: ReviewCoverage): ReviewReceipt | undefined {
   const raw = coverage.readCoverage?.find(state => state.diffPath === coverage.scope.unifiedDiffPath);
   if (!raw || !coverage.plan) return undefined;
-  const files = getDiffCoverageBreakdown({ state: raw }).files;
-  const readSections = sections(raw).filter((_, index) => files[index]!.unreadRanges.length === 0).map(file => file.hash);
   const remainingPasses = coverage.plan.required.filter(id => coverage.passes[id]?.status !== "completed");
   if (hasUnreadReviewDiff(coverage)) remainingPasses.push("diff reading");
   return {
@@ -76,7 +65,6 @@ export function createReviewReceipt(repository: string, coverage: ReviewCoverage
     headSha: coverage.scope.headSha,
     baseSha: coverage.scope.baseSha,
     sources: coverage.plan.sources,
-    readSections,
     complete: remainingPasses.length === 0 && !coverage.limitation,
     remainingPasses,
   };
@@ -90,7 +78,7 @@ export function appendReviewReceipt(body: string, receipt: ReviewReceipt | undef
   const clean = stripReviewReceipt(body);
   if (!receipt) return clean;
   const encoded = Buffer.from(JSON.stringify(receipt)).toString("base64");
-  // Oversized state degrades to a full review next run, never partial trust.
+  // Oversized state means the next run sees no prior review, never partial trust.
   if (encoded.length > MAX_RECEIPT_CHARS || clean.length + encoded.length > 60000) return clean;
   return `${clean}\n\n<!-- ${MARKER} ${encoded} -->`;
 }
@@ -102,7 +90,6 @@ export function parseReviewReceipt(body: string): ReviewReceipt | undefined {
     const parsed = Receipt(JSON.parse(Buffer.from(matches[0]![1]!, "base64").toString("utf8")));
     if (parsed instanceof type.errors) return undefined;
     if (![parsed.headSha, parsed.baseSha].every(sha => /^[a-f0-9]{40,64}$/.test(sha)) ||
-        !parsed.readSections.every(sha => /^[a-f0-9]{64}$/.test(sha)) ||
         !parsed.sources.every(source => /^[a-f0-9]{64}$/.test(source.sha256)) ||
         new Set(parsed.sources.map(source => source.path)).size !== parsed.sources.length ||
         (parsed.complete && parsed.remainingPasses.length > 0)) return undefined;
@@ -116,7 +103,7 @@ const receiptDigest = (receipt: ReviewReceipt) => RECEIPT_DIGEST_PREFIX + hash(J
  * Anchor body bytes in the existing run check, using the harness-only checks
  * credential. Bot authorship alone is insufficient: the agent's role-mirrored
  * gh token can publish review bodies, but deliberately has no checks permission.
- * A concurrent run overwriting this digest safely disables reuse.
+ * A concurrent run overwriting this digest makes the next run see no prior review.
  */
 export async function attestReviewReceipt(ctx: Pick<ToolContext, "repo" | "octokit" | "payload">, receipt: ReviewReceipt | undefined): Promise<ReviewReceipt | undefined> {
   const checkRunId = parseCheckRunId(ctx.payload.checkRun);
@@ -128,7 +115,7 @@ export async function attestReviewReceipt(ctx: Pick<ToolContext, "repo" | "octok
     await ctx.octokit.rest.checks.update({ owner: ctx.repo.owner, repo: ctx.repo.name, check_run_id: checkRunId, external_id: receiptDigest(attested) });
     return attested;
   } catch {
-    // Review publication remains available; missing attestation means full review next time.
+    // Review publication remains available; missing attestation means no prior review next time.
     return undefined;
   }
 }
@@ -151,47 +138,22 @@ export async function fetchReviewReceipt(ctx: Pick<ToolContext, "repo" | "octoki
     if (check.name !== RUN_STATUS_CHECK_NAME || check.head_sha !== beforeSha || !REVIEW_APPS.includes(check.app?.slug ?? "") || check.external_id !== receiptDigest(receipt)) return undefined;
     return receipt;
   } catch {
-    // Missing API/state is unknown coverage. Re-read instead of failing open.
+    // Missing API/state is an unknown prior review, so earlier lines are reported at any severity.
     return undefined;
   }
 }
 
-/** A PR with at least this many changed lines is re-read in full on every push. */
-export const FULL_REREVIEW_CHANGED_LINES = 1500;
-
-function changedLines(diffPath: string): number {
-  let inHunk = false;
-  let count = 0;
-  for (const line of readFileSync(diffPath, "utf8").split("\n")) {
-    if (line.startsWith("diff --git ")) inHunk = false;
-    else if (line.startsWith("@@")) inHunk = true;
-    else if (inHunk && (line.startsWith("+") || line.startsWith("-"))) count++;
-  }
-  return count;
-}
-
-/** Called after current guidance is known. Never import old reasoning as evidence. */
-export function applyReviewResume(coverage: ReviewCoverage): void {
-  coverage.analysisScope = "full";
-  coverage.fullRereview = false;
+/**
+ * Called after current guidance is known. Every push re-reads the whole PR; a
+ * complete review of the previous head under the same base and guidance only
+ * decides which earlier-commit findings are reported. Old reasoning is never
+ * imported as evidence.
+ */
+export function assessPriorReview(coverage: ReviewCoverage): void {
   const previous = coverage.previousReceipt;
   const sources = coverage.plan?.sources ?? [];
   const fingerprint = (items: typeof sources) => JSON.stringify([...items].sort((a, b) => a.path.localeCompare(b.path)));
-  // Delivered text alone is not completed review work. A fresh full-scope
-  // session needs the whole patch because prior model context is not retained.
-  if (!previous?.complete || !coverage.scope.incrementalDiffPath || previous.headSha !== coverage.scope.beforeSha || previous.baseSha !== coverage.scope.baseSha ||
-      !sources.length || fingerprint(sources) !== fingerprint(previous.sources)) return;
-  const raw = coverage.readCoverage?.find(state => state.diffPath === coverage.scope.unifiedDiffPath);
-  if (!raw) return;
-  // One pass over a large diff misses bugs that a later full pass finds, so
-  // large PRs stay full-scope and report earlier-commit findings each push.
-  if (changedLines(raw.diffPath) >= FULL_REREVIEW_CHANGED_LINES) {
-    coverage.fullRereview = true;
-    return;
-  }
-  const read = new Set(previous.readSections);
-  for (const section of sections(raw)) {
-    if (read.has(section.hash)) recordDeliveredDiffRange({ state: raw, path: raw.diffPath, startLine: section.startLine, endLine: section.endLine });
-  }
-  coverage.analysisScope = "incremental";
+  coverage.priorReviewComplete = Boolean(previous?.complete && coverage.scope.incrementalDiffPath &&
+    previous.headSha === coverage.scope.beforeSha && previous.baseSha === coverage.scope.baseSha &&
+    sources.length && fingerprint(sources) === fingerprint(previous.sources));
 }

@@ -24,7 +24,7 @@ export function ReviewCheckpointTool(ctx: ToolContext) {
   return tool({
     name: "review_checkpoint",
     mutates: true,
-    description: "Track Codex review coverage. plan imports current guidance and reusable reads from a verified prior review; status returns remaining passes and diff ranges; record saves evidence; incomplete declares a blocker after appropriate recovery. The public summary is separate from internal failure details. A clean review requires delivered diff pages, all planned passes and final verification.",
+    description: "Track Codex review coverage. plan imports current guidance and checks whether a complete review covered the previous head; status returns remaining passes and diff ranges; record saves evidence; incomplete declares a blocker after appropriate recovery. The public summary is separate from internal failure details. A clean review requires delivered diff pages, all planned passes and final verification.",
     parameters: ReviewCheckpoint,
     execute: execute(async params => {
       if (!isCodexReview(ctx)) throw new Error("Review checkpoints apply only to Codex Review/IncrementalReview mode.");
@@ -56,8 +56,7 @@ export function ReviewCheckpointTool(ctx: ToolContext) {
 export function reviewCheckpointStatus(coverage: ReviewCoverage) {
   return {
     reviewId: coverage.scope.id,
-    analysisScope: coverage.analysisScope ?? "full",
-    fullRereview: coverage.fullRereview ?? false,
+    priorReviewComplete: coverage.priorReviewComplete ?? false,
     required: coverage.plan?.required ?? [],
     excluded: coverage.plan?.excluded ?? [],
     remaining: missingReviewPasses(coverage),
