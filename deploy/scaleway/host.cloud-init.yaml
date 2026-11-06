@@ -1,0 +1,65 @@
+#cloud-config
+# Render users[0].ssh_authorized_keys with the selected project public keys.
+hostname: mf-services-1
+preserve_hostname: false
+manage_etc_hosts: true
+timezone: Europe/Berlin
+ssh_pwauth: false
+disable_root: true
+groups: [libvirt]
+users:
+  - name: ubuntu
+    groups: [adm, sudo, libvirt]
+    shell: /bin/bash
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    lock_passwd: true
+    ssh_authorized_keys: []
+package_update: true
+packages:
+  - qemu-system-x86
+  - libvirt-daemon-system
+  - virtinst
+  - cloud-image-utils
+  - qemu-utils
+  - curl
+  - jq
+  - sysstat
+  - unattended-upgrades
+  - restic
+  - mdadm
+write_files:
+  # The unused second NIC must not delay boot waiting for DHCP.
+  - path: /etc/netplan/99-services-optional-nic.yaml
+    permissions: '0600'
+    content: |
+      network:
+        version: 2
+        ethernets:
+          enp3s0f1np1:
+            optional: true
+  - path: /usr/local/sbin/mdadm-alert
+    permissions: '0755'
+    content: |
+      #!/bin/sh
+      exec /usr/bin/logger -p daemon.err -t mdadm -- "$@"
+  - path: /etc/ssh/sshd_config.d/00-services.conf
+    permissions: '0644'
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin no
+  - path: /etc/apt/apt.conf.d/52-services-upgrades
+    permissions: '0644'
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+      Unattended-Upgrade::Automatic-Reboot "false";
+runcmd:
+  - [netplan, generate]
+  - [networkctl, reload]
+  - [sh, -c, 'grep -q "^PROGRAM " /etc/mdadm/mdadm.conf || echo "PROGRAM /usr/local/sbin/mdadm-alert" >> /etc/mdadm/mdadm.conf']
+  - [systemctl, restart, mdmonitor]
+  - [systemctl, enable, --now, libvirtd]
+  - [systemctl, reload, ssh]
+  - [sh, -c, 'curl -fsSL https://tailscale.com/install.sh -o /run/install-tailscale.sh && sh /run/install-tailscale.sh']
+  - [systemctl, enable, --now, tailscaled]

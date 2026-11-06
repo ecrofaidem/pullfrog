@@ -1,0 +1,12 @@
+[Unit]
+Description=Encrypted PR Frog backup
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/prfrog/deploy/scaleway/backup.sh
+UMask=0077
+CacheDirectory=prfrog-backup
+Environment=RESTIC_CACHE_DIR=/var/cache/prfrog-backup

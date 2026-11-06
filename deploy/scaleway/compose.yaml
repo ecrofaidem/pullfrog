@@ -1,0 +1,89 @@
+name: prfrog
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
+
+services:
+  backend:
+    image: ghcr.io/convex/convex-backend@sha256:e9c084e8bd6c1f249012c672193f0988c748824f55a24cdad45f6185a8462f9a
+    restart: unless-stopped
+    stop_signal: SIGINT
+    stop_grace_period: 60s
+    ports:
+      - '127.0.0.1:${CONVEX_PORT:-3210}:3210'
+      - '127.0.0.1:${SITE_PORT:-3211}:3211'
+    volumes:
+      - data:/convex/data
+    environment:
+      CONVEX_CLOUD_ORIGIN: ${CONVEX_CLOUD_ORIGIN:?Set the private Convex API URL}
+      CONVEX_SITE_ORIGIN: ${CONVEX_SITE_ORIGIN:?Set the private HTTP actions URL}
+      INSTANCE_NAME: ${INSTANCE_NAME:-prfrog-scaleway}
+      INSTANCE_SECRET: ${INSTANCE_SECRET:?Generate a persistent instance secret}
+      DISABLE_BEACON: 'true'
+      DISABLE_METRICS_ENDPOINT: 'true'
+      DOCUMENT_RETENTION_DELAY: '172800'
+      RUST_LOG: info
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://localhost:3210/version']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    logging: *logging
+
+  web:
+    build:
+      context: ../..
+      dockerfile: deploy/scaleway/web.Dockerfile
+      args:
+        VITE_CONVEX_URL: ${CONVEX_CLOUD_ORIGIN}
+        VITE_CONVEX_SITE_URL: ${CONVEX_SITE_ORIGIN}
+        VITE_SITE_URL: ${SITE_URL:?Set the private dashboard URL}
+    restart: unless-stopped
+    init: true
+    environment:
+      CONVEX_INTERNAL_URL: http://backend:3210
+      CONVEX_INTERNAL_SITE_URL: http://backend:3211
+    ports:
+      - '127.0.0.1:${WEB_PORT:-3000}:3000'
+    healthcheck:
+      test: ['CMD', 'node', '-e', 'fetch("http://127.0.0.1:3000/sign-in").then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    depends_on:
+      backend:
+        condition: service_healthy
+    logging: *logging
+
+  public-gateway:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:${GATEWAY_PORT:-8080}:8080'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+    logging: *logging
+
+  dashboard:
+    profiles: [admin]
+    image: ghcr.io/convex/convex-dashboard@sha256:caf95d3f2241cddc103a84b728294fa0777c6acc291a2c4612c1d06faaa1c43a
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:${ADMIN_PORT:-6791}:6791'
+    environment:
+      NEXT_PUBLIC_DEPLOYMENT_URL: ${CONVEX_CLOUD_ORIGIN}
+    depends_on:
+      backend:
+        condition: service_healthy
+    logging: *logging
+
+volumes:
+  data:

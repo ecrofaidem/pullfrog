@@ -8,7 +8,10 @@ import { DEV_BYPASS_AUTH } from "./lib/dev";
 import { routeTree } from "./routeTree.gen";
 
 export function getRouter() {
-  const convexQueryClient = new ConvexQueryClient(import.meta.env.VITE_CONVEX_URL, {
+  const convexUrl = import.meta.env.SSR
+    ? process.env.CONVEX_INTERNAL_URL || import.meta.env.VITE_CONVEX_URL
+    : import.meta.env.VITE_CONVEX_URL;
+  const convexQueryClient = new ConvexQueryClient(convexUrl, {
     // every dashboard query is auth-gated; wait for the token before subscribing
     // (except under the local dev bypass, where there is no token at all)
     expectAuth: !DEV_BYPASS_AUTH,

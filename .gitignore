@@ -48,3 +48,7 @@ dist
 
 .pnpm-store/
 
+# Node deployment output
+.output/
+.nitro/
+
