@@ -1,0 +1,52 @@
+{
+  admin off
+  auto_https off
+}
+
+:8080 {
+  @webhook {
+    method POST
+    path /webhooks/github
+  }
+  @installation {
+    method POST
+    path /api/github/installation-token
+  }
+  @runContext {
+    method GET
+    path /api/repo/*
+  }
+  @pool {
+    method POST
+    path /api/runtime/codex-pool
+  }
+  @secret {
+    method PUT
+    path /api/runtime/secret
+  }
+  @runStatus {
+    method PATCH
+    path /api/workflow-run/*
+  }
+  handle @webhook {
+    reverse_proxy backend:3211
+  }
+  handle @installation {
+    reverse_proxy backend:3211
+  }
+  handle @runContext {
+    reverse_proxy backend:3211
+  }
+  handle @pool {
+    reverse_proxy backend:3211
+  }
+  handle @secret {
+    reverse_proxy backend:3211
+  }
+  handle @runStatus {
+    reverse_proxy backend:3211
+  }
+  handle {
+    respond "Not found" 404
+  }
+}

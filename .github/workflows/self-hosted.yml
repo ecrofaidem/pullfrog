@@ -1,0 +1,58 @@
+name: Self-hosted PR Frog
+
+on:
+  pull_request:
+    paths: ['deploy/scaleway/**', 'web/**', 'server/**', '.github/workflows/self-hosted.yml']
+  push:
+    branches: [main]
+    paths: ['deploy/scaleway/**', 'web/**', 'server/**', '.github/workflows/self-hosted.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm --dir server install --frozen-lockfile
+      - run: pnpm --dir web install --frozen-lockfile
+      - run: pnpm --dir server typecheck && pnpm --dir server test
+      - run: pnpm --dir web typecheck && pnpm --dir web build
+      - name: Configure disposable backend
+        run: |
+          python3 - <<'PY'
+          import pathlib, secrets
+          pathlib.Path('deploy/scaleway/.env.local-test').write_text(
+              'INSTANCE_SECRET=' + secrets.token_hex(32) + '\n'
+              'INSTANCE_NAME=prfrog-local-test\n'
+              'CONVEX_CLOUD_ORIGIN=http://127.0.0.1:13210\n'
+              'CONVEX_SITE_ORIGIN=http://127.0.0.1:13211\n'
+              'SITE_URL=http://127.0.0.1:13000\n'
+              'CONVEX_PORT=13210\nSITE_PORT=13211\nWEB_PORT=13000\nGATEWAY_PORT=18080\n'
+          )
+          PY
+          docker compose --env-file deploy/scaleway/.env.local-test -f deploy/scaleway/compose.yaml -p prfrog-migration-test up -d --wait backend public-gateway
+          key=$(docker compose --env-file deploy/scaleway/.env.local-test -f deploy/scaleway/compose.yaml -p prfrog-migration-test exec -T backend ./generate_admin_key.sh)
+          echo "::add-mask::$key"
+          printf 'CONVEX_SELF_HOSTED_URL=http://127.0.0.1:13210\nCONVEX_SELF_HOSTED_ADMIN_KEY=%s\n' "$key" > server/.env.self-host-test
+      - name: Deploy functions and test settings
+        working-directory: server
+        run: |
+          pnpm exec -- convex deploy --env-file .env.self-host-test --codegen disable --typecheck enable
+          pnpm exec -- convex env set GITHUB_WEBHOOK_SECRET local-integration-test-only --env-file .env.self-host-test
+          pnpm exec -- convex env set SITE_URL http://127.0.0.1:13000 --env-file .env.self-host-test
+          pnpm exec -- convex env set BETTER_AUTH_SECRET local-integration-test-only-at-least-32-characters --env-file .env.self-host-test
+      - name: Build and check services
+        run: |
+          docker compose --env-file deploy/scaleway/.env.local-test -f deploy/scaleway/compose.yaml -p prfrog-migration-test up -d --build --wait
+          python3 deploy/scaleway/test-stack.py
+      - name: Stop disposable services
+        if: always()
+        run: docker compose --env-file deploy/scaleway/.env.local-test -f deploy/scaleway/compose.yaml -p prfrog-migration-test down -v

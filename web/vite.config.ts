@@ -3,6 +3,9 @@ import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
+import { nitro } from "nitro/vite";
+
+const nodeDeployment = process.env.DEPLOY_TARGET === "node";
 
 export default defineConfig({
   server: {
@@ -18,7 +21,9 @@ export default defineConfig({
     noExternal: ["@convex-dev/better-auth"],
   },
   plugins: [
-    cloudflare({ viteEnvironment: { name: "ssr" } }),
+    ...(nodeDeployment
+      ? [nitro({ preset: "node-server" })]
+      : [cloudflare({ viteEnvironment: { name: "ssr" } })]),
     tanstackStart(),
     viteReact(),
     tailwindcss(),
