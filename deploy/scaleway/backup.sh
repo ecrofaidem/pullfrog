@@ -16,6 +16,8 @@ set +a
 : "${RESTIC_REPOSITORY:?Missing backup repository}"
 : "${RESTIC_PASSWORD_FILE:?Missing restic password file}"
 cd "$deploy_dir"
+repo_dir=$(realpath "$deploy_dir/../..")
+revision=$(git -c safe.directory="$repo_dir" -C "$repo_dir" rev-parse HEAD)
 compose=(docker compose --env-file "$compose_env" -f compose.yaml -p "$compose_project")
 container=$("${compose[@]}" ps -q backend)
 [[ -n $container ]] || { echo 'Backend is not running.' >&2; exit 1; }
@@ -30,7 +32,7 @@ tar --numeric-owner -C "$volume" -cf "$snapshot_dir/data.tar.partial" .
 mv "$snapshot_dir/data.tar.partial" "$snapshot_dir/data.tar"
 cp "$compose_env" "$snapshot_dir/instance.env"
 cp compose.yaml Caddyfile "$snapshot_dir/"
-git -C "$deploy_dir" rev-parse HEAD > "$snapshot_dir/revision.txt"
+printf '%s\n' "$revision" > "$snapshot_dir/revision.txt"
 "${compose[@]}" start backend
 restart_needed=0
 restic backup --tag prfrog "$snapshot_dir"

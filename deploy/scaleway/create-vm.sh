@@ -49,7 +49,7 @@ PY
 cloud-localds "$vm_dir/seed.iso" "$vm_dir/user-data" "$vm_dir/meta-data"
 chown -R libvirt-qemu:kvm "$vm_dir"
 virsh net-autostart default
-if ! virsh net-info default | grep -Eq 'Active:.*yes'; then
+if ! virsh net-info default | grep -E 'Active:.*yes' >/dev/null; then
   virsh net-start default
 fi
 virt-install --connect qemu:///system --name "$name" --memory 8192 --vcpus 4 \

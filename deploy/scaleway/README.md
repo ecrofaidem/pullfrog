@@ -31,6 +31,10 @@ and the default RAID 1 partition layout. Render `host.cloud-init.yaml` with the
 administrator's public SSH keys before passing it to Scaleway. Set deletion
 protection and confirm it after creation.
 
+The template marks the EM-B130E's unused second NIC as optional so DHCP does not
+delay boot. It sends RAID events to the system journal. Check the interface name
+if you use a different server model.
+
 After cloud-init completes, copy `create-vm.sh` and an authorized public-key file
 to the host. Run:
 
@@ -74,6 +78,9 @@ with their frozen lockfiles.
    candidate. The required variables are documented in `server/README.md`.
    Set `ACTION_WORKFLOW=pullfrog-scaleway.yml` and generate new encryption,
    run-token, webhook, and Better Auth secrets.
+   Set `CONVEX_INTERNAL_SITE_URL=http://127.0.0.1:3211` in the backend's
+   application environment. JWT verification then fetches its signing keys from
+   the local backend; the issuer remains the private HTTPS site URL.
 8. Run `docker compose up -d --build` in this directory.
 9. Run `bash configure-tailscale.sh`. Complete the Funnel approval if prompted.
 
