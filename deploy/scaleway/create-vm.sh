@@ -38,6 +38,7 @@ config = {
     }],
     'runcmd': [
         ['systemctl', 'enable', '--now', 'docker', 'qemu-guest-agent'],
+        ['usermod', '-aG', 'docker', 'ubuntu'],
         ['sh', '-c', 'curl -fsSL https://tailscale.com/install.sh -o /run/tailscale-install.sh && sh /run/tailscale-install.sh'],
         ['systemctl', 'enable', '--now', 'tailscaled'],
     ],
@@ -56,6 +57,7 @@ virt-install --connect qemu:///system --name "$name" --memory 8192 --vcpus 4 \
   --disk "path=$vm_dir/root.qcow2,format=qcow2,bus=virtio" \
   --disk "path=$vm_dir/seed.iso,device=cdrom" \
   --network network=default,model=virtio \
+  --channel unix,target_type=virtio,name=org.qemu.guest_agent.0 \
   --graphics none --noautoconsole
 virsh autostart "$name"
 echo 'VM created. Find its address with: sudo virsh domifaddr prfrog'
