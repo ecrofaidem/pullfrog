@@ -24,7 +24,8 @@ jobs:
       - run: pnpm --dir server install --frozen-lockfile
       - run: pnpm --dir web install --frozen-lockfile
       - run: pnpm --dir server typecheck && pnpm --dir server test
-      - run: pnpm --dir web typecheck && pnpm --dir web build
+      # The build generates routeTree.gen.ts, which the type check imports.
+      - run: pnpm --dir web build && pnpm --dir web typecheck
       - name: Configure disposable backend
         run: |
           python3 - <<'PY'
@@ -55,4 +56,7 @@ jobs:
           python3 deploy/scaleway/test-stack.py
       - name: Stop disposable services
         if: always()
-        run: docker compose --env-file deploy/scaleway/.env.local-test -f deploy/scaleway/compose.yaml -p prfrog-migration-test down -v
+        run: |
+          if [ -f deploy/scaleway/.env.local-test ]; then
+            docker compose --env-file deploy/scaleway/.env.local-test -f deploy/scaleway/compose.yaml -p prfrog-migration-test down -v
+          fi
