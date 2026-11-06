@@ -67,20 +67,21 @@ with their frozen lockfiles.
    Save it privately with `CONVEX_SELF_HOSTED_URL=http://127.0.0.1:3210` in
    `server/.env.self-hosted`, using the variable `CONVEX_SELF_HOSTED_ADMIN_KEY`.
    Set that file's permissions to 0600. Do not copy a Convex Cloud deploy key.
-6. From `server`, deploy with an explicit environment file:
+6. From `server`, configure local signing-key access and deploy with an explicit
+   environment file:
 
    ```sh
+   pnpm exec -- convex env set CONVEX_INTERNAL_SITE_URL http://127.0.0.1:3211 --env-file .env.self-hosted
    pnpm exec -- convex deploy --env-file .env.self-hosted
    ```
 
+   JWT verification fetches signing keys from the local backend. The issuer
+   remains the private HTTPS site URL.
 7. Set backend application variables using `convex env set` with that same
    environment file. Use a separate GitHub App and OAuth application for the
    candidate. The required variables are documented in `server/README.md`.
    Set `ACTION_WORKFLOW=pullfrog-scaleway.yml` and generate new encryption,
    run-token, webhook, and Better Auth secrets.
-   Set `CONVEX_INTERNAL_SITE_URL=http://127.0.0.1:3211` in the backend's
-   application environment. JWT verification then fetches its signing keys from
-   the local backend; the issuer remains the private HTTPS site URL.
 8. Run `docker compose up -d --build` in this directory.
 9. Run `bash configure-tailscale.sh`. Complete the Funnel approval if prompted.
 
