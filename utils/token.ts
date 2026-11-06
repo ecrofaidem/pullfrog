@@ -201,7 +201,11 @@ export async function resolveTokens(params: ResolveTokensParams): Promise<TokenR
   // `$GITHUB_REPOSITORY`, so the list is exactly `[this repo]` regardless of how
   // much org-wide reach the triggerer has, and a leak cannot cross into the
   // xrepo write set. see mirrorRolePermissions for why that stays correct.
-  const ghPermissions = mirrorRolePermissions(params.authorPermission);
+  const mirrored = mirrorRolePermissions(params.authorPermission);
+  // EXPERIMENT ONLY: a dry run hands the shell a read-only gh token.
+  const ghPermissions = mirrored && process.env.PULLFROG_DRY_RUN === "1"
+    ? (Object.fromEntries(Object.keys(mirrored).map(key => [key, "read"])) as typeof mirrored)
+    : mirrored;
   let ghToken: string | undefined;
   if (ghPermissions) {
     ghToken = await acquireNewToken({ permissions: ghPermissions });

@@ -2,6 +2,7 @@ import { type } from "arktype";
 import { primaryRepoState } from "../toolState.ts";
 import { type ReviewCoverage, currentReviewCoverage, isCodexReview, loadReviewManifest, missingReviewPasses, planReview, recordReviewPasses, verifyGuidanceSources } from "../utils/reviewCoverage.ts";
 import { getDiffCoverageBreakdown } from "../utils/diffCoverage.ts";
+import { hasUnreadReviewDiff } from "../utils/reviewResume.ts";
 import type { ToolContext } from "./server.ts";
 import { execute, tool } from "./shared.ts";
 
@@ -43,6 +44,11 @@ export function ReviewCheckpointTool(ctx: ToolContext) {
         recordReviewPasses(coverage, params.passes);
       } else if (params.action === "incomplete") {
         if (!params.reason?.trim()) throw new Error("Explain why required review work cannot complete.");
+        // EXPERIMENT ONLY: unread diff is never a blocker; read_file always delivers the next page.
+        if (hasUnreadReviewDiff(coverage)) {
+          const unread = (coverage.readCoverage ?? []).reduce((n, state) => n + getDiffCoverageBreakdown({ state }).unreadLines, 0);
+          throw new Error(`${unread} diff lines are still unread. Diff size and context length are not blockers: Codex compacts its context automatically. Keep reading the ranges from action=status with read_file. Record incomplete only after the whole diff is read.`);
+        }
         if (params.public_summary && params.public_summary.trim().length > 300) throw new Error("Keep public_summary to one plain-language sentence of at most 300 characters.");
         coverage.limitation = params.reason.trim();
         coverage.publicSummary = params.public_summary?.trim();

@@ -120,6 +120,7 @@ export async function fetchPreviousSnapshot(
  * `summaryPersistAttempted` guards against double-execution.
  */
 export async function persistSummary(ctx: ToolContext): Promise<void> {
+  if (process.env.PULLFROG_DRY_RUN === "1") return; // EXPERIMENT ONLY
   const filePath = ctx.toolState.summaryFilePath;
   if (!filePath) return;
   if (ctx.toolState.summaryPersistAttempted) return;
