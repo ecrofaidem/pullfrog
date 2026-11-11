@@ -2,7 +2,7 @@
 import { REVIEWER_AGENT_NAME } from "./agents/reviewer.ts";
 import { type AgentId, formatMcpToolRef, pullfrogMcpName } from "./external.ts";
 import { REVIEW_CONVENTIONS } from "./utils/reviewConventions.ts";
-import { codexReviewPrompt } from "./utils/reviewLenses.ts";
+import { codexReviewPrompt, DEFAULT_REVIEW_SUBAGENTS } from "./utils/reviewLenses.ts";
 
 export interface Mode {
   name: string;
@@ -82,7 +82,7 @@ The 4-backtick fence lets the block hold its own 3-backtick fences and stay one-
 
 Backtick-wrap identifiers and file names. Don't repeat diff content, don't include raw \`+123 / -45\` stats, no changelog, no horizontal rules, and no \`### Key changes\` / \`### Issues found\` / \`<b>TL;DR</b>\` heading — each \`### \` heading IS the issue.`;
 
-export function computeModes(agentId: AgentId, signedCommits = false): Mode[] {
+export function computeModes(agentId: AgentId, signedCommits = false, maxSubagents = DEFAULT_REVIEW_SUBAGENTS.max): Mode[] {
   const t = (toolName: string) => formatMcpToolRef(agentId, toolName);
   // signed-commits mode swaps the local-commit + push flow for the
   // commit_changes tool (API-created, GitHub-signed commits — no push step)
@@ -193,7 +193,7 @@ ${REVIEW_CONVENTIONS}
 
    only when NOT using Codex and the conventions pass finds no actionable issue, skip the deeper pass and submit a \`No new issues found.\` review per step 7 only when the diff has **no behavioral surface at all** — doc typos, whitespace/formatting, lockfile or generated-code regeneration, a mechanical rename whose only effect is import-path updates. line count is not the signal: a one-line change to auth, money, SQL, a comparison operator, a redirect, or a config default is not trivial.
 
-${agentId === "codex" ? codexReviewPrompt(agentId) : `4. **specialist decision**: after reading the complete diff, name the questions you still cannot answer confidently yourself, and dispatch one \`${REVIEWER_AGENT_NAME}\` specialist per question. a question qualifies only when a specialist could return evidence that **changes your disposition** on the PR — generic requests for another look, extra confidence, or polish do not. most reviews need zero or one; some need several.
+${agentId === "codex" ? codexReviewPrompt(agentId, maxSubagents) : `4. **specialist decision**: after reading the complete diff, name the questions you still cannot answer confidently yourself, and dispatch one \`${REVIEWER_AGENT_NAME}\` specialist per question. a question qualifies only when a specialist could return evidence that **changes your disposition** on the PR — generic requests for another look, extra confidence, or polish do not. most reviews need zero or one; some need several.
 
    **There is NO one-specialist cap or fixed maximum.** cover every orthogonal question that remains; do not collapse several real questions into one broad prompt just to reduce the count. there is no file-count, line-count, or budget threshold either — diff size is not a proxy for review uncertainty.
 
@@ -289,7 +289,7 @@ ${REVIEW_CONVENTIONS}
 
    only when NOT using Codex and the conventions pass finds no actionable issue, skip the deeper pass and jump to step 10's non-substantive path (do NOT submit a review) only when the incremental changes have **no behavioral surface at all** — formatting, comment tweaks, import reordering, lockfile regen, a mechanical rename of import paths. line count is not the signal: a one-line change to auth, money, SQL, a comparison operator, a redirect, or a config default is not trivial.
 
-${agentId === "codex" ? codexReviewPrompt(agentId) : `6. **specialist decision**: after covering the incremental and full diffs, name the questions about the new changes that you still cannot answer confidently yourself, and dispatch one \`${REVIEWER_AGENT_NAME}\` specialist per question. a question qualifies only when a specialist could return evidence that **changes your disposition** on the PR — generic requests for another look, extra confidence, or polish do not. most incremental reviews need zero or one, especially thread-reply re-reviews; some need several.
+${agentId === "codex" ? codexReviewPrompt(agentId, maxSubagents) : `6. **specialist decision**: after covering the incremental and full diffs, name the questions about the new changes that you still cannot answer confidently yourself, and dispatch one \`${REVIEWER_AGENT_NAME}\` specialist per question. a question qualifies only when a specialist could return evidence that **changes your disposition** on the PR — generic requests for another look, extra confidence, or polish do not. most incremental reviews need zero or one, especially thread-reply re-reviews; some need several.
 
    **There is NO one-specialist cap or fixed maximum.** cover every orthogonal question that remains; do not collapse several real questions into one broad prompt just to reduce the count. there is no file-count, line-count, or budget threshold either — diff size is not a proxy for review uncertainty.
 

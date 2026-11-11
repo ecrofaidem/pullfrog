@@ -57,6 +57,20 @@ describe("signed pool startup handler", () => {
     await expect(patch("warp")).rejects.toThrow();
   });
 
+  it("sends the review subagent settings only once saved, including 0, and refuses a negative or fractional maximum", async () => {
+    const { t, request } = await setup();
+    const settings = async () => (await (await request()).json()).settings;
+    expect(await settings()).not.toHaveProperty("codexSubagentMax");
+    expect(await settings()).not.toHaveProperty("codexSubagentEffort");
+    const patch = (value: Record<string, unknown>) => t.mutation(internal.repos.applyConfig, { owner: "owner", name: "repo", updatedBy: "test", patch: value as never });
+    await patch({ codexSubagentMax: 40, codexSubagentEffort: "high" });
+    expect(await settings()).toMatchObject({ codexSubagentMax: 40, codexSubagentEffort: "high" });
+    await patch({ codexSubagentMax: 0 });
+    expect((await settings()).codexSubagentMax).toBe(0);
+    for (const max of [-1, 2.5]) await expect(patch({ codexSubagentMax: max })).rejects.toThrow("codex.subagents.max must be a whole number");
+    await expect(patch({ codexSubagentEffort: "ludicrous" })).rejects.toThrow();
+  });
+
   it("returns only selected auth and recovers the same active assignment without another provider call", async () => {
     const { request } = await setup();
     const first = await request();

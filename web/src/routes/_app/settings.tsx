@@ -44,6 +44,8 @@ interface Form {
   shell: Tier;
   codexAgent: boolean;
   codexSpeed: NonNullable<Doc<"repos">["codexSpeed"]>;
+  codexSubagentMax: string;
+  codexSubagentEffort: NonNullable<Doc<"repos">["codexSubagentEffort"]>;
   statusChecks: boolean;
   progressComments: boolean;
   setupScript: string;
@@ -60,6 +62,11 @@ const EFFORTS: { value: string; label: string }[] = [
 ];
 
 const SPEEDS: Form["codexSpeed"][] = ["standard", "fast", "ultrafast"];
+
+const SUBAGENT_EFFORTS: Form["codexSubagentEffort"][] = ["low", "medium", "high", "xhigh"];
+
+/** what the action uses while `codex.subagents.*` is unset */
+const SUBAGENT_DEFAULTS = { max: 16, effort: "medium" } as const;
 
 const MODELS = ["gpt-sol", "gpt-sol-pro", "claude-opus", "claude-sonnet", "claude-haiku"];
 
@@ -80,6 +87,8 @@ function toForm(repo: Doc<"repos">): Form {
     shell: repo.shell,
     codexAgent: repo.codexAgent,
     codexSpeed: repo.codexSpeed ?? "standard",
+    codexSubagentMax: String(repo.codexSubagentMax ?? SUBAGENT_DEFAULTS.max),
+    codexSubagentEffort: repo.codexSubagentEffort ?? SUBAGENT_DEFAULTS.effort,
     statusChecks: repo.statusChecks,
     progressComments: repo.progressComments,
     setupScript: repo.setupScript ?? "",
@@ -110,6 +119,8 @@ function toPatch(form: Form): RepoPatch {
     shell: form.shell,
     codexAgent: form.codexAgent,
     codexSpeed: form.codexSpeed,
+    codexSubagentMax: Number(form.codexSubagentMax.trim()),
+    codexSubagentEffort: form.codexSubagentEffort,
     statusChecks: form.statusChecks,
     progressComments: form.progressComments,
     setupScript: form.setupScript.trim() ? form.setupScript : null,
@@ -124,6 +135,7 @@ function validate(form: Form): Partial<Record<ConfigKey, string>> {
   if (!t || !TIMEOUT_RE.test(t)) errors["run.timeout"] = "Use a length like 45m, 1h or 1h30m.";
   const h = form.handle.trim().replace(/^@/, "");
   if (!/^[a-z0-9-]+$/i.test(h)) errors["comment.handle"] = "Use letters, digits and hyphens only.";
+  if (!/^\d+$/.test(form.codexSubagentMax.trim())) errors["codex.subagents.max"] = "Use a whole number, 0 or more.";
   if (form.effort !== "") {
     const e = Number(form.effort);
     if (!(e >= 0 && e <= 1)) errors.effort = "Pick a rung.";
@@ -334,7 +346,7 @@ function SettingsPage() {
             </select>
           )}
         />
-        <Row k="agent.codex" help="Use the Codex CLI instead of OpenCode to run the model. Experimental, and it cannot use helper agents.">
+        <Row k="agent.codex" help="Use the Codex CLI instead of OpenCode to run the model. Experimental. Reviews can hand parts of the work to subagents (codex.subagents.max).">
           <Toggle checked={form.codexAgent} onChange={(v) => set("codexAgent", v)} label="native codex harness" />
         </Row>
         <Row
@@ -345,6 +357,27 @@ function SettingsPage() {
               {SPEEDS.map((speed) => (
                 <option key={speed} value={speed}>
                   {speed}
+                </option>
+              ))}
+            </select>
+          )}
+        />
+        <Row
+          k="codex.subagents.max"
+          help="How many subagents a codex review can run at once. The reviewer decides whether to use them. 0 turns them off. Each subagent uses the usage limit at the review's speed."
+          error={errors["codex.subagents.max"]}
+          control={(ids) => (
+            <input id={ids.control} aria-describedby={ids.help} aria-invalid={errors["codex.subagents.max"] ? "true" : undefined} data-key="codex.subagents.max" className="field mono w-28" type="text" inputMode="numeric" value={form.codexSubagentMax} onChange={(e) => set("codexSubagentMax", e.target.value)} spellCheck={false} autoComplete="off" />
+          )}
+        />
+        <Row
+          k="codex.subagents.effort"
+          help="How hard review subagents think. They run the review's model. Higher settings take longer and use more of the usage limit."
+          control={(ids) => (
+            <select id={ids.control} aria-describedby={ids.help} data-key="codex.subagents.effort" className="field w-44" value={form.codexSubagentEffort} onChange={(e) => set("codexSubagentEffort", e.target.value as Form["codexSubagentEffort"])}>
+              {SUBAGENT_EFFORTS.map((effort) => (
+                <option key={effort} value={effort}>
+                  {effort}
                 </option>
               ))}
             </select>

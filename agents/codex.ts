@@ -64,7 +64,7 @@ import {
 import { ThinkingTimer } from "../utils/timer.ts";
 import { readSubagentRollouts, readWeeklyLimit, type SubagentTokens } from "../utils/codexRollouts.ts";
 import { setCodexUsageReader } from "../utils/codexUsage.ts";
-import { CODEX_SUBAGENT_RULES, MAX_REVIEW_SUBAGENTS } from "../utils/reviewLenses.ts";
+import { CODEX_SUBAGENT_RULES, reviewSubagentLimits } from "../utils/reviewLenses.ts";
 import type { TodoTracker } from "../utils/todoTracking.ts";
 import { getDevDependencyVersion } from "../utils/version.ts";
 import { buildReflectionPrompt, runPostRunRetryLoop } from "./postRun.ts";
@@ -184,7 +184,8 @@ type SubagentSettings = {
  * - The service tier is inherited, so children run at the lead's speed.
  */
 function subagentSettings(ctx: AgentRunContext, model: string | undefined): SubagentSettings {
-  if (!isReviewRun(ctx.payload)) return { multiAgentV2: "false", agents: [] };
+  const limits = reviewSubagentLimits(ctx.reviewSubagents);
+  if (!isReviewRun(ctx.payload) || limits.max === 0) return { multiAgentV2: "false", agents: [] };
   const table = [
     "enabled = true",
     "max_wait_timeout_ms = 600000",
@@ -196,8 +197,8 @@ function subagentSettings(ctx: AgentRunContext, model: string | undefined): Suba
     multiAgentV2: `{ ${table} }`,
     agents: [
       ...(model ? [["default_subagent_model", JSON.stringify(model)] as [string, string]] : []),
-      ["default_subagent_reasoning_effort", JSON.stringify("medium")],
-      ["max_concurrent_threads_per_session", String(MAX_REVIEW_SUBAGENTS)],
+      ["default_subagent_reasoning_effort", JSON.stringify(limits.effort)],
+      ["max_concurrent_threads_per_session", String(limits.max)],
     ],
   };
 }

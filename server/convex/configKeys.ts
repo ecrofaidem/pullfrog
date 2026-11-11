@@ -17,6 +17,8 @@ export const CONFIG_KEYS = {
   effort: { field: "effort", type: "number | null" },
   "agent.codex": { field: "codexAgent", type: "boolean" },
   "codex.speed": { field: "codexSpeed", type: "'standard' | 'fast' | 'ultrafast'" },
+  "codex.subagents.max": { field: "codexSubagentMax", type: "number" },
+  "codex.subagents.effort": { field: "codexSubagentEffort", type: "'low' | 'medium' | 'high' | 'xhigh'" },
   "run.timeout": { field: "timeout", type: "string" },
   "run.push": { field: "push", type: "'disabled' | 'restricted' | 'enabled'" },
   "run.shell": { field: "shell", type: "'disabled' | 'restricted' | 'enabled'" },
@@ -36,6 +38,8 @@ export function toConfig(repo: Doc<"repos">): Record<ConfigKey, unknown> {
   const out = {} as Record<ConfigKey, unknown>;
   for (const key of CONFIG_KEY_LIST) out[key] = repo[CONFIG_KEYS[key].field];
   out["codex.speed"] ??= "standard";
+  out["codex.subagents.max"] ??= 16;
+  out["codex.subagents.effort"] ??= "medium";
   out["docs.update"] ??= false;
   out["docs.skill"] ??= ".claude/skills/doc-update/SKILL.md";
   return out;

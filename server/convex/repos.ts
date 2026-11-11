@@ -5,7 +5,7 @@ import { v } from "convex/values";
 import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { requireDashboardUser } from "./auth";
-import { codexSpeed, permissionTier, reviewAuthorsMode } from "./schema";
+import { codexSpeed, codexSubagentEffort, permissionTier, reviewAuthorsMode } from "./schema";
 
 function defaultReviewAuthors(): string[] {
   return (process.env.DEFAULT_REVIEW_AUTHORS ?? "")
@@ -136,6 +136,8 @@ export function toActionSettings(repo: Doc<"repos">): Record<string, unknown> {
     autoMergeEnabled: false,
     codexAgent: repo.codexAgent,
     ...(repo.codexSpeed ? { codexSpeed: repo.codexSpeed } : {}),
+    ...(repo.codexSubagentMax !== undefined ? { codexSubagentMax: repo.codexSubagentMax } : {}),
+    ...(repo.codexSubagentEffort ? { codexSubagentEffort: repo.codexSubagentEffort } : {}),
     signedCommits: false,
     repoIntelligence: false,
     progressComments: repo.progressComments,
@@ -184,6 +186,8 @@ const patchValidator = v.object({
   shell: v.optional(permissionTier),
   codexAgent: v.optional(v.boolean()),
   codexSpeed: v.optional(codexSpeed),
+  codexSubagentMax: v.optional(v.number()),
+  codexSubagentEffort: v.optional(codexSubagentEffort),
   statusChecks: v.optional(v.boolean()),
   progressComments: v.optional(v.boolean()),
   handle: v.optional(v.string()),
@@ -206,6 +210,9 @@ export function validatePatch(input: RepoPatch): RepoPatch {
   }
   if (patch.effort !== undefined && patch.effort !== null) {
     if (!(patch.effort >= 0 && patch.effort <= 1)) throw new Error("effort must be within [0,1]");
+  }
+  if (patch.codexSubagentMax !== undefined && !(Number.isInteger(patch.codexSubagentMax) && patch.codexSubagentMax >= 0)) {
+    throw new Error("codex.subagents.max must be a whole number, 0 or more");
   }
   if (patch.timeout !== undefined) {
     const t = patch.timeout.trim();
