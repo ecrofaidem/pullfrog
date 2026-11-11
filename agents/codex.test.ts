@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -197,17 +197,20 @@ it("adds subagent tokens from rollouts to each exec's usage, warns once about lo
   // strictly increasing, so "newest" is the last line written
   let tick = 0;
   const at = () => new Date(Date.parse("2026-11-11T18:00:00Z") + 1000 * tick++).toISOString();
-  const rollout = (name: string, done: boolean, input: number, output: number) => writeFileSync(join(day, `rollout-${name}.jsonl`), [
+  // rollouts are append-only JSONL, one complete line per record
+  const append = (name: string, ...records: object[]) =>
+    appendFileSync(join(day, `rollout-${name}.jsonl`), records.map((record) => `${JSON.stringify(record)}\n`).join(""));
+  const start = (name: string) => append(name,
     { type: "session_meta", payload: { id: `child-${name}`, session_id: "root", timestamp: at(), source: { subagent: { thread_spawn: { agent_path: `/root/${name}` } } } } },
-    { timestamp: at(), type: "event_msg", payload: { type: "task_started" } },
-    { timestamp: at(), type: "event_msg", payload: { type: "token_count", info: { total_token_usage: { input_tokens: input, cached_input_tokens: 0, output_tokens: output } }, rate_limits: { primary: { used_percent: 40 + output, window_minutes: 10_080, resets_at: 1 } } } },
-    ...(done ? [{ timestamp: at(), type: "event_msg", payload: { type: "task_complete" } }] : []),
-  ].map((line) => JSON.stringify(line)).join("\n"));
+    { timestamp: at(), type: "event_msg", payload: { type: "task_started" } });
+  const tokens = (name: string, input: number, output: number) => append(name,
+    { timestamp: at(), type: "event_msg", payload: { type: "token_count", info: { total_token_usage: { input_tokens: input, cached_input_tokens: 0, output_tokens: output } }, rate_limits: { primary: { used_percent: 40 + output, window_minutes: 10_080, resets_at: 1 } } } });
+  const done = (name: string) => append(name, { timestamp: at(), type: "event_msg", payload: { type: "task_complete" } });
   const warning = vi.spyOn(log, "warning");
   mocks.spawn.mockImplementation(async ({ args, onStdout }: { args: string[]; onStdout: (chunk: string) => void }) => {
     mkdirSync(day, { recursive: true });
-    if (args.includes("resume")) { rollout("fruit", false, 5_000, 4); rollout("lime", true, 1_000, 1); }
-    else { rollout("color", true, 20_000, 5); rollout("fruit", false, 3_000, 2); }
+    if (args.includes("resume")) { tokens("fruit", 5_000, 4); start("lime"); tokens("lime", 1_000, 1); done("lime"); }
+    else { start("color"); tokens("color", 20_000, 5); done("color"); start("fruit"); tokens("fruit", 3_000, 2); }
     onStdout(`${JSON.stringify({ type: "thread.started", thread_id: "root" })}\n${JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1_000, cached_input_tokens: 0, output_tokens: 100 } })}\n`);
     return { exitCode: 0 };
   });

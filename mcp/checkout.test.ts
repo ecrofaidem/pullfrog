@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initToolState, primaryRepoState } from "../toolState.ts";
 import { CheckoutPrTool, type FormatFilesResult, formatFilesWithLineNumbers, writeUnifiedPrDiff } from "./checkout.ts";
 import type { ToolContext } from "./server.ts";
@@ -170,5 +170,48 @@ describe("CheckoutPrTool during a Codex review", () => {
     expect(result).toHaveProperty("isError", true);
     expect(JSON.stringify(result)).toContain("reviewing PR #7");
     expect(get).not.toHaveBeenCalled();
+  });
+
+  describe("on the reviewed PR", () => {
+    const cwd = process.cwd();
+    let repoDir: string;
+    beforeEach(() => {
+      // a clean repository, so the dirty-tree refusal ahead of the guard passes
+      repoDir = mkdtempSync(join(tmpdir(), "checkout-guard-"));
+      execFileSync("git", ["init", "-q"], { cwd: repoDir });
+      process.chdir(repoDir);
+    });
+    afterEach(() => {
+      process.chdir(cwd);
+      rmSync(repoDir, { recursive: true, force: true });
+    });
+    const run = async (params: { agent: string; mode: string; head: string }) => {
+      const toolState = initToolState({ owner: "o", name: "r", dir: repoDir, progressComment: undefined });
+      toolState.selectedMode = params.mode;
+      toolState.agent = params.agent as never;
+      const repo = primaryRepoState(toolState);
+      repo.reviewCoverage = { scope: { pullNumber: 7, headSha: "a".repeat(40) } } as unknown as NonNullable<typeof repo.reviewCoverage>;
+      const get = vi.fn().mockResolvedValue({ data: {
+        head: { sha: params.head, ref: "feature", repo: { full_name: "o/r" } },
+        base: { ref: "main", repo: { full_name: "o/r" } },
+        maintainer_can_modify: false,
+      } });
+      const ctx = { agentId: params.agent, toolState, repo: { owner: "o", name: "r" }, octokit: { rest: { pulls: { get } } }, payload: {} } as unknown as ToolContext;
+      return JSON.stringify(await CheckoutPrTool(ctx).execute({ pull_number: 7 }, {} as never));
+    };
+
+    it("refuses a head that moved since the review started", async () => {
+      expect(await run({ agent: "codex", mode: "Review", head: "b".repeat(40) })).toContain("moved to bbbbbbbbbb while this run reviews aaaaaaaaaa");
+    });
+    it.each([
+      ["codex", "Review", "a".repeat(40)],
+      ["codex", "Build", "b".repeat(40)],
+      ["opencode", "Review", "b".repeat(40)],
+    ])("lets %s in %s at head %s through to the checkout", async (agent, mode, head) => {
+      // the fixture has no remote, so the checkout itself fails past the guard
+      const result = await run({ agent, mode, head });
+      expect(result).not.toContain("while this run reviews");
+      expect(result).not.toContain("would switch the working tree");
+    });
   });
 });

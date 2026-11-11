@@ -107,16 +107,17 @@ up to 16 subagents at once.
   `utils/reviewLenses.ts` holds the subagent rules.
 - **What enforces it.** Codex has no pre-tool hook that identifies a subagent,
   so instructions keep subagents off lead-only tools. Two checks back them up.
-  `checkout_pr` refuses a different PR while a review is in progress. A repeat
-  checkout of the same revision keeps the diff artifacts byte-identical, so
-  their read coverage survives.
+  While a review is in progress, `checkout_pr` refuses a different PR and a
+  new head of the same PR. A repeat checkout of the reviewed revision keeps
+  the diff artifacts byte-identical, so their read coverage survives.
 - **Waiting.** `codex exec` ends when the lead's turn ends, and any subagent
   still working is lost. The lead waits with `wait_agent` until `list_agents`
-  shows none running. A wait returns within 10 minutes, under the activity
+  shows none running. Each wait returns within 10 minutes and reports its
+  start and end on the exec stream, so waiting never trips the activity
   watchdog. The learnings reflection turn never spawns.
 - **Accounting.** The exec stream reports only the lead's thread. Each subagent
   writes its own rollout under `$CODEX_HOME/sessions`, and the harness reads
-  those rollouts. The footer lists each subagent with its time and status and
+  those rollouts, parsing only the lines added since the last read. The footer lists each subagent with its time and status and
   adds its tokens to the run's. It shows the weekly limit from the session's
   newest report. The harness logs a warning for each subagent still working
   when the process exits.

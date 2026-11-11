@@ -783,6 +783,15 @@ export function CheckoutPrTool(ctx: ToolContext) {
     };
 
     const primary = primaryRepoState(ctx.toolState);
+    // Same reason as the PR-number check in `execute`: a new head mid-review
+    // moves HEAD and replaces the coverage every subagent is reading into.
+    const reviewing = primary.reviewCoverage?.scope;
+    if (isCodexReview(ctx) && reviewing && reviewing.headSha !== pr.headSha) {
+      throw new Error(
+        `PR #${pull_number} moved to ${pr.headSha.slice(0, 10)} while this run reviews ${reviewing.headSha.slice(0, 10)}. ` +
+          "Finish and publish the review of the checked-out commit; the push starts its own review."
+      );
+    }
     const checkoutResult = await checkoutPrBranch(pr, {
       octokit: ctx.octokit,
       owner: ctx.repo.owner,

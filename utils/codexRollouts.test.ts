@@ -1,7 +1,7 @@
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { readSubagentRollouts, readWeeklyLimit } from "./codexRollouts.ts";
 
 const ROOT = "root-thread";
@@ -93,4 +93,41 @@ it("reads the newest weekly limit any thread of the session reported", () => {
   });
   expect(readWeeklyLimit({ codexHome: childNewest, rootThreadId: ROOT, since: 0 })).toMatchObject({ usedPercent: 43 });
   expect(readWeeklyLimit({ codexHome: home({ root: [meta(ROOT, ROOT, "2026-11-11T18:00:00.000Z")] }), rootThreadId: ROOT, since: 0 })).toBeNull();
+});
+
+it("parses only appended complete lines, and nothing when a rollout has not grown", () => {
+  const codexHome = home({ grow: [meta("child-grow", ROOT, "2026-11-11T18:00:00.000Z", "/root/grow"), event("2026-11-11T18:00:01.000Z", { type: "task_started" })] });
+  const file = join(codexHome, "sessions", "2026", "11", "11", "rollout-grow.jsonl");
+  const read = () => readSubagentRollouts({ codexHome, rootThreadId: ROOT, since: 0 });
+  expect(read()).toMatchObject([{ label: "grow", status: "unfinished", tokens: { input: 0 } }]);
+
+  const counted = JSON.stringify(tokens("2026-11-11T18:00:02.000Z", 7_000, 0, 3));
+  const finished = JSON.stringify(event("2026-11-11T18:00:04.000Z", { type: "task_complete" }));
+  appendFileSync(file, `${counted}\n${finished.slice(0, 20)}`); // a line codex is still writing
+  expect(read()).toMatchObject([{ status: "unfinished", tokens: { input: 7_000, output: 3 } }]);
+  appendFileSync(file, `${finished.slice(20)}\n`);
+  expect(read()).toMatchObject([{ status: "completed", seconds: 4 }]);
+
+  const parse = vi.spyOn(JSON, "parse");
+  try {
+    read();
+    expect(parse).not.toHaveBeenCalled();
+  } finally {
+    parse.mockRestore();
+  }
+});
+
+it("skips rollouts it cannot read instead of throwing into the footer", () => {
+  const codexHome = home({ ok: [meta("child-ok", ROOT, "2026-11-11T18:00:00.000Z", "/root/ok"), event("2026-11-11T18:00:01.000Z", { type: "task_complete" })] });
+  const day = join(codexHome, "sessions", "2026", "11", "11");
+  symlinkSync(join(day, "missing"), join(day, "rollout-dangling.jsonl"));
+  const locked = join(day, "rollout-locked.jsonl");
+  writeFileSync(locked, `${JSON.stringify(meta("child-locked", ROOT, "2026-11-11T18:00:00.000Z", "/root/locked"))}\n`);
+  chmodSync(locked, 0o000);
+  try {
+    expect(readSubagentRollouts({ codexHome, rootThreadId: ROOT, since: 0 }).map(({ label }) => label)).toEqual(["ok"]);
+    expect(readWeeklyLimit({ codexHome, rootThreadId: ROOT, since: 0 })).toBeNull();
+  } finally {
+    chmodSync(locked, 0o600);
+  }
 });
