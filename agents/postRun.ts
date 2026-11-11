@@ -363,6 +363,9 @@ function buildXrepoLearningsReflectionPrompt(filePath: string): string {
  * returns undefined when reflection should be skipped (neither file seeded, or
  * a reflection-skip mode like IncrementalReview).
  */
+/** a review turn may have authorized delegation; the reflection turn stays with the lead. */
+const REFLECTION_SOLO = "Do this turn's work yourself: do not spawn, message or wait for subagents.";
+
 export function buildReflectionPrompt(toolState: ToolState): string | undefined {
   if (!shouldRunReflection(toolState.selectedMode)) return undefined;
   const parts: string[] = [];
@@ -373,7 +376,7 @@ export function buildReflectionPrompt(toolState: ToolState): string | undefined 
     parts.push(buildXrepoLearningsReflectionPrompt(toolState.xrepoLearningsFilePath));
   }
   if (parts.length === 0) return undefined;
-  return parts.join("\n\n---\n\n");
+  return [REFLECTION_SOLO, ...parts].join("\n\n---\n\n");
 }
 
 /**
