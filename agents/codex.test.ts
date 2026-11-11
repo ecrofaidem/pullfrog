@@ -150,3 +150,38 @@ it.each([
     expect(args.includes("features.ultrafast_mode=true")).toBe(Boolean(applied));
   }
 });
+
+// Review runs get v2 subagents pinned to the lead's model; every other run keeps them off.
+it.each([
+  ["review", "pull_request_opened", true],
+  ["incremental_review", "pull_request_synchronize", true],
+  ["task", "issue_comment_created", false],
+  ["docs_update", "pull_request_merged", false],
+])("run type %s on %s enables subagents: %s", async (type, trigger, enabled) => {
+  const dir = mkdtempSync(join(tmpdir(), "codex-subagent-test-")); dirs.push(dir);
+  mocks.spawn.mockResolvedValue({ exitCode: 0 });
+  await codex.run({
+    payload: { type, event: { trigger }, push: "disabled", shell: "restricted" },
+    resolvedModel: "openai/gpt-6.1-sol",
+    tmpdir: dir, mcpServerUrl: "http://localhost:9999/mcp", instructions: { full: "Review the changes" },
+    toolState: {}, apiToken: "", subagentDeniedTools: [],
+  } as unknown as AgentRunContext);
+  const config = readFileSync(join(dir, ".codex", "config.toml"), "utf8");
+  expect(config).toContain("multi_agent = false");
+  const v2 = config.match(/^multi_agent_v2 = (.*)$/m)?.[1];
+  const agents = ['default_subagent_model = "gpt-6.1-sol"', 'default_subagent_reasoning_effort = "medium"', "max_concurrent_threads_per_session = 16"];
+  if (enabled) {
+    expect(v2).toMatch(/^\{ enabled = true, max_wait_timeout_ms = 600000, default_wait_timeout_ms = 120000, expose_spawn_agent_model_overrides = false, subagent_developer_instructions = "You are a subagent.*Never spawn agents\..*" \}$/);
+    expect(config).toContain(["[agents]", ...agents].join("\n"));
+  } else {
+    expect(v2).toBe("false");
+    expect(config).not.toContain("[agents]");
+  }
+  const turns = mocks.spawn.mock.calls.map(([options]) => options.args as string[]);
+  expect(turns).toHaveLength(2);
+  for (const args of turns) {
+    expect(args).toContain("features.multi_agent=false");
+    expect(args).toContain(`features.multi_agent_v2=${v2}`);
+    for (const entry of agents) expect(args.includes(`agents.${entry.replace(" = ", "=")}`)).toBe(enabled);
+  }
+});

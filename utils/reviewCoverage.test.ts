@@ -146,7 +146,7 @@ describe("review manifest and scope", () => {
   });
 });
 
-describe("single-session completion", () => {
+describe("Codex review completion", () => {
   it("rejects an evidence-free selected lens and premature verification", async () => {
     planReview(coverage, decisions(), manifest());
     expect(() => recordReviewPasses(coverage, [{ ...pass("B"), evidence: [] }])).toThrow("needs concrete");
@@ -223,7 +223,10 @@ describe("single-session completion", () => {
   it("Codex full/incremental prompts use passes while other harnesses retain specialists", async () => {
     for (const name of ["Review", "IncrementalReview"]) {
       const codex = computeModes("codex").find(mode => mode.name === name)!.prompt!;
-      expect(codex).toContain("Single-session review coverage");
+      expect(codex).toContain("Review coverage");
+      expect(codex).toContain("explicitly authorized to delegate");
+      expect(codex).toContain('fork_turns="none"');
+      expect(codex).toContain("wait_agent until list_agents shows no running subagent");
       expect(codex).not.toContain("**specialist decision**");
       expect(codex).toContain("review_checkpoint");
       expect(computeModes("opencode").find(mode => mode.name === name)!.prompt).toContain("**specialist decision**");

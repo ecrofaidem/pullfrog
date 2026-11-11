@@ -6,11 +6,13 @@
  *   computer use, plugins, lifecycle hooks) are turned off in `config.toml`'s
  *   `[features]` table. shell goes through the MCP `shell` tool, which runs
  *   with a filtered, secret-free env.
- * - subagent fan-out (`multi_agent*`) is off: codex exposes no pre-tool hook
- *   carrying a subagent marker, so there is no way to reproduce the
- *   mutating-MCP-tool gate the other two harnesses enforce on subagents. an
- *   ungated subagent could call `checkout_pr` / `push_branch` behind the
- *   orchestrator's back — see action/agents/subagentToolGates.ts.
+ * - review runs get `multi_agent_v2` subagents (see `subagentSettings`). codex exposes
+ *   no pre-tool hook carrying a subagent marker, so the mutating-MCP-tool gate
+ *   the other two harnesses enforce (action/agents/subagentToolGates.ts) is
+ *   replaced by instructions: spawning needs explicit authorization, which only
+ *   the review prompt gives, and `CODEX_SUBAGENT_RULES` keeps subagents off
+ *   checkout, checkpoint and publishing tools. `checkout_pr` refuses another
+ *   PR mid-review as a backstop. v1 `multi_agent` stays off.
  * - the sandbox stays ON (`approval_policy = "never"` rather than
  *   `--dangerously-bypass-approvals-and-sandbox`), so the native `apply_patch`
  *   tool is confined to the workspace even if the agent ignores instructions.
@@ -46,7 +48,7 @@ import type { OAuthWriteback } from "../utils/codexRefreshDetect.ts";
 import { installFromNpmTarball } from "../utils/install.ts";
 import { OAUTH_WRITEBACK_STATE } from "../utils/oauthWriteback.ts";
 import { markCodexPoolChild, registerCodexPoolAuth } from "../utils/codexPool.ts";
-import { advertisedCodexSpeeds, type CodexSpeed, codexSpeedConfig, pickCodexSpeed, requestedCodexSpeed } from "../utils/codexSpeed.ts";
+import { advertisedCodexSpeeds, type CodexSpeed, codexSpeedConfig, isReviewRun, pickCodexSpeed, requestedCodexSpeed } from "../utils/codexSpeed.ts";
 import { findProviderErrorMatch } from "../utils/providerErrors.ts";
 import { resolveRunEffort } from "../utils/runEffort.ts";
 import { saveSecretState } from "../utils/secretCommands.ts";
@@ -60,6 +62,7 @@ import {
   TailBuffer,
 } from "../utils/subprocess.ts";
 import { ThinkingTimer } from "../utils/timer.ts";
+import { CODEX_SUBAGENT_RULES, MAX_REVIEW_SUBAGENTS } from "../utils/reviewLenses.ts";
 import type { TodoTracker } from "../utils/todoTracking.ts";
 import { getDevDependencyVersion } from "../utils/version.ts";
 import { buildReflectionPrompt, runPostRunRetryLoop } from "./postRun.ts";
@@ -112,8 +115,8 @@ async function installCodexCli(): Promise<string> {
 
 /**
  * `[features]` entries written on every run: every ON-BY-DEFAULT surface that
- * executes code or reaches outside the run, plus the subagent fan-out we have
- * no gate for. Keys codex no longer recognizes are ignored (verified against
+ * executes code or reaches outside the run, plus v1 subagents (v2 is set by
+ * `subagentSettings`). Keys codex no longer recognizes are ignored (verified against
  * 0.147.0), so this list is safe to carry forward across CLI bumps — but
  * REVALIDATE IT ON EVERY BUMP: a NEW exec-capable feature defaulting to `true`
  * is a hole this list can't know about. `codex features list` prints the live
@@ -147,9 +150,8 @@ const CODEX_DISABLED_FEATURES = [
   "hooks",
   // connectors
   "apps",
-  // ungated subagent fan-out (see the file header)
+  // v1 subagents; v2 is configured by subagentSettings
   "multi_agent",
-  "multi_agent_v2",
 ] as const;
 
 /** exec surfaces gated on `payload.shell` rather than always-off. */
@@ -157,6 +159,45 @@ const CODEX_SHELL_FEATURES = ["shell_tool", "unified_exec", "unified_exec_tty"] 
 
 function tomlBool(entries: readonly string[], value: boolean): string {
   return entries.map((name) => `${name} = ${value}`).join("\n");
+}
+
+type SubagentSettings = {
+  /** value of `features.multi_agent_v2`: `false`, or the v2 inline table */
+  multiAgentV2: string;
+  /** `[agents]` keys and TOML values */
+  agents: [string, string][];
+};
+
+/**
+ * Codex `multi_agent_v2` subagents, on review runs only. Within a review, v2's
+ * spawn tool tells the model not to spawn unless instructions ask for
+ * delegation, which only the review prompt does (`codexReviewPrompt`).
+ *
+ * - `agents.default_subagent_model` pins children to the lead's model, and
+ *   `expose_spawn_agent_model_overrides = false` removes the model and effort
+ *   arguments from spawn_agent, so these defaults always apply.
+ * - v2 reads its spawn cap from `agents.max_concurrent_threads_per_session`.
+ * - `max_wait_timeout_ms` stays under `AGENT_ACTIVITY_TIMEOUT_MS`: a wait emits
+ *   nothing on stdout until it returns, and v2's default is one hour.
+ * - The service tier is inherited, so children run at the lead's speed.
+ */
+function subagentSettings(ctx: AgentRunContext, model: string | undefined): SubagentSettings {
+  if (!isReviewRun(ctx.payload)) return { multiAgentV2: "false", agents: [] };
+  const table = [
+    "enabled = true",
+    "max_wait_timeout_ms = 600000",
+    "default_wait_timeout_ms = 120000",
+    "expose_spawn_agent_model_overrides = false",
+    `subagent_developer_instructions = ${JSON.stringify(CODEX_SUBAGENT_RULES)}`,
+  ].join(", ");
+  return {
+    multiAgentV2: `{ ${table} }`,
+    agents: [
+      ...(model ? [["default_subagent_model", JSON.stringify(model)] as [string, string]] : []),
+      ["default_subagent_reasoning_effort", JSON.stringify("medium")],
+      ["max_concurrent_threads_per_session", String(MAX_REVIEW_SUBAGENTS)],
+    ],
+  };
 }
 
 /**
@@ -216,9 +257,11 @@ function securityOverrideFlags(params: {
 }): string[] {
   const shellEnabled = params.ctx.payload.shell === "enabled";
   const speed = codexSpeedConfig(params.speed);
+  const subagents = subagentSettings(params.ctx, params.model);
   const features = [
     ...CODEX_DISABLED_FEATURES.map((name) => `${name}=false`),
     ...CODEX_SHELL_FEATURES.map((name) => `${name}=${shellEnabled}`),
+    `multi_agent_v2=${subagents.multiAgentV2}`,
   ];
   return [
     "-c",
@@ -260,6 +303,7 @@ function securityOverrideFlags(params: {
     ...(speed.serviceTier ? ["-c", `service_tier=${JSON.stringify(speed.serviceTier)}`] : []),
     ...speed.features.flatMap((name) => ["-c", `features.${name}=true`]),
     ...features.flatMap((entry) => ["-c", `features.${entry}`]),
+    ...subagents.agents.flatMap(([key, value]) => ["-c", `agents.${key}=${value}`]),
   ];
 }
 
@@ -473,6 +517,7 @@ function writeCodexConfig(params: {
   const sandboxMode = codexSandboxMode(params.ctx);
   const repoDir = process.cwd();
   const speed = codexSpeedConfig(params.speed);
+  const subagents = subagentSettings(params.ctx, params.model);
 
   const config = [
     "# written by pullfrog",
@@ -493,7 +538,11 @@ function writeCodexConfig(params: {
     ...speed.features.map((name) => `${name} = true`),
     tomlBool(CODEX_DISABLED_FEATURES, false),
     tomlBool(CODEX_SHELL_FEATURES, shellEnabled),
+    `multi_agent_v2 = ${subagents.multiAgentV2}`,
     "",
+    ...(subagents.agents.length
+      ? ["[agents]", ...subagents.agents.map(([key, value]) => `${key} = ${value}`), ""]
+      : []),
     "[sandbox_workspace_write]",
     "network_access = true",
     // the checkout, named explicitly rather than left to `workspace-write` to
