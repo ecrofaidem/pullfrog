@@ -6,11 +6,13 @@
  *   computer use, plugins, lifecycle hooks) are turned off in `config.toml`'s
  *   `[features]` table. shell goes through the MCP `shell` tool, which runs
  *   with a filtered, secret-free env.
- * - subagent fan-out (`multi_agent*`) is off: codex exposes no pre-tool hook
- *   carrying a subagent marker, so there is no way to reproduce the
- *   mutating-MCP-tool gate the other two harnesses enforce on subagents. an
- *   ungated subagent could call `checkout_pr` / `push_branch` behind the
- *   orchestrator's back — see action/agents/subagentToolGates.ts.
+ * - review runs get `multi_agent_v2` subagents (see `subagentSettings`). codex exposes
+ *   no pre-tool hook carrying a subagent marker, so the mutating-MCP-tool gate
+ *   the other two harnesses enforce (action/agents/subagentToolGates.ts) is
+ *   replaced by instructions: spawning needs explicit authorization, which only
+ *   the review prompt gives, and `CODEX_SUBAGENT_RULES` keeps subagents off
+ *   checkout, checkpoint and publishing tools. `checkout_pr` refuses another
+ *   PR mid-review as a backstop. v1 `multi_agent` stays off.
  * - the sandbox stays ON (`approval_policy = "never"` rather than
  *   `--dangerously-bypass-approvals-and-sandbox`), so the native `apply_patch`
  *   tool is confined to the workspace even if the agent ignores instructions.
@@ -38,7 +40,7 @@ import * as core from "@actions/core";
 import type { ModelReasoningEffort, ThreadEvent, ThreadItem } from "@openai/codex-sdk";
 import { pullfrogMcpName } from "../external.ts";
 import { getModelProvider, getProviderGatewayUrl, stripProviderPrefix } from "../models.ts";
-import { recordTokens } from "../utils/runStats.ts";
+import { recordTokens, setSubagentReader } from "../utils/runStats.ts";
 import { AGENT_ACTIVITY_TIMEOUT_MS, getIdleMs, markActivity } from "../utils/activity.ts";
 import { log } from "../utils/cli.ts";
 import { installCodexHome } from "../utils/codexHome.ts";
@@ -46,7 +48,7 @@ import type { OAuthWriteback } from "../utils/codexRefreshDetect.ts";
 import { installFromNpmTarball } from "../utils/install.ts";
 import { OAUTH_WRITEBACK_STATE } from "../utils/oauthWriteback.ts";
 import { markCodexPoolChild, registerCodexPoolAuth } from "../utils/codexPool.ts";
-import { advertisedCodexSpeeds, type CodexSpeed, codexSpeedConfig, pickCodexSpeed, requestedCodexSpeed } from "../utils/codexSpeed.ts";
+import { advertisedCodexSpeeds, type CodexSpeed, codexSpeedConfig, isReviewRun, pickCodexSpeed, requestedCodexSpeed } from "../utils/codexSpeed.ts";
 import { findProviderErrorMatch } from "../utils/providerErrors.ts";
 import { resolveRunEffort } from "../utils/runEffort.ts";
 import { saveSecretState } from "../utils/secretCommands.ts";
@@ -60,6 +62,9 @@ import {
   TailBuffer,
 } from "../utils/subprocess.ts";
 import { ThinkingTimer } from "../utils/timer.ts";
+import { readSubagentRollouts, readWeeklyLimit, type SubagentTokens } from "../utils/codexRollouts.ts";
+import { setCodexUsageReader } from "../utils/codexUsage.ts";
+import { CODEX_SUBAGENT_RULES, MAX_REVIEW_SUBAGENTS } from "../utils/reviewLenses.ts";
 import type { TodoTracker } from "../utils/todoTracking.ts";
 import { getDevDependencyVersion } from "../utils/version.ts";
 import { buildReflectionPrompt, runPostRunRetryLoop } from "./postRun.ts";
@@ -112,8 +117,8 @@ async function installCodexCli(): Promise<string> {
 
 /**
  * `[features]` entries written on every run: every ON-BY-DEFAULT surface that
- * executes code or reaches outside the run, plus the subagent fan-out we have
- * no gate for. Keys codex no longer recognizes are ignored (verified against
+ * executes code or reaches outside the run, plus v1 subagents (v2 is set by
+ * `subagentSettings`). Keys codex no longer recognizes are ignored (verified against
  * 0.147.0), so this list is safe to carry forward across CLI bumps — but
  * REVALIDATE IT ON EVERY BUMP: a NEW exec-capable feature defaulting to `true`
  * is a hole this list can't know about. `codex features list` prints the live
@@ -147,9 +152,8 @@ const CODEX_DISABLED_FEATURES = [
   "hooks",
   // connectors
   "apps",
-  // ungated subagent fan-out (see the file header)
+  // v1 subagents; v2 is configured by subagentSettings
   "multi_agent",
-  "multi_agent_v2",
 ] as const;
 
 /** exec surfaces gated on `payload.shell` rather than always-off. */
@@ -157,6 +161,45 @@ const CODEX_SHELL_FEATURES = ["shell_tool", "unified_exec", "unified_exec_tty"] 
 
 function tomlBool(entries: readonly string[], value: boolean): string {
   return entries.map((name) => `${name} = ${value}`).join("\n");
+}
+
+type SubagentSettings = {
+  /** value of `features.multi_agent_v2`: `false`, or the v2 inline table */
+  multiAgentV2: string;
+  /** `[agents]` keys and TOML values */
+  agents: [string, string][];
+};
+
+/**
+ * Codex `multi_agent_v2` subagents, on review runs only. Within a review, v2's
+ * spawn tool tells the model not to spawn unless instructions ask for
+ * delegation, which only the review prompt does (`codexReviewPrompt`).
+ *
+ * - `agents.default_subagent_model` pins children to the lead's model, and
+ *   `expose_spawn_agent_model_overrides = false` removes the model and effort
+ *   arguments from spawn_agent, so these defaults always apply.
+ * - v2 reads its spawn cap from `agents.max_concurrent_threads_per_session`.
+ * - `max_wait_timeout_ms` stays under `AGENT_ACTIVITY_TIMEOUT_MS`: a wait emits
+ *   nothing on stdout until it returns, and v2's default is one hour.
+ * - The service tier is inherited, so children run at the lead's speed.
+ */
+function subagentSettings(ctx: AgentRunContext, model: string | undefined): SubagentSettings {
+  if (!isReviewRun(ctx.payload)) return { multiAgentV2: "false", agents: [] };
+  const table = [
+    "enabled = true",
+    "max_wait_timeout_ms = 600000",
+    "default_wait_timeout_ms = 120000",
+    "expose_spawn_agent_model_overrides = false",
+    `subagent_developer_instructions = ${JSON.stringify(CODEX_SUBAGENT_RULES)}`,
+  ].join(", ");
+  return {
+    multiAgentV2: `{ ${table} }`,
+    agents: [
+      ...(model ? [["default_subagent_model", JSON.stringify(model)] as [string, string]] : []),
+      ["default_subagent_reasoning_effort", JSON.stringify("medium")],
+      ["max_concurrent_threads_per_session", String(MAX_REVIEW_SUBAGENTS)],
+    ],
+  };
 }
 
 /**
@@ -216,9 +259,11 @@ function securityOverrideFlags(params: {
 }): string[] {
   const shellEnabled = params.ctx.payload.shell === "enabled";
   const speed = codexSpeedConfig(params.speed);
+  const subagents = subagentSettings(params.ctx, params.model);
   const features = [
     ...CODEX_DISABLED_FEATURES.map((name) => `${name}=false`),
     ...CODEX_SHELL_FEATURES.map((name) => `${name}=${shellEnabled}`),
+    `multi_agent_v2=${subagents.multiAgentV2}`,
   ];
   return [
     "-c",
@@ -260,6 +305,7 @@ function securityOverrideFlags(params: {
     ...(speed.serviceTier ? ["-c", `service_tier=${JSON.stringify(speed.serviceTier)}`] : []),
     ...speed.features.flatMap((name) => ["-c", `features.${name}=true`]),
     ...features.flatMap((entry) => ["-c", `features.${entry}`]),
+    ...subagents.agents.flatMap(([key, value]) => ["-c", `agents.${key}=${value}`]),
   ];
 }
 
@@ -473,6 +519,7 @@ function writeCodexConfig(params: {
   const sandboxMode = codexSandboxMode(params.ctx);
   const repoDir = process.cwd();
   const speed = codexSpeedConfig(params.speed);
+  const subagents = subagentSettings(params.ctx, params.model);
 
   const config = [
     "# written by pullfrog",
@@ -493,7 +540,11 @@ function writeCodexConfig(params: {
     ...speed.features.map((name) => `${name} = true`),
     tomlBool(CODEX_DISABLED_FEATURES, false),
     tomlBool(CODEX_SHELL_FEATURES, shellEnabled),
+    `multi_agent_v2 = ${subagents.multiAgentV2}`,
     "",
+    ...(subagents.agents.length
+      ? ["[agents]", ...subagents.agents.map(([key, value]) => `${key} = ${value}`), ""]
+      : []),
     "[sandbox_workspace_write]",
     "network_access = true",
     // the checkout, named explicitly rather than left to `workspace-write` to
@@ -567,6 +618,7 @@ type RunParams = {
   todoTracker?: TodoTracker | undefined;
   onActivityTimeout?: (() => void) | undefined;
   onToolUse?: ((event: { toolName: string; input: unknown }) => void) | undefined;
+  onThreadStarted?: ((threadId: string) => void) | undefined;
 };
 
 type CodexRunResult = AgentResult & { threadId?: string | undefined };
@@ -739,6 +791,7 @@ async function runCodex(params: RunParams): Promise<CodexRunResult> {
     switch (event.type) {
       case "thread.started":
         threadId = event.thread_id;
+        params.onThreadStarted?.(event.thread_id);
         return;
       case "turn.completed":
         recordTokens({
@@ -937,6 +990,61 @@ async function resolveCodexSpeed(params: {
   return speed;
 }
 
+/**
+ * Subagent accounting for one Codex session, read from the session's rollouts
+ * (utils/codexRollouts.ts). The footer reads subagents and the weekly limit
+ * live, and `settle` adds each
+ * exec's new subagent tokens to that exec's usage and warns about subagents
+ * the exec left running, whose work is lost when the process exits.
+ */
+function trackSubagents(params: { codexHome: string; model: string | undefined }) {
+  // only skips older history (the session id is the real filter); file mtimes
+  // are tick-granular, so a rollout written at once can predate Date.now().
+  const since = Date.now() - 60_000;
+  let rootThreadId: string | undefined;
+  const counted = new Map<string, SubagentTokens>();
+  const warned = new Set<string>();
+  const read = () => rootThreadId ? readSubagentRollouts({ codexHome: params.codexHome, rootThreadId, since }) : [];
+  setCodexUsageReader(() => rootThreadId ? readWeeklyLimit({ codexHome: params.codexHome, rootThreadId, since }) : null);
+  setSubagentReader(() =>
+    read().map(({ label, seconds, status, tokens }) => ({
+      label, seconds, status,
+      tokens: { input: tokens.input, output: tokens.output, cacheRead: tokens.cacheRead, costUsd: codexCostUsd({ model: params.model, ...tokens }) },
+    }))
+  );
+  return {
+    onThreadStarted: (threadId: string) => { rootThreadId ??= threadId; },
+    settle(result: CodexRunResult): CodexRunResult {
+      const subagents = read();
+      const lost = subagents.filter((agent) => agent.status === "unfinished" && !warned.has(agent.id));
+      for (const agent of lost) warned.add(agent.id);
+      if (lost.length) {
+        log.warning(`» ${lost.length} subagent(s) were still working when codex exited; their work is lost: ${lost.map((agent) => agent.label).join(", ")}`);
+      }
+      const delta = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
+      for (const agent of subagents) {
+        const before = counted.get(agent.id) ?? { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
+        for (const key of ["input", "cacheRead", "cacheWrite", "output"] as const) delta[key] += agent.tokens[key] - before[key];
+        counted.set(agent.id, agent.tokens);
+      }
+      if (!delta.input && !delta.output) return result;
+      const usage = result.usage ?? { agent: "codex", inputTokens: 0, outputTokens: 0 };
+      const cost = codexCostUsd({ model: params.model, ...delta });
+      log.info(`» subagents: ${subagents.length}, ${delta.input} input and ${delta.output} output tokens this exec`);
+      return {
+        ...result,
+        usage: {
+          ...usage,
+          inputTokens: usage.inputTokens + delta.input,
+          outputTokens: usage.outputTokens + delta.output,
+          cacheReadTokens: (usage.cacheReadTokens ?? 0) + delta.cacheRead || undefined,
+          costUsd: usage.costUsd !== undefined && cost !== undefined ? usage.costUsd + cost : usage.costUsd ?? cost,
+        },
+      };
+    },
+  };
+}
+
 // ── agent ──────────────────────────────────────────────────────────────────────
 
 export const codex = agent({
@@ -1042,19 +1150,21 @@ export const codex = agent({
       effortRung: effort.rung && CODEX_EFFORTS.includes(effort.rung) ? effort.rung : undefined,
     });
 
+    const subagents = trackSubagents({ codexHome, model: resolveCodexModel(ctx) });
     const runnerArgs = {
       cliPath,
       cwd: process.cwd(),
       env,
       todoTracker: ctx.todoTracker,
       model: resolveCodexModel(ctx),
+      onThreadStarted: subagents.onThreadStarted,
     };
-    const initial = await runCodex({
+    const initial = subagents.settle(await runCodex({
       ...runnerArgs,
       args: [...securityFlags, "exec", "--json", ctx.instructions.full],
       onActivityTimeout: ctx.onActivityTimeout,
       onToolUse: ctx.onToolUse,
-    });
+    }));
 
     const result = await runPostRunRetryLoop({
       ctx,
@@ -1066,7 +1176,7 @@ export const codex = agent({
       // where CODEX_HOME is the shared ~/.local/share/codex (in CI it is per run).
       canResume: (r) => r.threadId !== undefined,
       resume: async (c) =>
-        runCodex({
+        subagents.settle(await runCodex({
           ...runnerArgs,
           args: [
             ...securityFlags,
@@ -1076,7 +1186,7 @@ export const codex = agent({
             c.previousResult.threadId ?? "",
             c.prompt,
           ],
-        }),
+        })),
     });
 
     if (result.success) {

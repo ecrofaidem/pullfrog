@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ToolState } from "../toolState.ts";
-import { getUnsubmittedReview } from "./postRun.ts";
+import { buildReflectionPrompt, getUnsubmittedReview } from "./postRun.ts";
 
 function makeToolState(overrides: Partial<ToolState> = {}): ToolState {
   return {
@@ -63,5 +63,13 @@ describe("getUnsubmittedReview", () => {
     expect(getUnsubmittedReview(makeToolState({ selectedMode: "IncrementalReview" }))).toBe(
       "IncrementalReview"
     );
+  });
+});
+
+describe("buildReflectionPrompt", () => {
+  it("keeps the reflection turn with the lead, after a review that delegated", () => {
+    const prompt = buildReflectionPrompt(makeToolState({ selectedMode: "Review", learningsFilePath: "/tmp/learnings.md" }));
+    expect(prompt?.startsWith("Do this turn's work yourself: do not spawn, message or wait for subagents.")).toBe(true);
+    expect(buildReflectionPrompt(makeToolState({ selectedMode: "Review" }))).toBeUndefined();
   });
 });

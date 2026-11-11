@@ -1,11 +1,15 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { codex } from "./codex.ts";
+import { log } from "../utils/cli.ts";
+import { initToolState } from "../toolState.ts";
+import { currentCodexUsage } from "../utils/codexUsage.ts";
+import { renderRunStats } from "../utils/runStats.ts";
 import type { AgentRunContext } from "./shared.ts";
 
-const mocks = vi.hoisted(() => ({ spawn: vi.fn(), codexHome: vi.fn() }));
+const mocks = vi.hoisted(() => ({ spawn: vi.fn(), codexHome: vi.fn(), resumed: undefined as unknown }));
 vi.mock("../utils/install.ts", () => ({ installFromNpmTarball: async () => "/fixture/codex" }));
 vi.mock("../utils/codexHome.ts", () => ({ installCodexHome: mocks.codexHome }));
 vi.mock("../utils/codexPool.ts", () => ({ registerCodexPoolAuth: () => false, markCodexPoolChild: () => {} }));
@@ -14,7 +18,7 @@ vi.mock("../utils/subprocess.ts", async (original) => ({ ...await original<typeo
 vi.mock("./postRun.ts", () => ({
   buildReflectionPrompt: () => "Check local changes",
   runPostRunRetryLoop: async ({ initialResult, resume }: { initialResult: unknown; resume: (args: unknown) => Promise<unknown> }) => {
-    await resume({ previousResult: { threadId: "fixture-thread" }, prompt: "Finish the local commit" });
+    mocks.resumed = await resume({ previousResult: { threadId: "fixture-thread" }, prompt: "Finish the local commit" });
     return initialResult;
   },
 }));
@@ -149,4 +153,83 @@ it.each([
     expect(args.includes("features.fast_mode=true")).toBe(Boolean(applied));
     expect(args.includes("features.ultrafast_mode=true")).toBe(Boolean(applied));
   }
+});
+
+// Review runs get v2 subagents pinned to the lead's model; every other run keeps them off.
+it.each([
+  ["review", "pull_request_opened", true],
+  ["incremental_review", "pull_request_synchronize", true],
+  ["task", "issue_comment_created", false],
+  ["docs_update", "pull_request_merged", false],
+])("run type %s on %s enables subagents: %s", async (type, trigger, enabled) => {
+  const dir = mkdtempSync(join(tmpdir(), "codex-subagent-test-")); dirs.push(dir);
+  mocks.spawn.mockResolvedValue({ exitCode: 0 });
+  await codex.run({
+    payload: { type, event: { trigger }, push: "disabled", shell: "restricted" },
+    resolvedModel: "openai/gpt-6.1-sol",
+    tmpdir: dir, mcpServerUrl: "http://localhost:9999/mcp", instructions: { full: "Review the changes" },
+    toolState: {}, apiToken: "", subagentDeniedTools: [],
+  } as unknown as AgentRunContext);
+  const config = readFileSync(join(dir, ".codex", "config.toml"), "utf8");
+  expect(config).toContain("multi_agent = false");
+  const v2 = config.match(/^multi_agent_v2 = (.*)$/m)?.[1];
+  const agents = ['default_subagent_model = "gpt-6.1-sol"', 'default_subagent_reasoning_effort = "medium"', "max_concurrent_threads_per_session = 16"];
+  if (enabled) {
+    expect(v2).toMatch(/^\{ enabled = true, max_wait_timeout_ms = 600000, default_wait_timeout_ms = 120000, expose_spawn_agent_model_overrides = false, subagent_developer_instructions = "You are a subagent.*Never spawn agents\..*" \}$/);
+    expect(config).toContain(["[agents]", ...agents].join("\n"));
+  } else {
+    expect(v2).toBe("false");
+    expect(config).not.toContain("[agents]");
+  }
+  const turns = mocks.spawn.mock.calls.map(([options]) => options.args as string[]);
+  expect(turns).toHaveLength(2);
+  for (const args of turns) {
+    expect(args).toContain("features.multi_agent=false");
+    expect(args).toContain(`features.multi_agent_v2=${v2}`);
+    for (const entry of agents) expect(args.includes(`agents.${entry.replace(" = ", "=")}`)).toBe(enabled);
+  }
+});
+
+// Subagents never appear in the exec stream; their rollouts are the record.
+it("adds subagent tokens from rollouts to each exec's usage, warns once about lost work, and feeds the footer", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "codex-subagent-usage-")); dirs.push(dir);
+  const day = join(dir, ".codex", "sessions", "2026", "11", "11");
+  // strictly increasing, so "newest" is the last line written
+  let tick = 0;
+  const at = () => new Date(Date.parse("2026-11-11T18:00:00Z") + 1000 * tick++).toISOString();
+  // rollouts are append-only JSONL, one complete line per record
+  const append = (name: string, ...records: object[]) =>
+    appendFileSync(join(day, `rollout-${name}.jsonl`), records.map((record) => `${JSON.stringify(record)}\n`).join(""));
+  const start = (name: string) => append(name,
+    { type: "session_meta", payload: { id: `child-${name}`, session_id: "root", timestamp: at(), source: { subagent: { thread_spawn: { agent_path: `/root/${name}` } } } } },
+    { timestamp: at(), type: "event_msg", payload: { type: "task_started" } });
+  const tokens = (name: string, input: number, output: number) => append(name,
+    { timestamp: at(), type: "event_msg", payload: { type: "token_count", info: { total_token_usage: { input_tokens: input, cached_input_tokens: 0, output_tokens: output } }, rate_limits: { primary: { used_percent: 40 + output, window_minutes: 10_080, resets_at: 1 } } } });
+  const done = (name: string) => append(name, { timestamp: at(), type: "event_msg", payload: { type: "task_complete" } });
+  const warning = vi.spyOn(log, "warning");
+  mocks.spawn.mockImplementation(async ({ args, onStdout }: { args: string[]; onStdout: (chunk: string) => void }) => {
+    mkdirSync(day, { recursive: true });
+    if (args.includes("resume")) { tokens("fruit", 5_000, 4); start("lime"); tokens("lime", 1_000, 1); done("lime"); }
+    else { start("color"); tokens("color", 20_000, 5); done("color"); start("fruit"); tokens("fruit", 3_000, 2); }
+    onStdout(`${JSON.stringify({ type: "thread.started", thread_id: "root" })}\n${JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1_000, cached_input_tokens: 0, output_tokens: 100 } })}\n`);
+    return { exitCode: 0 };
+  });
+  const toolState = initToolState({ owner: "o", name: "r", dir, progressComment: undefined });
+  const result = await codex.run({
+    payload: { type: "review", event: { trigger: "pull_request_opened" }, push: "disabled", shell: "restricted" },
+    resolvedModel: "openai/gpt-6.1-sol",
+    tmpdir: dir, mcpServerUrl: "http://localhost:9999/mcp", instructions: { full: "Review the changes" },
+    toolState, apiToken: "", subagentDeniedTools: [],
+  } as unknown as AgentRunContext);
+
+  expect(result.usage).toMatchObject({ inputTokens: 24_000, outputTokens: 107 });
+  // the resume adds only what changed since: fruit +2,000/+2 and the new lime 1,000/1
+  expect(mocks.resumed).toMatchObject({ usage: { inputTokens: 4_000, outputTokens: 103 } });
+  const lost = warning.mock.calls.filter(([message]) => String(message).includes("still working"));
+  expect(lost).toEqual([["» 1 subagent(s) were still working when codex exited; their work is lost: fruit"]]);
+  const stats = renderRunStats({ toolState })!;
+  expect(stats.line).toContain("3 subagents");
+  // the footer's weekly limit is the session's newest report, not the early read
+  expect(currentCodexUsage()).toMatchObject({ usedPercent: 41 });
+  expect(stats.details).toMatch(/- Subagents: 3 \(26K in · 10 out\): color \d+s · fruit \d+s \(unfinished\) · lime \d+s\n/);
 });

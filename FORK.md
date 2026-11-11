@@ -18,8 +18,8 @@ Deliberate divergences from upstream in the action tree (expect a merge conflict
   [account setup and activation](server/README.md#named-codex-accounts).
 - `mcp/checkout.ts` — checkout returns `unifiedDiffPath`, a complete unified patch generated from the captured base/head commits, alongside the numbered `diffPath` display. Patch parsers use the raw artifact, including large changes omitted by GitHub's per-file patches. Checkout refuses a revision change during the file fetch so artifacts and review anchors describe the same revision.
 - `utils/buildPullfrogFooter.ts` — the comment footer is the workflow-run link, the model, and the subscription's remaining limit. Upstream's logo, X link, SHA-pin nudge and Fix-all links are dropped; the fix links pointed at a hosted `/trigger` endpoint this server does not have.
-- `utils/runStats.ts` (new), one `recordToolUse()` line in `main.ts`, `recordTokens()`/`recordSubagentFinish()` lines where `agents/opencode.ts` and `agents/codex.ts` accumulate usage, and a `toolState`/`review` argument at the four footer call sites — time, tokens, subagents, tool calls, diff coverage and inline-comment counts in the footer, with the breakdown in a collapsed block.
-- `utils/codexUsage.ts` (new) and one `primeCodexUsage()` line in `main.ts` — reads `GET https://chatgpt.com/backend-api/wham/usage` with the run's chain, the same call the Codex CLI's status screen makes.
+- `utils/runStats.ts` (new), one `recordToolUse()` line in `main.ts`, `recordTokens()`/`recordSubagentFinish()` lines where `agents/opencode.ts` and `agents/codex.ts` accumulate usage, a `setSubagentReader()` call in `agents/codex.ts` for subagents read from rollouts (`utils/codexRollouts.ts`, new), and a `toolState`/`review` argument at the four footer call sites — time, tokens, subagents, tool calls, diff coverage and inline-comment counts in the footer, with the breakdown in a collapsed block.
+- `utils/codexUsage.ts` (new) and one `primeCodexUsage()` line in `main.ts` — reads `GET https://chatgpt.com/backend-api/wham/usage` with the run's chain, the same call the Codex CLI's status screen makes. Once a Codex session reports a newer weekly figure in its rollouts, the footer shows that one.
 - `skills/write-good-docs/`, `skills/simple-english/`, `utils/skills.ts`, `utils/instructions.ts`, and `agents/codex.ts` — all three harnesses load the complete writing skills before drafting review comments or final reports. The installer copies references and scripts into the agent's temporary home. Codex reads the skill files; OpenCode and Claude use their native skill tools. Source versions and SHA-256 hashes are recorded in `skills/report-skills.json`; supplied skill files remain unchanged. The added `write-good-docs/ATTRIBUTION.md` documents the missing source notice. To update a skill, replace its complete directory from the source, update its manifest entry, and run `pnpm exec vitest run utils/skills.test.ts` plus the report-writing agent smoke test.
 - `utils/reviewConventions.ts`, `modes.ts`, and `agents/reviewer.ts` — full reviews, incremental reviews, and review specialists read applicable repository guidance before assessing conventions. Findings cite written requirements, account for exceptions, and use severity based on consequences. UI changes also require an internal map of existing composed components and inspected callers, including inline UI. Findings must identify a written rule, a suitable existing component or compatible extension, and a concrete consequence. Valid feature wrappers and documented exceptions remain permitted. The agent records consulted guidance in its internal run logs. This is prompt guidance, not a machine-enforced read-coverage gate or persistent learning.
 
@@ -79,17 +79,48 @@ Enterprise or Edu plan. See
 [OpenAI's speed documentation](https://learn.chatgpt.com/docs/agent-configuration/speed)
 for availability and current rates.
 
-## Single-session Codex reviews
+## Codex reviews
 
 Native Codex Review and IncrementalReview run baseline correctness, conventions,
 documentation, and verification passes, plus applicable lenses for control,
 propagation, data, frontend state, executable procedures, and lifecycle recovery.
-Other harnesses retain their specialist dispatch flow. Codex subagents remain
-disabled by the harness tool-permission boundary. Repository review skills
-supply checks but do not override this execution mode. Reviews do not edit the
-PR or wait for clarification: unavailable evidence produces an explicit
+Other harnesses retain their specialist dispatch flow. Repository review skills
+supply checks, but their dispatch instructions do not apply. Reviews do not edit
+the PR or wait for clarification: unavailable evidence produces an explicit
 limitation. Focused tests resolve concrete uncertainty; broader or repeated
 checks need a change, failure, or unresolved concern.
+
+### Review subagents
+
+A review run enables Codex `multi_agent_v2`. Runs of any other type keep
+subagents off. The lead decides after its plan whether to delegate, and can run
+up to 16 subagents at once.
+
+- **Model and speed.** Subagents run the lead's model at `medium` effort
+  (`agents.default_subagent_model` and `default_subagent_reasoning_effort`).
+  The lead cannot override either. They inherit the lead's service tier, so an
+  Ultrafast review spends Ultrafast allowance on every subagent.
+- **Who does what.** Subagents read raw-diff ranges with `read_file`, and that
+  coverage counts for the review. They trace lenses and verify candidates. The
+  lead alone calls `checkout_pr` and `review_checkpoint`, publishes, and
+  accepts each finding after tracing it. `CODEX_SUBAGENT_RULES` in
+  `utils/reviewLenses.ts` holds the subagent rules.
+- **What enforces it.** Codex has no pre-tool hook that identifies a subagent,
+  so instructions keep subagents off lead-only tools. Two checks back them up.
+  While a review is in progress, `checkout_pr` refuses a different PR and a
+  new head of the same PR. A repeat checkout of the reviewed revision keeps
+  the diff artifacts byte-identical, so their read coverage survives.
+- **Waiting.** `codex exec` ends when the lead's turn ends, and any subagent
+  still working is lost. The lead waits with `wait_agent` until `list_agents`
+  shows none running. Each wait returns within 10 minutes and reports its
+  start and end on the exec stream, so waiting never trips the activity
+  watchdog. The learnings reflection turn never spawns.
+- **Accounting.** The exec stream reports only the lead's thread. Each subagent
+  writes its own rollout under `$CODEX_HOME/sessions`, and the harness reads
+  those rollouts, parsing only the lines added since the last read. The footer lists each subagent with its time and status and
+  adds its tokens to the run's. It shows the weekly limit from the session's
+  newest report. The harness logs a warning for each subagent still working
+  when the process exits.
 
 `checkout_pr` exports `changedFilesPath` with the full PR's old and new rename
 paths, and `reviewId` identifying the revision and both numbered and unified diff artifacts. A repository

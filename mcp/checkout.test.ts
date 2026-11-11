@@ -1,9 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
-import { type FormatFilesResult, formatFilesWithLineNumbers, writeUnifiedPrDiff } from "./checkout.ts";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { initToolState, primaryRepoState } from "../toolState.ts";
+import { CheckoutPrTool, type FormatFilesResult, formatFilesWithLineNumbers, writeUnifiedPrDiff } from "./checkout.ts";
+import type { ToolContext } from "./server.ts";
 
 /**
  * parses TOC entries like "- src/math.ts → lines 7-42 · diff-<hex>" into structured data.
@@ -116,11 +118,100 @@ describe("writeUnifiedPrDiff", () => {
     }
   });
 
+  it("keeps the artifact's identity when the same revision is exported again", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "pullfrog-unified-"));
+    const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" });
+    try {
+      git("init", "-q");
+      git("config", "user.name", "Fixture");
+      git("config", "user.email", "fixture@example.test");
+      writeFileSync(join(cwd, "a.txt"), "one\n");
+      git("add", ".");
+      git("commit", "-qm", "base");
+      const baseSha = git("rev-parse", "HEAD").trim();
+      writeFileSync(join(cwd, "a.txt"), "two\n");
+      git("commit", "-qam", "change");
+      const headSha = git("rev-parse", "HEAD").trim();
+      const diffPath = join(cwd, "review.diff");
+      writeUnifiedPrDiff({ cwd, baseSha, headSha, diffPath });
+      const before = statSync(diffPath, { bigint: true });
+      writeUnifiedPrDiff({ cwd, baseSha, headSha, diffPath });
+      const after = statSync(diffPath, { bigint: true });
+      expect([after.ino, after.mtimeNs, after.ctimeNs]).toEqual([before.ino, before.mtimeNs, before.ctimeNs]);
+      writeFileSync(join(cwd, "a.txt"), "three\n");
+      git("commit", "-qam", "another change");
+      writeUnifiedPrDiff({ cwd, baseSha, headSha: git("rev-parse", "HEAD").trim(), diffPath });
+      expect(readFileSync(diffPath, "utf8")).toContain("+three");
+      expect(readdirSync(cwd).filter(name => name.endsWith(".tmp"))).toEqual([]);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("does not present the numbered display as a unified patch", () => {
     const fx = loadFixture<DiffFixture>("pullfrog-test-repo-pr-1.diff.json");
     const formatted = formatFilesWithLineNumbers(fx.files).content;
     expect(() => execFileSync("git", ["apply", "--numstat"], {
       input: formatted, stdio: ["pipe", "pipe", "pipe"],
     })).toThrow();
+  });
+});
+
+describe("CheckoutPrTool during a Codex review", () => {
+  it("refuses another PR without touching GitHub or the working tree", async () => {
+    const toolState = initToolState({ owner: "o", name: "r", dir: tmpdir(), progressComment: undefined });
+    toolState.selectedMode = "Review";
+    toolState.agent = "codex";
+    const repo = primaryRepoState(toolState);
+    repo.reviewCoverage = { scope: { pullNumber: 7 } } as unknown as NonNullable<typeof repo.reviewCoverage>;
+    const get = vi.fn();
+    const ctx = { agentId: "codex", toolState, repo: { owner: "o", name: "r" }, octokit: { rest: { pulls: { get } } }, payload: {} } as unknown as ToolContext;
+    const result = await CheckoutPrTool(ctx).execute({ pull_number: 8 }, {} as never);
+    expect(result).toHaveProperty("isError", true);
+    expect(JSON.stringify(result)).toContain("reviewing PR #7");
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  describe("on the reviewed PR", () => {
+    const cwd = process.cwd();
+    let repoDir: string;
+    beforeEach(() => {
+      // a clean repository, so the dirty-tree refusal ahead of the guard passes
+      repoDir = mkdtempSync(join(tmpdir(), "checkout-guard-"));
+      execFileSync("git", ["init", "-q"], { cwd: repoDir });
+      process.chdir(repoDir);
+    });
+    afterEach(() => {
+      process.chdir(cwd);
+      rmSync(repoDir, { recursive: true, force: true });
+    });
+    const run = async (params: { agent: string; mode: string; head: string }) => {
+      const toolState = initToolState({ owner: "o", name: "r", dir: repoDir, progressComment: undefined });
+      toolState.selectedMode = params.mode;
+      toolState.agent = params.agent as never;
+      const repo = primaryRepoState(toolState);
+      repo.reviewCoverage = { scope: { pullNumber: 7, headSha: "a".repeat(40) } } as unknown as NonNullable<typeof repo.reviewCoverage>;
+      const get = vi.fn().mockResolvedValue({ data: {
+        head: { sha: params.head, ref: "feature", repo: { full_name: "o/r" } },
+        base: { ref: "main", repo: { full_name: "o/r" } },
+        maintainer_can_modify: false,
+      } });
+      const ctx = { agentId: params.agent, toolState, repo: { owner: "o", name: "r" }, octokit: { rest: { pulls: { get } } }, payload: {} } as unknown as ToolContext;
+      return JSON.stringify(await CheckoutPrTool(ctx).execute({ pull_number: 7 }, {} as never));
+    };
+
+    it("refuses a head that moved since the review started", async () => {
+      expect(await run({ agent: "codex", mode: "Review", head: "b".repeat(40) })).toContain("moved to bbbbbbbbbb while this run reviews aaaaaaaaaa");
+    });
+    it.each([
+      ["codex", "Review", "a".repeat(40)],
+      ["codex", "Build", "b".repeat(40)],
+      ["opencode", "Review", "b".repeat(40)],
+    ])("lets %s in %s at head %s through to the checkout", async (agent, mode, head) => {
+      // the fixture has no remote, so the checkout itself fails past the guard
+      const result = await run({ agent, mode, head });
+      expect(result).not.toContain("while this run reviews");
+      expect(result).not.toContain("would switch the working tree");
+    });
   });
 });

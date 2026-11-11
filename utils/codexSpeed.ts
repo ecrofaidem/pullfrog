@@ -6,15 +6,19 @@
 export const CODEX_SPEEDS = ["standard", "fast", "ultrafast"] as const;
 export type CodexSpeed = (typeof CODEX_SPEEDS)[number];
 
-/** Only reviews use the repo's speed ceiling. Background and unclassified work stays at Standard. */
-export function requestedCodexSpeed(
-  setting: unknown,
-  run: { type?: string | undefined; event: { trigger: string } },
-): CodexSpeed {
+type RunKind = { type?: string | undefined; event: { trigger: string } };
+
+/** Whether the server classified this run as a review. Unclassified runs fall back to the PR trigger. */
+export function isReviewRun(run: RunKind): boolean {
   const review = run.type !== undefined
     ? run.type === "review" || run.type === "incremental_review"
     : ["pull_request_opened", "pull_request_ready_for_review", "pull_request_synchronize", "pull_request_review_requested"].includes(run.event.trigger);
-  if (!review || run.event.trigger === "pull_request_merged") return "standard";
+  return review && run.event.trigger !== "pull_request_merged";
+}
+
+/** Only reviews use the repo's speed ceiling. Background and unclassified work stays at Standard. */
+export function requestedCodexSpeed(setting: unknown, run: RunKind): CodexSpeed {
+  if (!isReviewRun(run)) return "standard";
   if (CODEX_SPEEDS.includes(setting as CodexSpeed)) return setting as CodexSpeed;
   return process.env.PULLFROG_CODEX_FAST_MODE === "1" ? "fast" : "standard";
 }

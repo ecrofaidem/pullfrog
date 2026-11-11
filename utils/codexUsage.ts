@@ -4,7 +4,9 @@
 // CLI's status screen shows: per window, the percent used and when it resets.
 // It is read once per run with the subscription chain the run already holds,
 // early and without blocking, so every footer built later can render it
-// synchronously. API-key runs have no chain and render nothing.
+// synchronously. API-key runs have no chain and render nothing. Once the Codex
+// session has reported a newer figure (`setCodexUsageReader`), that one wins:
+// a review with subagents spends its own allowance after the early read.
 
 import { log } from "./cli.ts";
 import { parseCodexAccessAuth } from "./codexAccessAuth.ts";
@@ -22,6 +24,12 @@ const USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 
 let primed: Promise<CodexUsage | null> | undefined;
 let current: CodexUsage | null = null;
+let reader: (() => CodexUsage | null) | undefined;
+
+/** a live source that outranks the early read whenever it has a figure */
+export function setCodexUsageReader(read: () => CodexUsage | null): void {
+  reader = read;
+}
 
 /** start the read; safe to call more than once. */
 export function primeCodexUsage(): Promise<CodexUsage | null> {
@@ -39,7 +47,7 @@ export function primeCodexUsage(): Promise<CodexUsage | null> {
 
 /** whatever the read produced so far; null before it lands or when there is no chain. */
 export function currentCodexUsage(): CodexUsage | null {
-  return current;
+  return reader?.() ?? current;
 }
 
 function accountIdFromToken(token: string): string | undefined {

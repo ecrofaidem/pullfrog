@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { statSync, unlinkSync, writeFileSync } from "node:fs";
+import { statSync, unlinkSync } from "node:fs";
+import { replaceFileIfChanged, writeFileIfChanged } from "../utils/stableWrite.ts";
 import { join } from "node:path";
 import type { Octokit, RestEndpointMethodTypes } from "@octokit/rest";
 import { type } from "arktype";
@@ -11,7 +12,7 @@ import { countLines, createDiffCoverageState } from "../utils/diffCoverage.ts";
 import { $git, $gitFetchWithDeepen, DEEPEN_RETRY_DEPTH } from "../utils/gitAuth.ts";
 import { executeLifecycleHook } from "../utils/lifecycle.ts";
 import { computeIncrementalDiff } from "../utils/rangeDiff.ts";
-import { createReviewCoverage } from "../utils/reviewCoverage.ts";
+import { createReviewCoverage, isCodexReview } from "../utils/reviewCoverage.ts";
 import { createReviewReadState, fetchReviewReceipt } from "../utils/reviewResume.ts";
 import { $ } from "../utils/shell.ts";
 import { rejectIfLeadingDash } from "./git.ts";
@@ -146,12 +147,16 @@ export function writeUnifiedPrDiff(params: {
   diffPath: string;
 }): void {
   // Write directly to disk: shell.$ trims stdout and buffers at most 32 MB.
+  // The diff lands beside the target first, so identical bytes keep the
+  // artifact's identity and the coverage `read_file` has credited against it.
+  const produced = `${params.diffPath}.${process.pid}.tmp`;
   $("git", [
     "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-relative",
     "--src-prefix=a/", "--dst-prefix=b/", "--binary", "--full-index",
     "-C", "--find-copies-harder", "--ignore-submodules=none",
-    `--output=${params.diffPath}`, `${params.baseSha}...${params.headSha}`, "--",
+    `--output=${produced}`, `${params.baseSha}...${params.headSha}`, "--",
   ], { cwd: params.cwd, log: false });
+  replaceFileIfChanged(params.diffPath, produced);
 }
 
 function padNum(n: number): string {
@@ -778,6 +783,15 @@ export function CheckoutPrTool(ctx: ToolContext) {
     };
 
     const primary = primaryRepoState(ctx.toolState);
+    // Same reason as the PR-number check in `execute`: a new head mid-review
+    // moves HEAD and replaces the coverage every subagent is reading into.
+    const reviewing = primary.reviewCoverage?.scope;
+    if (isCodexReview(ctx) && reviewing && reviewing.headSha !== pr.headSha) {
+      throw new Error(
+        `PR #${pull_number} moved to ${pr.headSha.slice(0, 10)} while this run reviews ${reviewing.headSha.slice(0, 10)}. ` +
+          "Finish and publish the review of the checked-out commit; the push starts its own review."
+      );
+    }
     const checkoutResult = await checkoutPrBranch(pr, {
       octokit: ctx.octokit,
       owner: ctx.repo.owner,
@@ -818,7 +832,7 @@ export function CheckoutPrTool(ctx: ToolContext) {
           tempDir,
           `pr-${pull_number}-${beforeShort}-${headShort}-incremental.diff`
         );
-        writeFileSync(incrementalDiffPath, incremental.diff);
+        writeFileIfChanged(incrementalDiffPath, incremental.diff);
         log.info(
           `» incremental diff computed (${incremental.diff.length} bytes) → ${incrementalDiffPath}`
         );
@@ -850,7 +864,7 @@ export function CheckoutPrTool(ctx: ToolContext) {
     const diffPreview = formatResult.content.split("\n").slice(0, 100).join("\n");
     log.debug(`formatted diff preview (first 100 lines):\n${diffPreview}`);
     const diffPath = join(tempDir, `pr-${pull_number}-${headShort}.diff`);
-    writeFileSync(diffPath, formatResult.content);
+    writeFileIfChanged(diffPath, formatResult.content);
     if (ctx.agentId === "codex") {
       const coverage = createReviewCoverage({
         pullNumber: pull_number,
@@ -1038,6 +1052,12 @@ export function CheckoutPrTool(ctx: ToolContext) {
       "Stale lock files from prior crashed runs are swept automatically by the tool itself before each fetch; you do not need to remove them by hand.",
     parameters: CheckoutPr,
     execute: execute(async ({ pull_number }) => {
+      // A review's subagents share this working tree: switching PRs mid-review
+      // would move HEAD and the diff artifacts under every reader.
+      const reviewing = primaryRepoState(ctx.toolState).reviewCoverage;
+      if (isCodexReview(ctx) && reviewing && reviewing.scope.pullNumber !== pull_number) {
+        throw new Error(`This run is reviewing PR #${reviewing.scope.pullNumber}. Checking out PR #${pull_number} would switch the working tree under that review.`);
+      }
       const inFlight = inFlightCheckouts.get(pull_number);
       if (inFlight) {
         log.info(`» checkout_pr({pull_number:${pull_number}}) already in flight — sharing result`);
