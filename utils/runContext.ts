@@ -64,6 +64,10 @@ export interface RepoSettings {
   codexAgent: boolean;
   /** FORK: `standard | fast | ultrafast` ceiling for native Codex reviews; other runs use Standard. */
   codexSpeed?: string | undefined;
+  /** FORK: `codex.subagents.max`, most review subagents at once; 0 turns them off. unset uses the default. */
+  codexSubagentMax?: number | undefined;
+  /** FORK: `codex.subagents.effort`, review subagents' reasoning effort. unset uses the default. */
+  codexSubagentEffort?: string | undefined;
   signedCommits: boolean;
   repoIntelligence: boolean;
   // false suppresses the "Leaping into action..." comment (server-side, before

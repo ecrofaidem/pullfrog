@@ -93,10 +93,19 @@ checks need a change, failure, or unresolved concern.
 ### Review subagents
 
 A review run enables Codex `multi_agent_v2`. Runs of any other type keep
-subagents off. The lead decides after its plan whether to delegate, and can run
-up to 16 subagents at once.
+subagents off. The lead decides after its plan whether to delegate.
 
-- **Model and speed.** Subagents run the lead's model at `medium` effort
+Two repository settings set the limits:
+
+| Setting | Default | Effect |
+| --- | --- | --- |
+| `codex.subagents.max` | 16 | The most subagents a review runs at once. There is no upper bound. 0 turns subagents off, and the review prompt then tells the lead to work alone. |
+| `codex.subagents.effort` | `medium` | The subagents' reasoning effort: `low`, `medium`, `high` or `xhigh`. |
+
+The action uses the default for an unset or malformed value
+(`reviewSubagentLimits` in `utils/reviewLenses.ts`).
+
+- **Model and speed.** Subagents run the lead's model at the configured effort
   (`agents.default_subagent_model` and `default_subagent_reasoning_effort`).
   The lead cannot override either. They inherit the lead's service tier, so an
   Ultrafast review spends Ultrafast allowance on every subagent.

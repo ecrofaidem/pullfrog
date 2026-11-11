@@ -12,8 +12,23 @@ export const REVIEW_LENSES = {
 export type ReviewLens = keyof typeof REVIEW_LENSES;
 export const BASE_REVIEW_PASSES = ["correctness", "conventions", "documentation", "verification"] as const;
 
-/** Most subagents a Codex review may run at once; `agents.max_concurrent_threads_per_session`. */
-export const MAX_REVIEW_SUBAGENTS = 16;
+/** The repo's `codex.subagents.*` settings, as the run context carries them; either may be unset. */
+export type ReviewSubagentSettings = { max?: unknown; effort?: unknown };
+
+/** What a Codex review's subagents may do: `max` at once (0 turns them off), each at `effort`. */
+export type ReviewSubagentLimits = { max: number; effort: "low" | "medium" | "high" | "xhigh" };
+
+const SUBAGENT_EFFORTS: readonly string[] = ["low", "medium", "high", "xhigh"];
+export const DEFAULT_REVIEW_SUBAGENTS: ReviewSubagentLimits = { max: 16, effort: "medium" };
+
+/** The limits a run applies; an unset or malformed setting falls back to its default. */
+export function reviewSubagentLimits(settings: ReviewSubagentSettings | undefined): ReviewSubagentLimits {
+  const { max, effort } = settings ?? {};
+  return {
+    max: typeof max === "number" && Number.isInteger(max) && max >= 0 ? max : DEFAULT_REVIEW_SUBAGENTS.max,
+    effort: typeof effort === "string" && SUBAGENT_EFFORTS.includes(effort) ? effort as ReviewSubagentLimits["effort"] : DEFAULT_REVIEW_SUBAGENTS.effort,
+  };
+}
 
 /**
  * Developer instructions for every Codex subagent
@@ -29,9 +44,25 @@ export const CODEX_SUBAGENT_RULES = `You are a subagent in a Pullfrog run. The l
 - When you read a diff range with read_file, follow next_cursor until complete_through_line reaches the end of the range.
 - Return plain text: each finding with its file path and NEW line number, the claim, the concrete evidence (code, inputs, trace steps) and its likely impact; then the ranges you read completely and anything you could not finish, with the reason. No praise and no summary of the PR.`;
 
-export function codexReviewPrompt(agentId: AgentId): string {
+function delegationPrompt(params: { maxSubagents: number; read: string; checkpoint: string }): string {
+  const { maxSubagents, read, checkpoint } = params;
+  return `**Delegation.** You are explicitly authorized to delegate to subagents with spawn_agent, up to ${maxSubagents} at once. Decide after the plan, before you read the remaining ranges: delegate when splitting the work gives each part a closer read than you could give it alone, and do the work yourself when the change is small enough to read closely in one pass. Useful splits:
+- **Area readers.** Split the remaining raw-diff ranges by file or area. Each subagent reads its ranges of \`unifiedDiffPath\` with \`${read}\` (the harness credits that coverage to this review) and traces the selected lenses that apply to its area.
+- **Lens specialists.** One selected lens across the whole PR, when its trace crosses many files.
+- **An independent reviewer** for a high-risk area such as a migration, auth or money path: give it the area and the diff paths, not your conclusions.
+- **Verification** of one candidate finding you cannot settle quickly.
+
+Spawn every subagent with \`fork_turns="none"\` and do not set a model or reasoning effort; the configured default applies. The message is the subagent's whole context, so make it self-contained: the absolute \`unifiedDiffPath\`, \`diffPath\` and \`changedFilesPath\`, the exact line ranges or files, the lenses or the question, the repository rules that govern those files, and what to return. Do not summarize the PR for it or share other subagents' results. Subagents never call checkout_pr, \`${checkpoint}\` or a publishing tool; you alone plan, record and publish.
+
+After spawning, call wait_agent until list_agents shows no running subagent: the run ends when your turn ends, and unfinished subagents are lost. Trace every returned finding yourself before you accept it. Then call action=status, and read any range still listed yourself or spawn one more reader for it. Record passes yourself, citing the subagent evidence you verified. If a subagent fails or returns nothing usable, do its work yourself or respawn it once. After a resumed turn, earlier subagents are gone: check status and finish the remaining work.`;
+}
+
+export function codexReviewPrompt(agentId: AgentId, maxSubagents = DEFAULT_REVIEW_SUBAGENTS.max): string {
   const checkpoint = formatMcpToolRef(agentId, "review_checkpoint");
   const read = formatMcpToolRef(agentId, "read_file");
+  const delegation = maxSubagents === 0
+    ? "**Delegation.** Subagents are off for this repository: do every read and pass yourself in this session."
+    : delegationPrompt({ maxSubagents, read, checkpoint });
   return `**Review coverage.** You lead this review. Repository skills that describe a review fleet supply applicable checks; use the delegation rules below instead of their dispatch instructions. Review code without editing it. Continue authorized inspection and checkpoint work without waiting for clarification; when missing information prevents a conclusion, record the limitation.
 
 First read the incremental delta when supplied and the diff table of contents to establish scope. Load applicable repository governance and the domain-specific references it names. If the repository supplies a governance manifest builder, run it through the existing MCP shell sandbox with the exact \`changedFilesPath\` returned by checkout_pr, never the formatted diff or a reconstructed file list. The manifest covers the full PR for conservative guidance discovery. Plan before reading the full patch: the plan validates current guidance against the prior review.
@@ -40,15 +71,7 @@ Call \`${checkpoint}\` with action=plan and checkout_pr's \`reviewId\`. Supply t
 
 The plan returns \`priorReviewComplete\` and unread raw-diff ranges. Every push re-reads the whole PR, so read every range. When \`priorReviewComplete\` is true, a complete review of the previous head was verified against the exact baseline, base commit and current guidance: report earlier-commit findings by the IncrementalReview aggregation rules. When it is false, prior coverage was missing, incompatible or incomplete: report previously unreviewed issues outside the latest delta at any severity. Deduplicate existing feedback in either case. Old pass evidence is never imported as a fresh conclusion; execute current passes for this scope.
 
-**Delegation.** You are explicitly authorized to delegate to subagents with spawn_agent, up to ${MAX_REVIEW_SUBAGENTS} at once. Decide after the plan, before you read the remaining ranges: delegate when splitting the work gives each part a closer read than you could give it alone, and do the work yourself when the change is small enough to read closely in one pass. Useful splits:
-- **Area readers.** Split the remaining raw-diff ranges by file or area. Each subagent reads its ranges of \`unifiedDiffPath\` with \`${read}\` (the harness credits that coverage to this review) and traces the selected lenses that apply to its area.
-- **Lens specialists.** One selected lens across the whole PR, when its trace crosses many files.
-- **An independent reviewer** for a high-risk area such as a migration, auth or money path: give it the area and the diff paths, not your conclusions.
-- **Verification** of one candidate finding you cannot settle quickly.
-
-Spawn every subagent with \`fork_turns="none"\` and do not set a model or reasoning effort; the configured default applies. The message is the subagent's whole context, so make it self-contained: the absolute \`unifiedDiffPath\`, \`diffPath\` and \`changedFilesPath\`, the exact line ranges or files, the lenses or the question, the repository rules that govern those files, and what to return. Do not summarize the PR for it or share other subagents' results. Subagents never call checkout_pr, \`${checkpoint}\` or a publishing tool; you alone plan, record and publish.
-
-After spawning, call wait_agent until list_agents shows no running subagent: the run ends when your turn ends, and unfinished subagents are lost. Trace every returned finding yourself before you accept it. Then call action=status, and read any range still listed yourself or spawn one more reader for it. Record passes yourself, citing the subagent evidence you verified. If a subagent fails or returns nothing usable, do its work yourself or respawn it once. After a resumed turn, earlier subagents are gone: check status and finish the remaining work.
+${delegation}
 
 Read every remaining range with \`${read}\`: use \`path\` and optional \`start_line\`, then follow \`next_cursor\` until \`complete_through_line\` reaches the range end (or \`eof\`). A page ending mid-line is normal; continue the cursor to finish it. The harness counts only delivered content. Use \`unifiedDiffPath\` for complete raw content and \`diffPath\` for inline-comment anchors; GitHub can omit large patches from the numbered display. Read related context again whenever needed. Call action=status to get remaining ranges and passes. Never try to mark unread ranges complete with a shell read or a checkpoint assertion.
 

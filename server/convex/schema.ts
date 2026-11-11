@@ -9,6 +9,7 @@ export const permissionTier = v.union(
 
 /** ceiling for native Codex runs; the action lands it on a tier the signed-in plan has */
 export const codexSpeed = v.union(v.literal("standard"), v.literal("fast"), v.literal("ultrafast"));
+export const codexSubagentEffort = v.union(v.literal("low"), v.literal("medium"), v.literal("high"), v.literal("xhigh"));
 
 export const reviewAuthorsMode = v.union(v.literal("all"), v.literal("allowlist"));
 
@@ -67,6 +68,10 @@ export default defineSchema({
     codexAgent: v.boolean(),
     /** unset until first saved; the action then falls back to its legacy env flag */
     codexSpeed: v.optional(codexSpeed),
+    /** most review subagents at once; 0 turns them off. unset uses the action's default */
+    codexSubagentMax: v.optional(v.number()),
+    /** review subagents' reasoning effort. unset uses the action's default */
+    codexSubagentEffort: v.optional(codexSubagentEffort),
     statusChecks: v.boolean(),
     progressComments: v.boolean(),
 

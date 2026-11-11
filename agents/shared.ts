@@ -4,6 +4,7 @@ import type { ToolState } from "../toolState.ts";
 import { log } from "../utils/cli.ts";
 import type { ResolvedInstructions } from "../utils/instructions.ts";
 import type { ResolvedPayload } from "../utils/payload.ts";
+import type { ReviewSubagentLimits } from "../utils/reviewLenses.ts";
 import type { TodoTracker } from "../utils/todoTracking.ts";
 
 // maximum number of stderr lines to keep in the rolling buffer during agent execution
@@ -150,6 +151,8 @@ export interface AgentRunContext {
   resolvedModel?: string | undefined;
   /** FORK: the repo's `codex.speed` setting; the codex harness lands it on a tier the account has. */
   codexSpeed?: string | undefined;
+  /** FORK: the limits on Codex review subagents, from the repo's `codex.subagents.*` settings. */
+  reviewSubagents?: ReviewSubagentLimits | undefined;
   mcpServerUrl: string;
   tmpdir: string;
   /** harness-owned secret paths that agent filesystem tools must never read. */

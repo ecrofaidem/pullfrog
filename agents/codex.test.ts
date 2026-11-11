@@ -233,3 +233,28 @@ it("adds subagent tokens from rollouts to each exec's usage, warns once about lo
   expect(currentCodexUsage()).toMatchObject({ usedPercent: 41 });
   expect(stats.details).toMatch(/- Subagents: 3 \(26K in · 10 out\): color \d+s · fruit \d+s \(unfinished\) · lime \d+s\n/);
 });
+
+// The repo's codex.subagents.* settings reach the config; 0 turns subagents off.
+it.each([
+  [{ max: 40, effort: "high" }, ["default_subagent_reasoning_effort = \"high\"", "max_concurrent_threads_per_session = 40"]],
+  [{ max: 0, effort: "high" }, null],
+])("review subagent limits %j", async (reviewSubagents, agents) => {
+  const dir = mkdtempSync(join(tmpdir(), "codex-subagent-limits-")); dirs.push(dir);
+  mocks.spawn.mockResolvedValue({ exitCode: 0 });
+  await codex.run({
+    payload: { type: "review", event: { trigger: "pull_request_opened" }, push: "disabled", shell: "restricted" },
+    resolvedModel: "openai/gpt-6.1-sol", reviewSubagents,
+    tmpdir: dir, mcpServerUrl: "http://localhost:9999/mcp", instructions: { full: "Review the changes" },
+    toolState: {}, apiToken: "", subagentDeniedTools: [],
+  } as unknown as AgentRunContext);
+  const config = readFileSync(join(dir, ".codex", "config.toml"), "utf8");
+  const turns = mocks.spawn.mock.calls.map(([options]) => options.args as string[]);
+  if (agents) {
+    for (const entry of agents) expect(config).toContain(entry);
+    for (const args of turns) for (const entry of agents) expect(args).toContain(`agents.${entry.replace(" = ", "=")}`);
+  } else {
+    expect(config).toMatch(/^multi_agent_v2 = false$/m);
+    expect(config).not.toContain("[agents]");
+    for (const args of turns) expect(args).toContain("features.multi_agent_v2=false");
+  }
+});
