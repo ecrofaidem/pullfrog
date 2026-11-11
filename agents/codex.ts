@@ -40,7 +40,7 @@ import * as core from "@actions/core";
 import type { ModelReasoningEffort, ThreadEvent, ThreadItem } from "@openai/codex-sdk";
 import { pullfrogMcpName } from "../external.ts";
 import { getModelProvider, getProviderGatewayUrl, stripProviderPrefix } from "../models.ts";
-import { recordTokens } from "../utils/runStats.ts";
+import { recordTokens, setSubagentReader } from "../utils/runStats.ts";
 import { AGENT_ACTIVITY_TIMEOUT_MS, getIdleMs, markActivity } from "../utils/activity.ts";
 import { log } from "../utils/cli.ts";
 import { installCodexHome } from "../utils/codexHome.ts";
@@ -62,6 +62,8 @@ import {
   TailBuffer,
 } from "../utils/subprocess.ts";
 import { ThinkingTimer } from "../utils/timer.ts";
+import { readSubagentRollouts, readWeeklyLimit, type SubagentTokens } from "../utils/codexRollouts.ts";
+import { setCodexUsageReader } from "../utils/codexUsage.ts";
 import { CODEX_SUBAGENT_RULES, MAX_REVIEW_SUBAGENTS } from "../utils/reviewLenses.ts";
 import type { TodoTracker } from "../utils/todoTracking.ts";
 import { getDevDependencyVersion } from "../utils/version.ts";
@@ -616,6 +618,7 @@ type RunParams = {
   todoTracker?: TodoTracker | undefined;
   onActivityTimeout?: (() => void) | undefined;
   onToolUse?: ((event: { toolName: string; input: unknown }) => void) | undefined;
+  onThreadStarted?: ((threadId: string) => void) | undefined;
 };
 
 type CodexRunResult = AgentResult & { threadId?: string | undefined };
@@ -788,6 +791,7 @@ async function runCodex(params: RunParams): Promise<CodexRunResult> {
     switch (event.type) {
       case "thread.started":
         threadId = event.thread_id;
+        params.onThreadStarted?.(event.thread_id);
         return;
       case "turn.completed":
         recordTokens({
@@ -986,6 +990,61 @@ async function resolveCodexSpeed(params: {
   return speed;
 }
 
+/**
+ * Subagent accounting for one Codex session, read from the session's rollouts
+ * (utils/codexRollouts.ts). The footer reads subagents and the weekly limit
+ * live, and `settle` adds each
+ * exec's new subagent tokens to that exec's usage and warns about subagents
+ * the exec left running, whose work is lost when the process exits.
+ */
+function trackSubagents(params: { codexHome: string; model: string | undefined }) {
+  // only skips older history (the session id is the real filter); file mtimes
+  // are tick-granular, so a rollout written at once can predate Date.now().
+  const since = Date.now() - 60_000;
+  let rootThreadId: string | undefined;
+  const counted = new Map<string, SubagentTokens>();
+  const warned = new Set<string>();
+  const read = () => rootThreadId ? readSubagentRollouts({ codexHome: params.codexHome, rootThreadId, since }) : [];
+  setCodexUsageReader(() => rootThreadId ? readWeeklyLimit({ codexHome: params.codexHome, rootThreadId, since }) : null);
+  setSubagentReader(() =>
+    read().map(({ label, seconds, status, tokens }) => ({
+      label, seconds, status,
+      tokens: { input: tokens.input, output: tokens.output, cacheRead: tokens.cacheRead, costUsd: codexCostUsd({ model: params.model, ...tokens }) },
+    }))
+  );
+  return {
+    onThreadStarted: (threadId: string) => { rootThreadId ??= threadId; },
+    settle(result: CodexRunResult): CodexRunResult {
+      const subagents = read();
+      const lost = subagents.filter((agent) => agent.status === "unfinished" && !warned.has(agent.id));
+      for (const agent of lost) warned.add(agent.id);
+      if (lost.length) {
+        log.warning(`» ${lost.length} subagent(s) were still working when codex exited; their work is lost: ${lost.map((agent) => agent.label).join(", ")}`);
+      }
+      const delta = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
+      for (const agent of subagents) {
+        const before = counted.get(agent.id) ?? { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
+        for (const key of ["input", "cacheRead", "cacheWrite", "output"] as const) delta[key] += agent.tokens[key] - before[key];
+        counted.set(agent.id, agent.tokens);
+      }
+      if (!delta.input && !delta.output) return result;
+      const usage = result.usage ?? { agent: "codex", inputTokens: 0, outputTokens: 0 };
+      const cost = codexCostUsd({ model: params.model, ...delta });
+      log.info(`» subagents: ${subagents.length}, ${delta.input} input and ${delta.output} output tokens this exec`);
+      return {
+        ...result,
+        usage: {
+          ...usage,
+          inputTokens: usage.inputTokens + delta.input,
+          outputTokens: usage.outputTokens + delta.output,
+          cacheReadTokens: (usage.cacheReadTokens ?? 0) + delta.cacheRead || undefined,
+          costUsd: usage.costUsd !== undefined && cost !== undefined ? usage.costUsd + cost : usage.costUsd ?? cost,
+        },
+      };
+    },
+  };
+}
+
 // ── agent ──────────────────────────────────────────────────────────────────────
 
 export const codex = agent({
@@ -1091,19 +1150,21 @@ export const codex = agent({
       effortRung: effort.rung && CODEX_EFFORTS.includes(effort.rung) ? effort.rung : undefined,
     });
 
+    const subagents = trackSubagents({ codexHome, model: resolveCodexModel(ctx) });
     const runnerArgs = {
       cliPath,
       cwd: process.cwd(),
       env,
       todoTracker: ctx.todoTracker,
       model: resolveCodexModel(ctx),
+      onThreadStarted: subagents.onThreadStarted,
     };
-    const initial = await runCodex({
+    const initial = subagents.settle(await runCodex({
       ...runnerArgs,
       args: [...securityFlags, "exec", "--json", ctx.instructions.full],
       onActivityTimeout: ctx.onActivityTimeout,
       onToolUse: ctx.onToolUse,
-    });
+    }));
 
     const result = await runPostRunRetryLoop({
       ctx,
@@ -1115,7 +1176,7 @@ export const codex = agent({
       // where CODEX_HOME is the shared ~/.local/share/codex (in CI it is per run).
       canResume: (r) => r.threadId !== undefined,
       resume: async (c) =>
-        runCodex({
+        subagents.settle(await runCodex({
           ...runnerArgs,
           args: [
             ...securityFlags,
@@ -1125,7 +1186,7 @@ export const codex = agent({
             c.previousResult.threadId ?? "",
             c.prompt,
           ],
-        }),
+        })),
     });
 
     if (result.success) {

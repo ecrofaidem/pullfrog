@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { initToolState, primaryRepoState } from "../toolState.ts";
 import { buildPullfrogFooter, stripExistingFooter } from "./buildPullfrogFooter.ts";
 import { frogFacts } from "./frogFacts.ts";
-import { recordTokens, recordToolUse, renderRunStats } from "./runStats.ts";
+import { recordTokens, recordToolUse, renderRunStats, setSubagentReader } from "./runStats.ts";
 
 describe("frog facts in run stats", () => {
   it("reports measured Codex raw-diff coverage without presenting reused reads as new work", () => {
@@ -77,5 +77,32 @@ describe("frog facts in run stats", () => {
     expect(footer.match(/Frog fact/g)).toHaveLength(1);
     expect(footer).not.toContain("https://pullfrog.com/trigger");
     expect(stripExistingFooter(body + footer)).toBe(body);
+  });
+});
+
+describe("subagents read at footer time", () => {
+  it("counts each subagent with its time and status, and adds its tokens to the run's", () => {
+    const toolState = initToolState({ owner: "test", name: "repo", dir: "/tmp/repo", progressComment: undefined });
+    toolState.agent = "codex";
+    const before = renderRunStats({ toolState })!;
+    expect(before.details).not.toContain("Subagents");
+    let calls = 0;
+    setSubagentReader(() => {
+      calls += 1;
+      return [
+        { label: "color", seconds: 3.1, status: "completed", tokens: { input: 25_897, output: 5, cacheRead: 0, costUsd: 0.05 } },
+        { label: "fruit", seconds: 64, status: "unfinished", tokens: { input: 25_899, output: 5, cacheRead: 25_728, costUsd: 0.01 } },
+      ];
+    });
+    try {
+      const stats = renderRunStats({ toolState })!;
+      expect(calls).toBe(1);
+      expect(stats.line).toContain("2 subagents");
+      expect(stats.details).toContain("- Subagents: 2 (51.8K in · 10 out): color 3s · fruit 1m 04s (unfinished)");
+      const tokens = (details: string) => Number(details.match(/- Tokens: ([\d.]+)K in/)?.[1] ?? 0);
+      expect(tokens(stats.details) - tokens(before.details)).toBeCloseTo(51.8, 1);
+    } finally {
+      setSubagentReader(() => []);
+    }
   });
 });

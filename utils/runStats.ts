@@ -14,7 +14,14 @@ const startedAt = Date.now();
 // Keep the same fact when a run posts or rebuilds more than one footer.
 const frogFact = frogFacts[randomInt(frogFacts.length)]!;
 const toolCalls = new Map<string, number>();
-const subagents: { label: string; seconds: number; status: string }[] = [];
+type Subagent = {
+  label: string;
+  seconds: number;
+  status: string;
+  tokens?: { input: number; output: number; cacheRead: number; costUsd: number | undefined } | undefined;
+};
+const subagents: Subagent[] = [];
+let subagentReader: (() => Subagent[]) | undefined;
 // footers are built mid-run, before the harness returns its final usage, so
 // the harnesses report token deltas here as the provider streams them.
 const live = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0, turns: 0 };
@@ -25,6 +32,11 @@ export function recordToolUse(toolName: string): void {
 
 export function recordSubagentFinish(label: string, seconds: number, status: string): void {
   subagents.push({ label, seconds, status });
+}
+
+/** For a harness whose subagents report outside its event stream: called on every footer build. */
+export function setSubagentReader(read: () => Subagent[]): void {
+  subagentReader = read;
 }
 
 export function recordTokens(delta: {
@@ -82,7 +94,16 @@ function coverageOf(toolState: ToolState): DiffCoverageBreakdown | null {
 
 export function renderRunStats(input: RunStatsInput): RenderedRunStats | null {
   const { toolState, review } = input;
-  const usage = { inputTokens: live.input, outputTokens: live.output, cacheReadTokens: live.cacheRead, costUsd: live.costUsd };
+  const agents = [...subagents, ...(subagentReader?.() ?? [])];
+  const sum = (pick: (tokens: NonNullable<Subagent["tokens"]>) => number | undefined) =>
+    agents.reduce((total, agent) => total + (agent.tokens ? pick(agent.tokens) ?? 0 : 0), 0);
+  const subagentTokens = { input: sum((t) => t.input), output: sum((t) => t.output) };
+  const usage = {
+    inputTokens: live.input + subagentTokens.input,
+    outputTokens: live.output + subagentTokens.output,
+    cacheReadTokens: live.cacheRead + sum((t) => t.cacheRead),
+    costUsd: live.costUsd + sum((t) => t.costUsd),
+  };
   const attempts = toolState.usageEntries.length + 1;
   const elapsed = Date.now() - startedAt;
   const coverage = coverageOf(toolState);
@@ -91,7 +112,7 @@ export function renderRunStats(input: RunStatsInput): RenderedRunStats | null {
   const line: string[] = [fmtDuration(elapsed)];
   if (usage.inputTokens) line.push(`${fmtTokens(usage.inputTokens)} in`);
   if (usage.outputTokens) line.push(`${fmtTokens(usage.outputTokens)} out`);
-  if (subagents.length) line.push(`${subagents.length} subagent${subagents.length === 1 ? "" : "s"}`);
+  if (agents.length) line.push(`${agents.length} subagent${agents.length === 1 ? "" : "s"}`);
   if (coverage) line.push(toolState.agent === "codex" ? `${Math.round(coverage.coveragePercent)}% diff coverage` : `read ${Math.round(coverage.coveragePercent)}% of the diff`);
 
   const rows: string[] = [];
@@ -105,9 +126,13 @@ export function renderRunStats(input: RunStatsInput): RenderedRunStats | null {
     );
   }
   if (attempts > 1) rows.push(`- Attempts: ${attempts} (the agent was sent back to finish)`);
-  if (subagents.length) {
+  if (agents.length) {
+    const note = (status: string) => (status === "error" ? " (failed)" : status === "unfinished" ? " (unfinished)" : "");
+    const tokens = subagentTokens.input || subagentTokens.output
+      ? ` (${fmtTokens(subagentTokens.input)} in · ${fmtTokens(subagentTokens.output)} out)`
+      : "";
     rows.push(
-      `- Subagents: ${subagents.map((s) => `${s.label} ${fmtDuration(s.seconds * 1000)}${s.status === "error" ? " (failed)" : ""}`).join(" · ")}`
+      `- Subagents: ${agents.length}${tokens}: ${agents.map((s) => `${s.label} ${fmtDuration(s.seconds * 1000)}${note(s.status)}`).join(" · ")}`
     );
   }
   if (totalTools) {
