@@ -2,8 +2,10 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
-import { type FormatFilesResult, formatFilesWithLineNumbers, writeUnifiedPrDiff } from "./checkout.ts";
+import { describe, expect, it, vi } from "vitest";
+import { initToolState, primaryRepoState } from "../toolState.ts";
+import { CheckoutPrTool, type FormatFilesResult, formatFilesWithLineNumbers, writeUnifiedPrDiff } from "./checkout.ts";
+import type { ToolContext } from "./server.ts";
 
 /**
  * parses TOC entries like "- src/math.ts → lines 7-42 · diff-<hex>" into structured data.
@@ -152,5 +154,21 @@ describe("writeUnifiedPrDiff", () => {
     expect(() => execFileSync("git", ["apply", "--numstat"], {
       input: formatted, stdio: ["pipe", "pipe", "pipe"],
     })).toThrow();
+  });
+});
+
+describe("CheckoutPrTool during a Codex review", () => {
+  it("refuses another PR without touching GitHub or the working tree", async () => {
+    const toolState = initToolState({ owner: "o", name: "r", dir: tmpdir(), progressComment: undefined });
+    toolState.selectedMode = "Review";
+    toolState.agent = "codex";
+    const repo = primaryRepoState(toolState);
+    repo.reviewCoverage = { scope: { pullNumber: 7 } } as unknown as NonNullable<typeof repo.reviewCoverage>;
+    const get = vi.fn();
+    const ctx = { agentId: "codex", toolState, repo: { owner: "o", name: "r" }, octokit: { rest: { pulls: { get } } }, payload: {} } as unknown as ToolContext;
+    const result = await CheckoutPrTool(ctx).execute({ pull_number: 8 }, {} as never);
+    expect(result).toHaveProperty("isError", true);
+    expect(JSON.stringify(result)).toContain("reviewing PR #7");
+    expect(get).not.toHaveBeenCalled();
   });
 });

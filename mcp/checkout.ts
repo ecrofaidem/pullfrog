@@ -12,7 +12,7 @@ import { countLines, createDiffCoverageState } from "../utils/diffCoverage.ts";
 import { $git, $gitFetchWithDeepen, DEEPEN_RETRY_DEPTH } from "../utils/gitAuth.ts";
 import { executeLifecycleHook } from "../utils/lifecycle.ts";
 import { computeIncrementalDiff } from "../utils/rangeDiff.ts";
-import { createReviewCoverage } from "../utils/reviewCoverage.ts";
+import { createReviewCoverage, isCodexReview } from "../utils/reviewCoverage.ts";
 import { createReviewReadState, fetchReviewReceipt } from "../utils/reviewResume.ts";
 import { $ } from "../utils/shell.ts";
 import { rejectIfLeadingDash } from "./git.ts";
@@ -1043,6 +1043,12 @@ export function CheckoutPrTool(ctx: ToolContext) {
       "Stale lock files from prior crashed runs are swept automatically by the tool itself before each fetch; you do not need to remove them by hand.",
     parameters: CheckoutPr,
     execute: execute(async ({ pull_number }) => {
+      // A review's subagents share this working tree: switching PRs mid-review
+      // would move HEAD and the diff artifacts under every reader.
+      const reviewing = primaryRepoState(ctx.toolState).reviewCoverage;
+      if (isCodexReview(ctx) && reviewing && reviewing.scope.pullNumber !== pull_number) {
+        throw new Error(`This run is reviewing PR #${reviewing.scope.pullNumber}. Checking out PR #${pull_number} would switch the working tree under that review.`);
+      }
       const inFlight = inFlightCheckouts.get(pull_number);
       if (inFlight) {
         log.info(`» checkout_pr({pull_number:${pull_number}}) already in flight — sharing result`);
