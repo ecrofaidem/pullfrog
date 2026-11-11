@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -111,6 +111,36 @@ describe("writeUnifiedPrDiff", () => {
       expect(diff).not.toContain("base-only.txt");
       git("checkout", "-q", "--detach", base, "--force");
       git("apply", "--check", diffPath);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the artifact's identity when the same revision is exported again", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "pullfrog-unified-"));
+    const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" });
+    try {
+      git("init", "-q");
+      git("config", "user.name", "Fixture");
+      git("config", "user.email", "fixture@example.test");
+      writeFileSync(join(cwd, "a.txt"), "one\n");
+      git("add", ".");
+      git("commit", "-qm", "base");
+      const baseSha = git("rev-parse", "HEAD").trim();
+      writeFileSync(join(cwd, "a.txt"), "two\n");
+      git("commit", "-qam", "change");
+      const headSha = git("rev-parse", "HEAD").trim();
+      const diffPath = join(cwd, "review.diff");
+      writeUnifiedPrDiff({ cwd, baseSha, headSha, diffPath });
+      const before = statSync(diffPath, { bigint: true });
+      writeUnifiedPrDiff({ cwd, baseSha, headSha, diffPath });
+      const after = statSync(diffPath, { bigint: true });
+      expect([after.ino, after.mtimeNs, after.ctimeNs]).toEqual([before.ino, before.mtimeNs, before.ctimeNs]);
+      writeFileSync(join(cwd, "a.txt"), "three\n");
+      git("commit", "-qam", "another change");
+      writeUnifiedPrDiff({ cwd, baseSha, headSha: git("rev-parse", "HEAD").trim(), diffPath });
+      expect(readFileSync(diffPath, "utf8")).toContain("+three");
+      expect(readdirSync(cwd).filter(name => name.endsWith(".tmp"))).toEqual([]);
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }

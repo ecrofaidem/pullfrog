@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
+import { writeFileIfChanged } from "./stableWrite.ts";
 import { isAbsolute, relative, resolve } from "node:path";
 import { type } from "arktype";
 import type { ToolContext } from "../mcp/server.ts";
@@ -66,7 +67,7 @@ const nonempty = (value: string) => value.trim().length > 0;
 export function createReviewCoverage(params: Omit<ReviewScope, "id">): ReviewCoverage {
   const scope = { ...params, changedFiles: [...new Set(params.changedFiles)].sort() };
   // JSON quoting preserves filenames containing newlines, tabs, or backslashes.
-  writeFileSync(scope.changedFilesPath, scope.changedFiles.map(path => JSON.stringify(path)).join("\n") + "\n");
+  writeFileIfChanged(scope.changedFilesPath, scope.changedFiles.map(path => JSON.stringify(path)).join("\n") + "\n");
   return { scope: { ...scope, id: reviewScopeId(scope) }, passes: {} };
 }
 

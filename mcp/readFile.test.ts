@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDiffCoverageState, getDiffCoverageBreakdown } from "../utils/diffCoverage.ts";
 import { createFileReader } from "./readFile.ts";
 import { createReviewReadState } from "../utils/reviewResume.ts";
+import { writeFileIfChanged } from "../utils/stableWrite.ts";
 
 describe("paged file reading", () => {
   let dir: string;
@@ -68,6 +69,20 @@ describe("paged file reading", () => {
     writeFileSync(path, "different\nsecond\nthird");
     await read({ path, start_line: 3 });
     expect(coverage.coveredRanges).toEqual([{ startLine: 3, endLine: 3 }]);
+  });
+
+  it("keeps credited coverage when a repeat checkout writes the same artifact bytes", async () => {
+    const path = join(dir, "raw.diff");
+    const { read, coverage } = reader(path, "first\nsecond\nthird\n");
+    await read({ path, max_chars: 6 });
+    expect(coverage.coveredRanges).toEqual([{ startLine: 1, endLine: 1 }]);
+    expect(writeFileIfChanged(path, "first\nsecond\nthird\n")).toBe(false);
+    await read({ path, start_line: 3 });
+    expect(coverage.coveredRanges).toEqual([{ startLine: 1, endLine: 1 }, { startLine: 3, endLine: 4 }]);
+    // A plain rewrite of the same bytes changes the file's identity and drops what was read.
+    writeFileSync(path, "first\nsecond\nthird\n");
+    await read({ path, start_line: 2, max_chars: 7 });
+    expect(coverage.coveredRanges).toEqual([{ startLine: 2, endLine: 2 }]);
   });
 
   it("never credits replacement content against an immutable checkout artifact", async () => {

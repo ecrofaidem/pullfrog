@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { statSync, unlinkSync, writeFileSync } from "node:fs";
+import { statSync, unlinkSync } from "node:fs";
+import { replaceFileIfChanged, writeFileIfChanged } from "../utils/stableWrite.ts";
 import { join } from "node:path";
 import type { Octokit, RestEndpointMethodTypes } from "@octokit/rest";
 import { type } from "arktype";
@@ -146,12 +147,16 @@ export function writeUnifiedPrDiff(params: {
   diffPath: string;
 }): void {
   // Write directly to disk: shell.$ trims stdout and buffers at most 32 MB.
+  // The diff lands beside the target first, so identical bytes keep the
+  // artifact's identity and the coverage `read_file` has credited against it.
+  const produced = `${params.diffPath}.${process.pid}.tmp`;
   $("git", [
     "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-relative",
     "--src-prefix=a/", "--dst-prefix=b/", "--binary", "--full-index",
     "-C", "--find-copies-harder", "--ignore-submodules=none",
-    `--output=${params.diffPath}`, `${params.baseSha}...${params.headSha}`, "--",
+    `--output=${produced}`, `${params.baseSha}...${params.headSha}`, "--",
   ], { cwd: params.cwd, log: false });
+  replaceFileIfChanged(params.diffPath, produced);
 }
 
 function padNum(n: number): string {
@@ -818,7 +823,7 @@ export function CheckoutPrTool(ctx: ToolContext) {
           tempDir,
           `pr-${pull_number}-${beforeShort}-${headShort}-incremental.diff`
         );
-        writeFileSync(incrementalDiffPath, incremental.diff);
+        writeFileIfChanged(incrementalDiffPath, incremental.diff);
         log.info(
           `» incremental diff computed (${incremental.diff.length} bytes) → ${incrementalDiffPath}`
         );
@@ -850,7 +855,7 @@ export function CheckoutPrTool(ctx: ToolContext) {
     const diffPreview = formatResult.content.split("\n").slice(0, 100).join("\n");
     log.debug(`formatted diff preview (first 100 lines):\n${diffPreview}`);
     const diffPath = join(tempDir, `pr-${pull_number}-${headShort}.diff`);
-    writeFileSync(diffPath, formatResult.content);
+    writeFileIfChanged(diffPath, formatResult.content);
     if (ctx.agentId === "codex") {
       const coverage = createReviewCoverage({
         pullNumber: pull_number,
