@@ -98,6 +98,7 @@ export async function readLearningsFile(path: string): Promise<string | null> {
  * normal end-of-run path and the SIGINT/SIGTERM handler.
  */
 export async function persistLearnings(ctx: ToolContext): Promise<void> {
+  if (process.env.PULLFROG_DRY_RUN === "1") return; // EXPERIMENT ONLY
   const filePath = ctx.toolState.learningsFilePath;
   if (!filePath) return;
   if (ctx.toolState.learningsPersistAttempted) return;
@@ -155,6 +156,7 @@ export async function persistLearnings(ctx: ToolContext): Promise<void> {
  * so this is a no-op when `xrepoLearningsFilePath` is unset.
  */
 export async function persistXrepoLearnings(ctx: ToolContext): Promise<void> {
+  if (process.env.PULLFROG_DRY_RUN === "1") return; // EXPERIMENT ONLY
   const filePath = ctx.toolState.xrepoLearningsFilePath;
   if (!filePath) return;
   if (ctx.toolState.xrepoLearningsPersistAttempted) return;

@@ -662,5 +662,19 @@ export function createOctokit(
     }
   });
 
+  // EXPERIMENT ONLY (exp/full-read-no-early-exit): never merge.
+  if (process.env.PULLFROG_DRY_RUN === "1") {
+    octokit.hook.wrap("request", async (request, options) => {
+      const method = String(options.method).toUpperCase();
+      const url = String(options.url);
+      const query = String((options as { query?: unknown }).query ?? "");
+      const isGraphqlRead = url === "/graphql" && !/^\s*mutation\b/m.test(query);
+      if (method === "GET" || isGraphqlRead || /\/git\/refs/.test(url)) return request(options);
+      const { headers: _headers, request: _request, ...body } = options as Record<string, unknown>;
+      process.stdout.write(`» DRY-RUN suppressed ${method} ${url}: ${JSON.stringify(body)}\n`);
+      return { status: method === "POST" ? 201 : 200, url, headers: {}, data: { id: 1, node_id: "dry-run", html_url: "https://github.com/dry-run", number: 0, body: (body as { body?: unknown }).body ?? "" } } as never;
+    });
+  }
+
   return octokit;
 }
