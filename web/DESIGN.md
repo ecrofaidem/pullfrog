@@ -9,6 +9,10 @@ colors:
   ink-3: "light-dark(#666d79, #8b929c)"
   hair: "light-dark(#d9dce2, #2a2e35)"
   rail: "light-dark(#5b5bd6, #8b8bff)"
+  series-1: "light-dark(#5b5bd6, #7676ee)"
+  series-2: "light-dark(#1a9a80, #1f9c80)"
+  series-3: "light-dark(#c27a12, #c4841f)"
+  critical: "light-dark(#d1495b, #e0606f)"
 typography:
   headline:
     fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif"
@@ -152,11 +156,19 @@ A cool achromatic sheet with a five-step ink ramp, plus one indigo that the rest
 - **Ink Faint** (light `#666d79` / dark `#8b929c`): tertiary text — timestamps, durations, model ids, token counts, per-setting help, disabled state, non-run list dots — and the hover border of an unfocused input.
 - **Hairline** (light `#d9dce2` / dark `#2a2e35`): every border and divider in the product, the skeleton rail, and the scrollbar thumb.
 
+### Chart Palette (Usage page only)
+
+The Usage page is the one view that charts data, and it carries the only hues outside indigo. They exist to tell pool accounts apart and to mark the hours with no capacity, nothing else.
+
+- **Series 1–3** (indigo, teal, amber): one per pool account, assigned in pool order and kept across every chart on the page, so an account is the same colour in the coverage strip, the history lanes and the daily bars. Validated all-pairs for colour-vision deficiency in both schemes; series 1 shares the rail's light step. A fourth account falls back to faint ink.
+- **Critical** (red): a stretch where no account has room. It is always a 45° hatch plus the words "no capacity", never a flat fill and never alone.
+- Projected spans are dashed lines or a half-opacity fill; measured spans are solid. Dashed still means "not yet / broken", consistent with the Dashed-Means-Broken Rule.
+
 ### Named Rules
 
-**The Rail-Only Hue Rule.** Indigo is worn by the rail, by the run currently in flight, and by the browser affordances the rail owns. Nothing else in the product is ever coloured. If a new element wants the accent, it must first be part of the rail's story.
+**The Rail-Only Hue Rule.** Indigo is worn by the rail, by the run currently in flight, and by the browser affordances the rail owns. Nothing else in the product is ever coloured. If a new element wants the accent, it must first be part of the rail's story. The Usage page's chart palette is the one sanctioned exception, and it never leaves the plot area: text, glyphs and controls on that page stay ink.
 
-**The Never-By-Colour Rule.** No state in this system is signalled by hue. Failure is a struck ring plus the word "failed" in full-strength ink; a stall is a dashed ring plus "no result yet"; a destructive button announces itself by its border going dashed on hover, not by turning red. Attention is spelled with ink weight — muted text goes full ink and medium weight — never with a colour. There is no red, green or amber token, and adding one breaks the world.
+**The Never-By-Colour Rule.** No state in this system is signalled by hue. Failure is a struck ring plus the word "failed" in full-strength ink; a stall is a dashed ring plus "no result yet"; a destructive button announces itself by its border going dashed on hover, not by turning red. Attention is spelled with ink weight — muted text goes full ink and medium weight — never with a colour. Outside the Usage charts there is no red, green or amber token, and adding one breaks the world. Inside them, a hue identifies an account or a dry stretch, and every one rides with a legend, a label or a hatch.
 
 **The Two-Surface Rule.** There are exactly two backgrounds: the sheet, and one shade of it for everything inert — command blocks, disabled controls, skeleton bars, the health banner's hover. A third surface tone means someone is building a card.
 
@@ -266,7 +278,7 @@ One class covers text inputs, textareas and selects, so a form reads as a single
 
 ### Navigation
 
-- **Style:** three inline text tabs (Runs · Settings · Credentials) in the header at label size, 12px apart, sitting on the baseline beside the repo's mono full name. When the account has more than one repo the name becomes a select in the field style, sized to its content.
+- **Style:** four inline text tabs (Runs · Usage · Settings · Credentials) in the header at label size, 12px apart, sitting on the baseline beside the repo's mono full name. When the account has more than one repo the name becomes a select in the field style, sized to its content.
 - **States:** inactive is muted ink; hover goes to full ink; active is full ink with a 1px ink underline drawn as an inset shadow, so activating a tab shifts nothing.
 - **Mobile:** the header simply wraps — repo name on one line, tabs and identity on the next. No hamburger, no drawer, no bottom bar.
 - **Identity:** the signed-in login in mono, faint, pushed to the far end, with an underlined text "sign out" beside it.
@@ -346,7 +358,7 @@ Motion in this product reports server state and does nothing else. There is one 
 - **Don't** put anything in a card, panel, tile or bordered container. Gaps and hairlines divide; boxes never do.
 - **Don't** add an outer shadow, blur, scrim or elevated surface. The only `box-shadow` in the system is the inset 1px rule under the active tab.
 - **Don't** set type above 1.25rem, or uppercase and letter-space a label for emphasis.
-- **Don't** add a sidebar, a tile grid, a stat tile, or a chart. The rail is the navigation and the summary.
+- **Don't** add a sidebar, a tile grid or a stat tile. Charts live only on the Usage page, in the one column, drawn as plain SVG at measured width with hairline grids, mono axis text and a hover readout. Everywhere else the rail is the navigation and the summary.
 - **Don't** round a corner past 4px. The pill radius belongs to the ref chip alone, because it is quoting GitHub's own chip.
 - **Don't** import an icon library, icon font or emoji as UI. Icons are authored SVG on the 16×16 and 12×12 grids at 1.5 stroke; GitHub's logo is the one inlined brand mark, and it is not a licence for a second.
 - **Don't** ship a spinner. Pending is the shape of the content that is coming.

@@ -14,7 +14,9 @@ import { START_KEY } from "./runContext.ts";
  *    for router/oss, post-fallback slug otherwise; NOT the configured
  *    `Repo.model` slug), PATCHed once at end-of-run so per-model cost analytics
  *    don't parse the audit-only `payload`.
- * Keep in sync with `STRING_FIELDS` in `app/api/workflow-run/[runId]/route.ts`.
+ *  - `codexSpeed` — FORK: the Codex speed tier a subscription run applied.
+ * Keep in sync with `STRING_FIELDS` in `app/api/workflow-run/[runId]/route.ts`
+ * (this fork's server: `patchableStrings` in `server/convex/runs.ts`).
  * `succeeded` and the usage fields below are this start's own report: a custom
  * workflow can start the action several times in one run, and the server keeps
  * one row per start, keyed by `START_KEY`, and sums them onto the run.
@@ -30,13 +32,18 @@ const STRING_KEYS = [
   "model",
   "agent",
   "credential",
+  "codexSpeed",
 ] as const;
 
 /**
- * Number-valued usage fields — aggregated across all agent calls and PATCHed
- * once at end-of-run. Token counts are Int4 on the DB side (ample for any
- * realistic run); `costUsd` is a Decimal populated by provider-reported dollar
- * amounts. Keep in sync with `INT_FIELDS` + `DECIMAL_FIELDS` in the server route.
+ * Number-valued fields, PATCHed once at end-of-run. The usage fields are
+ * aggregated across all agent calls: token counts are Int4 on the DB side
+ * (ample for any realistic run); `costUsd` is a Decimal populated by
+ * provider-reported dollar amounts. FORK: a subscription Codex run adds
+ * `codexSubagents` (review subagents spawned, an integer) and `quotaEndPercent`
+ * (the account's weekly limit used at end of run, 0–100). Keep in sync with
+ * `INT_FIELDS` + `DECIMAL_FIELDS` in the server route (this fork's server:
+ * `patchableNumbers` in `server/convex/runs.ts`).
  */
 const NUMBER_KEYS = [
   "inputTokens",
@@ -44,7 +51,15 @@ const NUMBER_KEYS = [
   "cacheReadTokens",
   "cacheWriteTokens",
   "costUsd",
+  "codexSubagents",
+  "quotaEndPercent",
 ] as const;
+
+/** checks beyond finite and non-negative; a failing value is dropped, not sent. */
+const NUMBER_CHECKS: Partial<Record<(typeof NUMBER_KEYS)[number], (value: number) => boolean>> = {
+  codexSubagents: Number.isInteger,
+  quotaEndPercent: (value) => value <= 100,
+};
 
 /** one-way flags, only ever sent as `true`. Keep in sync with `BOOLEAN_FIELDS` in the server route. */
 const FLAG_KEYS = ["reviewSkipped"] as const;
@@ -72,7 +87,7 @@ export async function patchWorkflowRunFields(
   }
   for (const key of NUMBER_KEYS) {
     const value = fields[key];
-    if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    if (typeof value === "number" && Number.isFinite(value) && value >= 0 && (NUMBER_CHECKS[key]?.(value) ?? true)) {
       body[key] = value;
     }
   }

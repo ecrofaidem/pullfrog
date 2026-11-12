@@ -48,6 +48,7 @@ import type * as reviewPolicy from "../reviewPolicy.js";
 import type * as runs from "../runs.js";
 import type * as secrets from "../secrets.js";
 import type * as usage from "../usage.js";
+import type * as usageReport from "../usageReport.js";
 import type * as webhookRecovery from "../webhookRecovery.js";
 import type * as webhooks from "../webhooks.js";
 
@@ -98,6 +99,7 @@ declare const fullApi: ApiFromModules<{
   runs: typeof runs;
   secrets: typeof secrets;
   usage: typeof usage;
+  usageReport: typeof usageReport;
   webhookRecovery: typeof webhookRecovery;
   webhooks: typeof webhooks;
 }>;

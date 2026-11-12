@@ -180,6 +180,7 @@ async function handlePullRequest(ctx: ActionCtx, payload: Json) {
     pr: {
       headRef: String(pr.head?.ref ?? ""),
       headSha: String(pr.head?.sha ?? ""),
+      size: prSize(pr),
     },
     triggerer: String(payload.sender?.login ?? pr.user.login),
     prompt,
@@ -292,12 +293,21 @@ async function handleIssueComment(ctx: ActionCtx, payload: Json) {
 
 // ── dispatch ─────────────────────────────────────────────────────────────────
 
+interface PrSize { additions: number; deletions: number; changedFiles: number }
+
+/** the pull_request webhook carries the whole PR's size; other payloads do not. */
+function prSize(pr: Json): PrSize | undefined {
+  const [additions, deletions, changedFiles] = [pr.additions, pr.deletions, pr.changed_files];
+  return [additions, deletions, changedFiles].every((n) => Number.isSafeInteger(n) && n >= 0)
+    ? { additions, deletions, changedFiles } : undefined;
+}
+
 interface DispatchRunParams {
   repo: Doc<"repos">;
   trigger: RunTrigger;
   kind: string;
   issue: { number: number; title: string; body: string | null };
-  pr?: { headRef: string; headSha: string };
+  pr?: { headRef: string; headSha: string; size?: PrSize | undefined };
   triggerer: string;
   prompt: string;
   beforeSha?: string;
@@ -413,7 +423,7 @@ async function dispatchRun(ctx: ActionCtx, params: DispatchRunParams) {
     dispatchId,
     kind: params.kind,
     trigger: params.trigger,
-    ...(pr ? { prNumber: issue.number, prTitle: issue.title, headSha: pr.headSha } : {}),
+    ...(pr ? { prNumber: issue.number, prTitle: issue.title, headSha: pr.headSha, ...pr.size } : {}),
     triggerer: params.triggerer,
     title,
     ...(checkRunId !== undefined ? { checkRunId } : {}),

@@ -143,6 +143,18 @@ export default defineSchema({
   }).index("by_attempt", ["owner", "repo", "runId", "runAttempt"])
     .index("by_finalization", ["finalizationStatus"]),
 
+  /** Weekly-limit history per pooled account, for burn rates and projections. Pruned after 35 days. */
+  codexQuotaSamples: defineTable({
+    accountId: v.id("codexAccounts"),
+    observedAt: v.number(),
+    usedPercent: v.number(),
+    /** Unix seconds */
+    resetAt: v.number(),
+    plan: v.optional(v.string()),
+    status: v.union(v.literal("available"), v.literal("exhausted"), v.literal("provider_denied")),
+  }).index("by_account_time", ["accountId", "observedAt"])
+    .index("by_time", ["observedAt"]),
+
   /** Latest observation only; generation and credential version are part of its validity. */
   codexQuotaObservations: defineTable({
     accountId: v.id("codexAccounts"),
@@ -183,6 +195,19 @@ export default defineSchema({
     checkRunId: v.optional(v.number()),
     docsOutcome: v.optional(v.union(v.literal("no_change"), v.literal("published"), v.literal("blocked"), v.literal("failed"))),
     docsPullRequestUrl: v.optional(v.string()),
+    /** whole-PR size from the pull_request webhook at dispatch; absent for comment triggers */
+    additions: v.optional(v.number()),
+    deletions: v.optional(v.number()),
+    changedFiles: v.optional(v.number()),
+    /** pooled account that served the run and its weekly % when the run took it */
+    codexAccountId: v.optional(v.id("codexAccounts")),
+    /** GitHub run attempt the account attribution belongs to */
+    codexAttempt: v.optional(v.string()),
+    quotaStartPercent: v.optional(v.number()),
+    /** reported by the action at the end of the run */
+    quotaEndPercent: v.optional(v.number()),
+    codexSpeed: v.optional(v.string()),
+    codexSubagents: v.optional(v.number()),
     /** fields the action PATCHes back (see action/utils/patchWorkflowRunFields.ts) */
     model: v.optional(v.string()),
     agent: v.optional(v.string()),
@@ -207,6 +232,30 @@ export default defineSchema({
     .index("by_repo_status", ["owner", "repo", "status", "createdAt"])
     .index("by_github_run", ["githubRunId"])
     .index("by_dispatch", ["dispatchId"]),
+
+  /** A slim mirror of each run for the Usage page, which must not read whole run documents. Kept in step by runs.ts. */
+  runUsage: defineTable({
+    runId: v.id("runs"),
+    owner: v.string(),
+    repo: v.string(),
+    createdAt: v.number(),
+    completedAt: v.optional(v.number()),
+    status: runStatus,
+    kind: v.string(),
+    prNumber: v.optional(v.number()),
+    prTitle: v.optional(v.string()),
+    htmlUrl: v.optional(v.string()),
+    tokens: v.number(),
+    lines: v.optional(v.number()),
+    codexAccountId: v.optional(v.id("codexAccounts")),
+    quotaStartPercent: v.optional(v.number()),
+    quotaEndPercent: v.optional(v.number()),
+    codexSpeed: v.optional(v.string()),
+    codexSubagents: v.optional(v.number()),
+  })
+    .index("by_run", ["runId"])
+    .index("by_repo", ["owner", "repo", "createdAt"])
+    .index("by_account", ["codexAccountId", "createdAt"]),
 
   /** the ChatGPT subscription's remaining limit, read from OpenAI every 15 minutes per stored chain. */
   codexUsage: defineTable({

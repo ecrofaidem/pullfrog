@@ -11,6 +11,7 @@ crons.interval("reconcile stopped codex assignments", { minutes: 5 }, internal.c
 crons.interval("sweep stale runs", { minutes: 5 }, internal.runs.sweepStale, {});
 crons.interval("refresh codex usage", { minutes: 15 }, internal.usage.refresh, {});
 crons.interval("read idle pooled codex quota", { minutes: 15 }, internal.codexQuota.refreshIdle, {});
+crons.interval("prune codex quota samples", { hours: 6 }, internal.codexQuota.pruneSamples, {});
 crons.interval("expire webhook deliveries", { hours: 6 }, internal.webhooks.expireDeliveries, {});
 crons.interval("recover failed webhook deliveries", { minutes: 5 }, internal.webhookRecovery.redeliverFailed, {});
 

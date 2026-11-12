@@ -30,6 +30,7 @@ export const Route = createFileRoute("/_app")({
 
 const tabs = [
   { to: "/", label: "Runs" },
+  { to: "/usage", label: "Usage" },
   { to: "/settings", label: "Settings" },
   { to: "/credentials", label: "Credentials" },
 ] as const;
