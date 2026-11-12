@@ -142,6 +142,14 @@ describe("webhook ingestion", () => {
     expect(selectWebhook("pull_request", event, "pullfrog.yml")).toBeNull();
   });
 
+  it("keeps the PR size the Usage page records at dispatch", () => {
+    const event = pullRequest("opened");
+    const selected = selectWebhook("pull_request", {
+      ...event, pull_request: { ...event.pull_request, additions: 9, deletions: 1, changed_files: 2 },
+    }, "pullfrog.yml");
+    expect(selected?.payload).toMatchObject({ pull_request: { additions: 9, deletions: 1, changed_files: 2 } });
+  });
+
   it.each([
     { enabled: false, merged: true, base: "main", branch: "feature", files: ["app.ts"], count: 0 },
     { enabled: true, merged: false, base: "main", branch: "feature", files: ["app.ts"], count: 0 },

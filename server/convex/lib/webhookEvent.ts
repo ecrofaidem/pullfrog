@@ -29,6 +29,10 @@ export type WebhookEvent =
           user: User;
           head: { ref: string; sha: string };
           base: { sha: string; ref: string };
+          /** whole-PR size, recorded on the run for the Usage page */
+          additions?: number;
+          deletions?: number;
+          changed_files?: number;
         };
       };
     }
@@ -81,6 +85,10 @@ function object(value: unknown): Record<string, unknown> {
     ? (value as Record<string, unknown>)
     : {};
 }
+function count<K extends string>(key: K, value: unknown): Partial<Record<K, number>> {
+  return Number.isSafeInteger(value) && (value as number) >= 0 ? { [key]: value as number } as Record<K, number> : {};
+}
+
 function text(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
@@ -140,6 +148,9 @@ export function selectWebhook(
             user: user(pr.user),
             head: { ref: text(object(pr.head).ref), sha: text(object(pr.head).sha) },
             base: { sha: text(object(pr.base).sha), ref: text(object(pr.base).ref) },
+            ...count("additions", pr.additions),
+            ...count("deletions", pr.deletions),
+            ...count("changed_files", pr.changed_files),
           },
         },
       };
