@@ -45,6 +45,7 @@ import { AGENT_ACTIVITY_TIMEOUT_MS, getIdleMs, markActivity } from "../utils/act
 import { log } from "../utils/cli.ts";
 import { installCodexHome } from "../utils/codexHome.ts";
 import type { OAuthWriteback } from "../utils/codexRefreshDetect.ts";
+import type { ToolState } from "../toolState.ts";
 import { installFromNpmTarball } from "../utils/install.ts";
 import { OAUTH_WRITEBACK_STATE } from "../utils/oauthWriteback.ts";
 import { markCodexPoolChild, registerCodexPoolAuth } from "../utils/codexPool.ts";
@@ -995,16 +996,18 @@ async function resolveCodexSpeed(params: {
  * Subagent accounting for one Codex session, read from the session's rollouts
  * (utils/codexRollouts.ts). The footer reads subagents and the weekly limit
  * live, and `settle` adds each
- * exec's new subagent tokens to that exec's usage and warns about subagents
- * the exec left running, whose work is lost when the process exits.
+ * exec's new subagent tokens to that exec's usage, counts newly seen subagents
+ * into `toolState.codexSubagents`, and warns about subagents the exec left
+ * running, whose work is lost when the process exits.
  */
-function trackSubagents(params: { codexHome: string; model: string | undefined }) {
+function trackSubagents(params: { codexHome: string; model: string | undefined; toolState: ToolState }) {
   // only skips older history (the session id is the real filter); file mtimes
   // are tick-granular, so a rollout written at once can predate Date.now().
   const since = Date.now() - 60_000;
   let rootThreadId: string | undefined;
   const counted = new Map<string, SubagentTokens>();
   const warned = new Set<string>();
+  params.toolState.codexSubagents ??= 0;
   const read = () => rootThreadId ? readSubagentRollouts({ codexHome: params.codexHome, rootThreadId, since }) : [];
   setCodexUsageReader(() => rootThreadId ? readWeeklyLimit({ codexHome: params.codexHome, rootThreadId, since }) : null);
   setSubagentReader(() =>
@@ -1024,6 +1027,7 @@ function trackSubagents(params: { codexHome: string; model: string | undefined }
       }
       const delta = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
       for (const agent of subagents) {
+        if (!counted.has(agent.id)) params.toolState.codexSubagents = (params.toolState.codexSubagents ?? 0) + 1;
         const before = counted.get(agent.id) ?? { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
         for (const key of ["input", "cacheRead", "cacheWrite", "output"] as const) delta[key] += agent.tokens[key] - before[key];
         counted.set(agent.id, agent.tokens);
@@ -1067,6 +1071,7 @@ export const codex = agent({
 
     const effort = resolveRunEffort(ctx);
     const speed = await resolveCodexSpeed({ ctx, cliPath, codexHome, subscription: !!codexHomeAuth });
+    ctx.toolState.codexSpeed = speed;
     if (effort.rung && !CODEX_EFFORTS.includes(effort.rung)) {
       log.warning(`» effort ${effort.rung} not sent — codex doesn't accept that level`);
     }
@@ -1151,7 +1156,7 @@ export const codex = agent({
       effortRung: effort.rung && CODEX_EFFORTS.includes(effort.rung) ? effort.rung : undefined,
     });
 
-    const subagents = trackSubagents({ codexHome, model: resolveCodexModel(ctx) });
+    const subagents = trackSubagents({ codexHome, model: resolveCodexModel(ctx), toolState: ctx.toolState });
     const runnerArgs = {
       cliPath,
       cwd: process.cwd(),

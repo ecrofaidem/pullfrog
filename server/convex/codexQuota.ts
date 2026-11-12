@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { isFreshCodexQuota, probeCodexQuota, type CodexQuotaObservation, type CodexQuotaResult } from "../../utils/codexQuota";
-import { internalAction, internalMutation, internalQuery } from "./_generated/server";
-import type { Doc } from "./_generated/dataModel";
+import { internalAction, internalMutation, internalQuery, type MutationCtx } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
 import { open, timingSafeEqual } from "./lib/crypto";
 import { codexQuotaResult } from "./schema";
 import { internal } from "./_generated/api";
@@ -55,7 +55,37 @@ export const record = internalMutation({
     };
     if (existing) await ctx.db.replace(existing._id, observation);
     else await ctx.db.insert("codexQuotaObservations", observation);
+    await appendSample(ctx, args.accountId, args.observedAt, args.result);
     return true;
+  },
+});
+
+const SAMPLE_HEARTBEAT_MS = 30 * 60_000;
+const SAMPLE_RETENTION_MS = 35 * 24 * 3600_000;
+
+/** History for the usage page: every change, plus a heartbeat so idle stretches still have points. */
+async function appendSample(ctx: MutationCtx, accountId: Id<"codexAccounts">, observedAt: number, result: CodexQuotaResult) {
+  if (result.status === "authentication" || result.status === "unknown") return;
+  const last = await ctx.db.query("codexQuotaSamples")
+    .withIndex("by_account_time", (q) => q.eq("accountId", accountId)).order("desc").first();
+  if (last && last.observedAt >= observedAt) return;
+  // a denial without figures still closes the account; it keeps the last known window
+  const weekly = result.weekly ?? (last && { usedPercent: last.usedPercent, resetAt: last.resetAt, plan: last.plan });
+  if (!weekly) return;
+  if (last && last.usedPercent === weekly.usedPercent && last.resetAt === weekly.resetAt &&
+      last.status === result.status && observedAt - last.observedAt < SAMPLE_HEARTBEAT_MS) return;
+  await ctx.db.insert("codexQuotaSamples", {
+    accountId, observedAt, usedPercent: weekly.usedPercent, resetAt: weekly.resetAt, status: result.status,
+    ...(weekly.plan ? { plan: weekly.plan } : {}),
+  });
+}
+
+export const pruneSamples = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<void> => {
+    const old = await ctx.db.query("codexQuotaSamples")
+      .withIndex("by_time", (q) => q.lt("observedAt", Date.now() - SAMPLE_RETENTION_MS)).take(500);
+    for (const row of old) await ctx.db.delete(row._id);
   },
 });
 

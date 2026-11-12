@@ -18,6 +18,8 @@ export const runsQuery = (repo: RepoRef) =>
   convexQuery(api.runs.list, { owner: repo.owner, repo: repo.name, limit: RUNS_LIMIT });
 export const healthQuery = (repo: RepoRef) =>
   convexQuery(api.health.get, { owner: repo.owner, repo: repo.name });
+export const usageQuery = (repo: RepoRef) =>
+  convexQuery(api.usageReport.get, { owner: repo.owner, repo: repo.name });
 export const secretsQuery = (repo: RepoRef) =>
   convexQuery(api.secrets.status, { owner: repo.owner, repo: repo.name });
 

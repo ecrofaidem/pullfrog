@@ -134,12 +134,15 @@ it.each([
   mocks.codexHome.mockReturnValue({ codexHome, authPath: join(codexHome, "auth.json"), originalRefresh: "fixture" });
   mocks.spawn.mockImplementation(async ({ args }: { args: string[] }) =>
     args[0] === "debug" ? { exitCode: 0, stdout: catalog(["fast", "ultrafast"]) } : { exitCode: 0 });
+  const toolState = {} as AgentRunContext["toolState"];
   await codex.run({
     payload: { type, event: { trigger, is_pr: true }, push: "disabled", shell: "restricted", effort: 0.5 },
     resolvedModel: "openai/gpt-6.1-sol", codexSpeed: "ultrafast",
     tmpdir: dir, mcpServerUrl: "http://localhost:9999/mcp", instructions: { full: "Review or update the docs" },
-    toolState: {}, apiToken: "", subagentDeniedTools: [],
+    toolState, apiToken: "", subagentDeniedTools: [],
   } as unknown as AgentRunContext);
+  // the applied tier is what the end-of-run PATCH reports
+  expect(toolState.codexSpeed).toBe(applied ?? "standard");
   const config = readFileSync(join(codexHome, "config.toml"), "utf8");
   expect(config.match(/^service_tier = .*$/m)?.[0]).toBe(applied && `service_tier = "${applied}"`);
   expect(config).toContain('model_reasoning_effort = "high"');
@@ -229,6 +232,8 @@ it("adds subagent tokens from rollouts to each exec's usage, warns once about lo
   expect(lost).toEqual([["» 1 subagent(s) were still working when codex exited; their work is lost: fruit"]]);
   const stats = renderRunStats({ toolState })!;
   expect(stats.line).toContain("3 subagents");
+  // fruit spans both execs but counts once: the run total the end-of-run PATCH reports
+  expect(toolState.codexSubagents).toBe(3);
   // the footer's weekly limit is the session's newest report, not the early read
   expect(currentCodexUsage()).toMatchObject({ usedPercent: 41 });
   expect(stats.details).toMatch(/- Subagents: 3 \(26K in · 10 out\): color \d+s · fruit \d+s \(unfinished\) · lime \d+s\n/);

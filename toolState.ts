@@ -2,6 +2,7 @@ import type { ReviewCoverage } from "./utils/reviewCoverage.ts";
 import type { AgentCredential, AgentUsage } from "./agents/shared.ts";
 import type { PrepResult } from "./prep/types.ts";
 import type { AgentDiagnostic } from "./utils/agentHangReport.ts";
+import type { CodexSpeed } from "./utils/codexSpeed.ts";
 import { log } from "./utils/cli.ts";
 import type { DiffCoverageState } from "./utils/diffCoverage.ts";
 import {
@@ -244,6 +245,11 @@ export interface ToolState {
   // precedence, and codex picks auth.json or an API key on mutually exclusive
   // branches. left unset rather than guessed where a harness cannot tell.
   credential?: AgentCredential | undefined;
+  // FORK: the Codex speed tier the codex harness applied, and how many review
+  // subagents its sessions spawned (unique per session, summed across sessions).
+  // persisted on the end-of-run PATCH for subscription runs.
+  codexSpeed?: CodexSpeed | undefined;
+  codexSubagents?: number | undefined;
   // true when the run fell back to the default proxy model purely because the
   // repo has no model selected (Router billing + "auto"). carried into footers
   // so the user can see they're on the cost-optimized default — a weaker
