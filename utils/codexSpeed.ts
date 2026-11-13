@@ -23,6 +23,27 @@ export function requestedCodexSpeed(setting: unknown, run: RunKind): CodexSpeed 
   return process.env.PULLFROG_CODEX_FAST_MODE === "1" ? "fast" : "standard";
 }
 
+/** Below this much of the weekly limit left, a review that asked for Ultrafast runs at Fast. */
+export const DEFAULT_SPEED_FALLBACK_BELOW = 10;
+
+/**
+ * Cap Ultrafast at Fast when the run's ChatGPT login has less than
+ * `fallbackBelow` percent of its weekly limit left (`codex.speed.fallback_below`;
+ * 0 turns the cap off). An unknown limit counts as low: the cap exists to
+ * protect allowance, so a failed usage read must not spend it at 8x.
+ */
+export function capForWeeklyLimit(
+  requested: CodexSpeed,
+  weekly: { usedPercent: number } | null,
+  fallbackBelow: unknown,
+): { speed: CodexSpeed; reason?: string } {
+  const below = typeof fallbackBelow === "number" && fallbackBelow >= 0 && fallbackBelow <= 100 ? fallbackBelow : DEFAULT_SPEED_FALLBACK_BELOW;
+  if (requested !== "ultrafast" || below === 0) return { speed: requested };
+  if (!weekly) return { speed: "fast", reason: "weekly limit unknown" };
+  const left = 100 - weekly.usedPercent;
+  return left < below ? { speed: "fast", reason: `weekly limit ${Math.round(left)}% left, below ${below}%` } : { speed: requested };
+}
+
 /** the tiers `codex debug models` lists for `model` as `service_tier` values; null when the catalog has no usable entry. */
 export function advertisedCodexSpeeds(catalogJson: string, model: string): string[] | null {
   let catalog;

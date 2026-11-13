@@ -12,22 +12,37 @@ export const REVIEW_LENSES = {
 export type ReviewLens = keyof typeof REVIEW_LENSES;
 export const BASE_REVIEW_PASSES = ["correctness", "conventions", "documentation", "verification"] as const;
 
-/** The repo's `codex.subagents.*` settings, as the run context carries them; either may be unset. */
-export type ReviewSubagentSettings = { max?: unknown; effort?: unknown };
+/** The repo's `codex.subagents.*` settings, as the run context carries them; any may be unset. */
+export type ReviewSubagentSettings = { max?: unknown; effort?: unknown; minLines?: unknown };
 
-/** What a Codex review's subagents may do: `max` at once (0 turns them off), each at `effort`. */
-export type ReviewSubagentLimits = { max: number; effort: "low" | "medium" | "high" | "xhigh" };
+/**
+ * What a Codex review's subagents may do: `max` at once (0 turns them off),
+ * each at `effort`, on a PR that changes at least `minLines` lines.
+ */
+export type ReviewSubagentLimits = { max: number; effort: "low" | "medium" | "high" | "xhigh"; minLines: number };
 
 const SUBAGENT_EFFORTS: readonly string[] = ["low", "medium", "high", "xhigh"];
-export const DEFAULT_REVIEW_SUBAGENTS: ReviewSubagentLimits = { max: 16, effort: "medium" };
+export const DEFAULT_REVIEW_SUBAGENTS: ReviewSubagentLimits = { max: 16, effort: "medium", minLines: 5_000 };
+
+const wholeNumber = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value) && value >= 0;
 
 /** The limits a run applies; an unset or malformed setting falls back to its default. */
 export function reviewSubagentLimits(settings: ReviewSubagentSettings | undefined): ReviewSubagentLimits {
-  const { max, effort } = settings ?? {};
+  const { max, effort, minLines } = settings ?? {};
   return {
-    max: typeof max === "number" && Number.isInteger(max) && max >= 0 ? max : DEFAULT_REVIEW_SUBAGENTS.max,
+    max: wholeNumber(max) ? max : DEFAULT_REVIEW_SUBAGENTS.max,
     effort: typeof effort === "string" && SUBAGENT_EFFORTS.includes(effort) ? effort as ReviewSubagentLimits["effort"] : DEFAULT_REVIEW_SUBAGENTS.effort,
+    minLines: wholeNumber(minLines) ? minLines : DEFAULT_REVIEW_SUBAGENTS.minLines,
   };
+}
+
+/**
+ * The limits for one PR: subagents stay off below `minLines` changed lines
+ * (additions plus deletions across the whole PR, since every push re-reads it),
+ * and when the size is unknown, so a failed read never spends allowance.
+ */
+export function reviewSubagentsForPr(limits: ReviewSubagentLimits, changedLines: number | null): ReviewSubagentLimits {
+  return changedLines !== null && changedLines >= limits.minLines ? limits : { ...limits, max: 0 };
 }
 
 /**
@@ -61,7 +76,7 @@ export function codexReviewPrompt(agentId: AgentId, maxSubagents = DEFAULT_REVIE
   const checkpoint = formatMcpToolRef(agentId, "review_checkpoint");
   const read = formatMcpToolRef(agentId, "read_file");
   const delegation = maxSubagents === 0
-    ? "**Delegation.** Subagents are off for this repository: do every read and pass yourself in this session."
+    ? "**Delegation.** Subagents are off for this review: do every read and pass yourself in this session."
     : delegationPrompt({ maxSubagents, read, checkpoint });
   return `**Review coverage.** You lead this review. Repository skills that describe a review fleet supply applicable checks; use the delegation rules below instead of their dispatch instructions. Review code without editing it. Continue authorized inspection and checkpoint work without waiting for clarification; when missing information prevents a conclusion, record the limitation.
 

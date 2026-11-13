@@ -151,7 +151,9 @@ export interface AgentRunContext {
   resolvedModel?: string | undefined;
   /** FORK: the repo's `codex.speed` setting; the codex harness lands it on a tier the account has. */
   codexSpeed?: string | undefined;
-  /** FORK: the limits on Codex review subagents, from the repo's `codex.subagents.*` settings. */
+  /** FORK: `codex.speed.fallback_below`, the weekly-limit percentage below which Ultrafast runs at Fast. */
+  codexSpeedFallbackBelow?: number | undefined;
+  /** FORK: the limits on Codex review subagents, from the repo's `codex.subagents.*` settings and the PR's size. */
   reviewSubagents?: ReviewSubagentLimits | undefined;
   mcpServerUrl: string;
   tmpdir: string;

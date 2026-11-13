@@ -72,6 +72,10 @@ export default defineSchema({
     codexSubagentMax: v.optional(v.number()),
     /** review subagents' reasoning effort. unset uses the action's default */
     codexSubagentEffort: v.optional(codexSubagentEffort),
+    /** PR size (changed lines) below which reviews run without subagents. unset uses the action's default */
+    codexSubagentMinLines: v.optional(v.number()),
+    /** weekly-limit percentage below which Ultrafast runs at Fast; 0 turns it off. unset uses the action's default */
+    codexSpeedFallbackBelow: v.optional(v.number()),
     statusChecks: v.boolean(),
     progressComments: v.boolean(),
 

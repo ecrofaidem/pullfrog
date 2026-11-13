@@ -13,6 +13,8 @@ import { startMcpHttpServer, type ToolContext } from "./mcp/server.ts";
 import { getSandboxMethod } from "./mcp/shell.ts";
 import { computeModes } from "./modes.ts";
 import { reviewSubagentLimits } from "./utils/reviewLenses.ts";
+import { reviewSubagentsForRun } from "./utils/reviewSubagents.ts";
+import { isReviewRun } from "./utils/codexSpeed.ts";
 import { DOCS_MODE, DOCS_OUTPUT_SCHEMA, prepareDocsUpdate, finishDocsUpdate, type DocsUpdateState } from "./utils/docsUpdate.ts";
 import { getModelProvider } from "./models.ts";
 import { initToolState, primaryRepoState } from "./toolState.ts";
@@ -688,7 +690,17 @@ export async function main(): Promise<MainResult> {
     }
 
     const agentId = agent.name;
-    const reviewSubagents = reviewSubagentLimits({ max: runContext.repoSettings.codexSubagentMax, effort: runContext.repoSettings.codexSubagentEffort });
+    const reviewSubagents = await reviewSubagentsForRun({
+      limits: reviewSubagentLimits({
+        max: runContext.repoSettings.codexSubagentMax,
+        effort: runContext.repoSettings.codexSubagentEffort,
+        minLines: runContext.repoSettings.codexSubagentMinLines,
+      }),
+      codex: agentId === "codex" && !isDocsUpdate && isReviewRun(payload),
+      prNumber: payload.event.issue_number,
+      octokit,
+      repo: runContext.repo,
+    });
     const modes = isDocsUpdate ? [DOCS_MODE] : [
       ...computeModes(agentId, runContext.repoSettings.signedCommits, reviewSubagents.max),
       ...runContext.repoSettings.modes,
@@ -985,6 +997,7 @@ export async function main(): Promise<MainResult> {
       payload,
       resolvedModel,
       codexSpeed: runContext.repoSettings.codexSpeed, // FORK: codex speed tier
+      codexSpeedFallbackBelow: runContext.repoSettings.codexSpeedFallbackBelow, // FORK: weekly-limit speed cap
       reviewSubagents, // FORK: codex review subagent limits
       mcpServerUrl: mcpHttpServer.url,
       tmpdir,

@@ -47,6 +47,12 @@ The `codex.speed` repository setting (`standard`, `fast` or `ultrafast`) is the
 fastest service tier a native Codex PR review may use. Set it on the dashboard's
 settings page or through `/api/cli/config`. Other harnesses ignore it.
 
+`codex.speed.fallback_below` (default 10) caps Ultrafast at Fast when the run's
+ChatGPT login has less than that percentage of its weekly limit left. A usage
+read that fails also caps it, and 0 turns the cap off. The action reads the
+limit once, at the start of a subscription run (`capForWeeklyLimit` in
+`utils/codexSpeed.ts`). API-key runs skip the check.
+
 Docs updates, general comment requests, and other non-review runs always use
 Standard, including resumed turns. They ignore the legacy Fast flag. The
 dispatcher sends `review` or `incremental_review` in the envelope's `type` to
@@ -102,9 +108,15 @@ Two repository settings set the limits:
 | --- | --- | --- |
 | `codex.subagents.max` | 16 | The most subagents a review runs at once. There is no upper bound. 0 turns subagents off, and the review prompt then tells the lead to work alone. |
 | `codex.subagents.effort` | `medium` | The subagents' reasoning effort: `low`, `medium`, `high` or `xhigh`. |
+| `codex.subagents.min_lines` | 5000 | Reviews of a PR with fewer changed lines (additions plus deletions) run without subagents. 0 allows them on every PR. |
 
 The action uses the default for an unset or malformed value
 (`reviewSubagentLimits` in `utils/reviewLenses.ts`).
+
+Before it builds the prompt, the action reads the PR's size from GitHub
+(`utils/reviewSubagents.ts`). A re-review counts the whole PR, because every push
+re-reads it. Below `codex.subagents.min_lines`, or when the size cannot be read,
+the review gets the single-session prompt and `multi_agent_v2 = false`.
 
 - **Model and speed.** Subagents run the lead's model at the configured effort
   (`agents.default_subagent_model` and `default_subagent_reasoning_effort`).

@@ -71,6 +71,20 @@ describe("signed pool startup handler", () => {
     await expect(patch({ codexSubagentEffort: "ludicrous" })).rejects.toThrow();
   });
 
+  it("sends the subagent size gate and the speed fallback only once saved, including 0, and refuses invalid values", async () => {
+    const { t, request } = await setup();
+    const settings = async () => (await (await request()).json()).settings;
+    expect(await settings()).not.toHaveProperty("codexSubagentMinLines");
+    expect(await settings()).not.toHaveProperty("codexSpeedFallbackBelow");
+    const patch = (value: Record<string, unknown>) => t.mutation(internal.repos.applyConfig, { owner: "owner", name: "repo", updatedBy: "test", patch: value as never });
+    await patch({ codexSubagentMinLines: 20_000, codexSpeedFallbackBelow: 25 });
+    expect(await settings()).toMatchObject({ codexSubagentMinLines: 20_000, codexSpeedFallbackBelow: 25 });
+    await patch({ codexSubagentMinLines: 0, codexSpeedFallbackBelow: 0 });
+    expect(await settings()).toMatchObject({ codexSubagentMinLines: 0, codexSpeedFallbackBelow: 0 });
+    for (const lines of [-1, 2.5]) await expect(patch({ codexSubagentMinLines: lines })).rejects.toThrow("codex.subagents.min_lines must be a whole number");
+    for (const percent of [-1, 101]) await expect(patch({ codexSpeedFallbackBelow: percent })).rejects.toThrow("codex.speed.fallback_below must be a percentage");
+  });
+
   it("returns only selected auth and recovers the same active assignment without another provider call", async () => {
     const { request } = await setup();
     const first = await request();
