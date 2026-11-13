@@ -138,6 +138,8 @@ export function toActionSettings(repo: Doc<"repos">): Record<string, unknown> {
     ...(repo.codexSpeed ? { codexSpeed: repo.codexSpeed } : {}),
     ...(repo.codexSubagentMax !== undefined ? { codexSubagentMax: repo.codexSubagentMax } : {}),
     ...(repo.codexSubagentEffort ? { codexSubagentEffort: repo.codexSubagentEffort } : {}),
+    ...(repo.codexSubagentMinLines !== undefined ? { codexSubagentMinLines: repo.codexSubagentMinLines } : {}),
+    ...(repo.codexSpeedFallbackBelow !== undefined ? { codexSpeedFallbackBelow: repo.codexSpeedFallbackBelow } : {}),
     signedCommits: false,
     repoIntelligence: false,
     progressComments: repo.progressComments,
@@ -188,6 +190,8 @@ const patchValidator = v.object({
   codexSpeed: v.optional(codexSpeed),
   codexSubagentMax: v.optional(v.number()),
   codexSubagentEffort: v.optional(codexSubagentEffort),
+  codexSubagentMinLines: v.optional(v.number()),
+  codexSpeedFallbackBelow: v.optional(v.number()),
   statusChecks: v.optional(v.boolean()),
   progressComments: v.optional(v.boolean()),
   handle: v.optional(v.string()),
@@ -213,6 +217,12 @@ export function validatePatch(input: RepoPatch): RepoPatch {
   }
   if (patch.codexSubagentMax !== undefined && !(Number.isInteger(patch.codexSubagentMax) && patch.codexSubagentMax >= 0)) {
     throw new Error("codex.subagents.max must be a whole number, 0 or more");
+  }
+  if (patch.codexSubagentMinLines !== undefined && !(Number.isInteger(patch.codexSubagentMinLines) && patch.codexSubagentMinLines >= 0)) {
+    throw new Error("codex.subagents.min_lines must be a whole number, 0 or more");
+  }
+  if (patch.codexSpeedFallbackBelow !== undefined && !(patch.codexSpeedFallbackBelow >= 0 && patch.codexSpeedFallbackBelow <= 100)) {
+    throw new Error("codex.speed.fallback_below must be a percentage from 0 to 100");
   }
   if (patch.timeout !== undefined) {
     const t = patch.timeout.trim();

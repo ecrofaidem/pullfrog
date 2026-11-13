@@ -1,7 +1,7 @@
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { codex } from "./codex.ts";
 import { log } from "../utils/cli.ts";
 import { initToolState } from "../toolState.ts";
@@ -9,7 +9,9 @@ import { currentCodexUsage } from "../utils/codexUsage.ts";
 import { renderRunStats } from "../utils/runStats.ts";
 import type { AgentRunContext } from "./shared.ts";
 
-const mocks = vi.hoisted(() => ({ spawn: vi.fn(), codexHome: vi.fn(), resumed: undefined as unknown }));
+const mocks = vi.hoisted(() => ({ spawn: vi.fn(), codexHome: vi.fn(), usage: vi.fn(), resumed: undefined as unknown }));
+// the weekly limit the run's login reports; most tests run with plenty left
+vi.mock("../utils/codexUsage.ts", async (original) => ({ ...await original<typeof import("../utils/codexUsage.ts")>(), primeCodexUsage: mocks.usage }));
 vi.mock("../utils/install.ts", () => ({ installFromNpmTarball: async () => "/fixture/codex" }));
 vi.mock("../utils/codexHome.ts", () => ({ installCodexHome: mocks.codexHome }));
 vi.mock("../utils/codexPool.ts", () => ({ registerCodexPoolAuth: () => false, markCodexPoolChild: () => {} }));
@@ -24,6 +26,7 @@ vi.mock("./postRun.ts", () => ({
 }));
 
 const dirs: string[] = [];
+beforeEach(() => { mocks.usage.mockResolvedValue({ plan: "pro", usedPercent: 50, windowSeconds: 604_800, resetAt: 0 }); });
 afterEach(() => { vi.resetAllMocks(); vi.unstubAllEnvs(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
 it.each([
@@ -262,4 +265,67 @@ it.each([
     expect(config).not.toContain("[agents]");
     for (const args of turns) expect(args).toContain("features.multi_agent_v2=false");
   }
+});
+
+// codex.speed.fallback_below: Ultrafast runs at Fast when the weekly limit is low or unknown.
+it.each([
+  [{ usedPercent: 50 }, undefined, "ultrafast"],
+  [{ usedPercent: 95 }, undefined, "fast"],
+  [{ usedPercent: 85 }, 20, "fast"],
+  [{ usedPercent: 85 }, 10, "ultrafast"],
+  [null, undefined, "fast"],
+  [null, 0, "ultrafast"],
+])("weekly usage %j with fallback %s applies %s", async (usage, fallbackBelow, applied) => {
+  mocks.usage.mockResolvedValue(usage && { plan: "pro", windowSeconds: 604_800, resetAt: 0, ...usage });
+  const dir = mkdtempSync(join(tmpdir(), "codex-speed-fallback-")); dirs.push(dir);
+  const codexHome = join(dir, ".codex");
+  mocks.codexHome.mockReturnValue({ codexHome, authPath: join(codexHome, "auth.json"), originalRefresh: "fixture" });
+  mocks.spawn.mockImplementation(async ({ args }: { args: string[] }) =>
+    args[0] === "debug" ? { exitCode: 0, stdout: catalog(["fast", "ultrafast"]) } : { exitCode: 0 });
+  await codex.run({
+    payload: { type: "review", event: { trigger: "pull_request_opened" }, push: "disabled", shell: "restricted" },
+    resolvedModel: "openai/gpt-6.1-sol", codexSpeed: "ultrafast", codexSpeedFallbackBelow: fallbackBelow,
+    tmpdir: dir, mcpServerUrl: "http://localhost:9999/mcp", instructions: { full: "Review the changes" },
+    toolState: {}, apiToken: "", subagentDeniedTools: [],
+  } as unknown as AgentRunContext);
+  const turns = mocks.spawn.mock.calls.map(([options]) => options.args as string[]).filter((args) => args[0] !== "debug");
+  expect(turns).toHaveLength(2);
+  for (const args of turns) expect(args).toContain(`service_tier="${applied}"`);
+});
+
+// A repo that leaves its model unset runs on Codex's default model; the cap still applies.
+it.each([
+  [{ usedPercent: 95 }, "fast"],
+  [null, "fast"],
+  [{ usedPercent: 50 }, "ultrafast"],
+])("on Codex's default model, weekly usage %j applies %s", async (usage, applied) => {
+  mocks.usage.mockResolvedValue(usage && { plan: "pro", windowSeconds: 604_800, resetAt: 0, ...usage });
+  const dir = mkdtempSync(join(tmpdir(), "codex-speed-default-model-")); dirs.push(dir);
+  const codexHome = join(dir, ".codex");
+  mocks.codexHome.mockReturnValue({ codexHome, authPath: join(codexHome, "auth.json"), originalRefresh: "fixture" });
+  mocks.spawn.mockResolvedValue({ exitCode: 0 });
+  await codex.run({
+    payload: { type: "review", event: { trigger: "pull_request_opened" }, push: "disabled", shell: "restricted" },
+    codexSpeed: "ultrafast",
+    tmpdir: dir, mcpServerUrl: "http://localhost:9999/mcp", instructions: { full: "Review the changes" },
+    toolState: {}, apiToken: "", subagentDeniedTools: [],
+  } as unknown as AgentRunContext);
+  expect(mocks.usage).toHaveBeenCalledOnce();
+  const turns = mocks.spawn.mock.calls.map(([options]) => options.args as string[]);
+  expect(turns).toHaveLength(2);
+  expect(turns[1]).toContain("resume");
+  for (const args of turns) expect(args).toContain(`service_tier="${applied}"`);
+});
+
+it("never reads the weekly limit on an API-key run", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "codex-speed-apikey-")); dirs.push(dir);
+  mocks.spawn.mockResolvedValue({ exitCode: 0 });
+  await codex.run({
+    payload: { type: "review", event: { trigger: "pull_request_opened" }, push: "disabled", shell: "restricted" },
+    resolvedModel: "openai/gpt-6.1-sol", codexSpeed: "ultrafast",
+    tmpdir: dir, mcpServerUrl: "http://localhost:9999/mcp", instructions: { full: "Review the changes" },
+    toolState: {}, apiToken: "", subagentDeniedTools: [],
+  } as unknown as AgentRunContext);
+  expect(mocks.usage).not.toHaveBeenCalled();
+  for (const [{ args }] of mocks.spawn.mock.calls) expect(args).toContain('service_tier="ultrafast"');
 });

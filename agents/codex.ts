@@ -49,7 +49,7 @@ import type { ToolState } from "../toolState.ts";
 import { installFromNpmTarball } from "../utils/install.ts";
 import { OAUTH_WRITEBACK_STATE } from "../utils/oauthWriteback.ts";
 import { markCodexPoolChild, registerCodexPoolAuth } from "../utils/codexPool.ts";
-import { advertisedCodexSpeeds, type CodexSpeed, codexSpeedConfig, isReviewRun, pickCodexSpeed, requestedCodexSpeed } from "../utils/codexSpeed.ts";
+import { advertisedCodexSpeeds, capForWeeklyLimit, type CodexSpeed, codexSpeedConfig, isReviewRun, pickCodexSpeed, requestedCodexSpeed } from "../utils/codexSpeed.ts";
 import { findProviderErrorMatch } from "../utils/providerErrors.ts";
 import { resolveRunEffort } from "../utils/runEffort.ts";
 import { saveSecretState } from "../utils/secretCommands.ts";
@@ -64,7 +64,7 @@ import {
 } from "../utils/subprocess.ts";
 import { ThinkingTimer } from "../utils/timer.ts";
 import { readSubagentRollouts, readWeeklyLimit, type SubagentTokens } from "../utils/codexRollouts.ts";
-import { setCodexUsageReader } from "../utils/codexUsage.ts";
+import { primeCodexUsage, setCodexUsageReader } from "../utils/codexUsage.ts";
 import { CODEX_SUBAGENT_RULES, reviewSubagentLimits } from "../utils/reviewLenses.ts";
 import type { TodoTracker } from "../utils/todoTracking.ts";
 import { getDevDependencyVersion } from "../utils/version.ts";
@@ -959,9 +959,15 @@ async function resolveCodexSpeed(params: {
   codexHome: string;
   subscription: boolean;
 }): Promise<CodexSpeed> {
-  const requested = requestedCodexSpeed(params.ctx.codexSpeed, params.ctx.payload);
+  const asked = requestedCodexSpeed(params.ctx.codexSpeed, params.ctx.payload);
   const model = resolveCodexModel(params.ctx);
-  if (requested === "standard" || !params.subscription || !model) return requested;
+  if (asked === "standard" || !params.subscription) return asked;
+  // the subscription's own weekly limit, read once per run (utils/codexUsage.ts)
+  const { speed: requested, reason } = capForWeeklyLimit(asked, await primeCodexUsage(), params.ctx.codexSpeedFallbackBelow);
+  if (!model) {
+    log.info(`» codex speed: requested=${asked}, applied=${requested}, model=codex default` + (reason ? `, capped at fast: ${reason}` : ""));
+    return requested;
+  }
   let advertised: string[] | null = null;
   try {
     // the catalog read signs in with the run's auth file, so the pool must see it as a child.
@@ -986,8 +992,9 @@ async function resolveCodexSpeed(params: {
   }
   const speed = pickCodexSpeed(requested, advertised);
   log.info(
-    `» codex speed: requested=${requested}, applied=${speed}, ` +
-      `advertised=${advertised ? advertised.join(",") || "none" : "unknown"}`
+    `» codex speed: requested=${asked}, applied=${speed}, ` +
+      `advertised=${advertised ? advertised.join(",") || "none" : "unknown"}` +
+      (reason ? `, capped at fast: ${reason}` : "")
   );
   return speed;
 }

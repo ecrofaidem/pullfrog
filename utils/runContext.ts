@@ -68,6 +68,10 @@ export interface RepoSettings {
   codexSubagentMax?: number | undefined;
   /** FORK: `codex.subagents.effort`, review subagents' reasoning effort. unset uses the default. */
   codexSubagentEffort?: string | undefined;
+  /** FORK: `codex.subagents.min_lines`, the PR size (changed lines) below which reviews run without subagents. */
+  codexSubagentMinLines?: number | undefined;
+  /** FORK: `codex.speed.fallback_below`, the weekly-limit percentage below which Ultrafast runs at Fast. */
+  codexSpeedFallbackBelow?: number | undefined;
   signedCommits: boolean;
   repoIntelligence: boolean;
   // false suppresses the "Leaping into action..." comment (server-side, before

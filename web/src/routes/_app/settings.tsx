@@ -46,6 +46,8 @@ interface Form {
   codexSpeed: NonNullable<Doc<"repos">["codexSpeed"]>;
   codexSubagentMax: string;
   codexSubagentEffort: NonNullable<Doc<"repos">["codexSubagentEffort"]>;
+  codexSubagentMinLines: string;
+  codexSpeedFallbackBelow: string;
   statusChecks: boolean;
   progressComments: boolean;
   setupScript: string;
@@ -66,7 +68,10 @@ const SPEEDS: Form["codexSpeed"][] = ["standard", "fast", "ultrafast"];
 const SUBAGENT_EFFORTS: Form["codexSubagentEffort"][] = ["low", "medium", "high", "xhigh"];
 
 /** what the action uses while `codex.subagents.*` is unset */
-const SUBAGENT_DEFAULTS = { max: 16, effort: "medium" } as const;
+const SUBAGENT_DEFAULTS = { max: 16, effort: "medium", minLines: 5000 } as const;
+
+/** what the action uses while `codex.speed.fallback_below` is unset */
+const SPEED_FALLBACK_DEFAULT = 10;
 
 const MODELS = ["gpt-sol", "gpt-sol-pro", "claude-opus", "claude-sonnet", "claude-haiku"];
 
@@ -89,6 +94,8 @@ function toForm(repo: Doc<"repos">): Form {
     codexSpeed: repo.codexSpeed ?? "standard",
     codexSubagentMax: String(repo.codexSubagentMax ?? SUBAGENT_DEFAULTS.max),
     codexSubagentEffort: repo.codexSubagentEffort ?? SUBAGENT_DEFAULTS.effort,
+    codexSubagentMinLines: String(repo.codexSubagentMinLines ?? SUBAGENT_DEFAULTS.minLines),
+    codexSpeedFallbackBelow: String(repo.codexSpeedFallbackBelow ?? SPEED_FALLBACK_DEFAULT),
     statusChecks: repo.statusChecks,
     progressComments: repo.progressComments,
     setupScript: repo.setupScript ?? "",
@@ -121,6 +128,8 @@ function toPatch(form: Form): RepoPatch {
     codexSpeed: form.codexSpeed,
     codexSubagentMax: Number(form.codexSubagentMax.trim()),
     codexSubagentEffort: form.codexSubagentEffort,
+    codexSubagentMinLines: Number(form.codexSubagentMinLines.trim()),
+    codexSpeedFallbackBelow: Number(form.codexSpeedFallbackBelow.trim()),
     statusChecks: form.statusChecks,
     progressComments: form.progressComments,
     setupScript: form.setupScript.trim() ? form.setupScript : null,
@@ -136,6 +145,9 @@ function validate(form: Form): Partial<Record<ConfigKey, string>> {
   const h = form.handle.trim().replace(/^@/, "");
   if (!/^[a-z0-9-]+$/i.test(h)) errors["comment.handle"] = "Use letters, digits and hyphens only.";
   if (!/^\d+$/.test(form.codexSubagentMax.trim())) errors["codex.subagents.max"] = "Use a whole number, 0 or more.";
+  if (!/^\d+$/.test(form.codexSubagentMinLines.trim())) errors["codex.subagents.min_lines"] = "Use a whole number, 0 or more.";
+  const fallback = form.codexSpeedFallbackBelow.trim();
+  if (!/^\d+(\.\d+)?$/.test(fallback) || Number(fallback) > 100) errors["codex.speed.fallback_below"] = "Use a percentage from 0 to 100.";
   if (form.effort !== "") {
     const e = Number(form.effort);
     if (!(e >= 0 && e <= 1)) errors.effort = "Pick a rung.";
@@ -363,6 +375,14 @@ function SettingsPage() {
           )}
         />
         <Row
+          k="codex.speed.fallback_below"
+          help="Below this percentage of the weekly limit left, an ultrafast review runs at fast instead. If the limit cannot be read, the review runs at fast. 0 turns this off."
+          error={errors["codex.speed.fallback_below"]}
+          control={(ids) => (
+            <input id={ids.control} aria-describedby={ids.help} aria-invalid={errors["codex.speed.fallback_below"] ? "true" : undefined} data-key="codex.speed.fallback_below" className="field mono w-28" type="text" inputMode="numeric" value={form.codexSpeedFallbackBelow} onChange={(e) => set("codexSpeedFallbackBelow", e.target.value)} spellCheck={false} autoComplete="off" />
+          )}
+        />
+        <Row
           k="codex.subagents.max"
           help="How many subagents a codex review can run at once. The reviewer decides whether to use them. 0 turns them off. Each subagent uses the usage limit at the review's speed."
           error={errors["codex.subagents.max"]}
@@ -381,6 +401,14 @@ function SettingsPage() {
                 </option>
               ))}
             </select>
+          )}
+        />
+        <Row
+          k="codex.subagents.min_lines"
+          help="Reviews of PRs that change fewer lines than this (additions plus deletions) run without subagents. 0 allows subagents on every PR."
+          error={errors["codex.subagents.min_lines"]}
+          control={(ids) => (
+            <input id={ids.control} aria-describedby={ids.help} aria-invalid={errors["codex.subagents.min_lines"] ? "true" : undefined} data-key="codex.subagents.min_lines" className="field mono w-28" type="text" inputMode="numeric" value={form.codexSubagentMinLines} onChange={(e) => set("codexSubagentMinLines", e.target.value)} spellCheck={false} autoComplete="off" />
           )}
         />
       </Group>

@@ -19,6 +19,8 @@ export const CONFIG_KEYS = {
   "codex.speed": { field: "codexSpeed", type: "'standard' | 'fast' | 'ultrafast'" },
   "codex.subagents.max": { field: "codexSubagentMax", type: "number" },
   "codex.subagents.effort": { field: "codexSubagentEffort", type: "'low' | 'medium' | 'high' | 'xhigh'" },
+  "codex.subagents.min_lines": { field: "codexSubagentMinLines", type: "number" },
+  "codex.speed.fallback_below": { field: "codexSpeedFallbackBelow", type: "number" },
   "run.timeout": { field: "timeout", type: "string" },
   "run.push": { field: "push", type: "'disabled' | 'restricted' | 'enabled'" },
   "run.shell": { field: "shell", type: "'disabled' | 'restricted' | 'enabled'" },
@@ -40,6 +42,8 @@ export function toConfig(repo: Doc<"repos">): Record<ConfigKey, unknown> {
   out["codex.speed"] ??= "standard";
   out["codex.subagents.max"] ??= 16;
   out["codex.subagents.effort"] ??= "medium";
+  out["codex.subagents.min_lines"] ??= 5000;
+  out["codex.speed.fallback_below"] ??= 10;
   out["docs.update"] ??= false;
   out["docs.skill"] ??= ".claude/skills/doc-update/SKILL.md";
   return out;
