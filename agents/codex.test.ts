@@ -293,6 +293,30 @@ it.each([
   for (const args of turns) expect(args).toContain(`service_tier="${applied}"`);
 });
 
+// A repo that leaves its model unset runs on Codex's default model; the cap still applies.
+it.each([
+  [{ usedPercent: 95 }, "fast"],
+  [null, "fast"],
+  [{ usedPercent: 50 }, "ultrafast"],
+])("on Codex's default model, weekly usage %j applies %s", async (usage, applied) => {
+  mocks.usage.mockResolvedValue(usage && { plan: "pro", windowSeconds: 604_800, resetAt: 0, ...usage });
+  const dir = mkdtempSync(join(tmpdir(), "codex-speed-default-model-")); dirs.push(dir);
+  const codexHome = join(dir, ".codex");
+  mocks.codexHome.mockReturnValue({ codexHome, authPath: join(codexHome, "auth.json"), originalRefresh: "fixture" });
+  mocks.spawn.mockResolvedValue({ exitCode: 0 });
+  await codex.run({
+    payload: { type: "review", event: { trigger: "pull_request_opened" }, push: "disabled", shell: "restricted" },
+    codexSpeed: "ultrafast",
+    tmpdir: dir, mcpServerUrl: "http://localhost:9999/mcp", instructions: { full: "Review the changes" },
+    toolState: {}, apiToken: "", subagentDeniedTools: [],
+  } as unknown as AgentRunContext);
+  expect(mocks.usage).toHaveBeenCalledOnce();
+  const turns = mocks.spawn.mock.calls.map(([options]) => options.args as string[]);
+  expect(turns).toHaveLength(2);
+  expect(turns[1]).toContain("resume");
+  for (const args of turns) expect(args).toContain(`service_tier="${applied}"`);
+});
+
 it("never reads the weekly limit on an API-key run", async () => {
   const dir = mkdtempSync(join(tmpdir(), "codex-speed-apikey-")); dirs.push(dir);
   mocks.spawn.mockResolvedValue({ exitCode: 0 });

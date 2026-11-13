@@ -961,9 +961,13 @@ async function resolveCodexSpeed(params: {
 }): Promise<CodexSpeed> {
   const asked = requestedCodexSpeed(params.ctx.codexSpeed, params.ctx.payload);
   const model = resolveCodexModel(params.ctx);
-  if (asked === "standard" || !params.subscription || !model) return asked;
+  if (asked === "standard" || !params.subscription) return asked;
   // the subscription's own weekly limit, read once per run (utils/codexUsage.ts)
   const { speed: requested, reason } = capForWeeklyLimit(asked, await primeCodexUsage(), params.ctx.codexSpeedFallbackBelow);
+  if (!model) {
+    log.info(`» codex speed: requested=${asked}, applied=${requested}, model=codex default` + (reason ? `, capped at fast: ${reason}` : ""));
+    return requested;
+  }
   let advertised: string[] | null = null;
   try {
     // the catalog read signs in with the run's auth file, so the pool must see it as a child.

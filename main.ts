@@ -12,9 +12,7 @@ import { startInstallation } from "./mcp/dependencies.ts";
 import { startMcpHttpServer, type ToolContext } from "./mcp/server.ts";
 import { getSandboxMethod } from "./mcp/shell.ts";
 import { computeModes } from "./modes.ts";
-import { reviewSubagentLimits } from "./utils/reviewLenses.ts";
 import { reviewSubagentsForRun } from "./utils/reviewSubagents.ts";
-import { isReviewRun } from "./utils/codexSpeed.ts";
 import { DOCS_MODE, DOCS_OUTPUT_SCHEMA, prepareDocsUpdate, finishDocsUpdate, type DocsUpdateState } from "./utils/docsUpdate.ts";
 import { getModelProvider } from "./models.ts";
 import { initToolState, primaryRepoState } from "./toolState.ts";
@@ -690,16 +688,9 @@ export async function main(): Promise<MainResult> {
     }
 
     const agentId = agent.name;
+    // one decision feeds both the review prompt and the Codex config
     const reviewSubagents = await reviewSubagentsForRun({
-      limits: reviewSubagentLimits({
-        max: runContext.repoSettings.codexSubagentMax,
-        effort: runContext.repoSettings.codexSubagentEffort,
-        minLines: runContext.repoSettings.codexSubagentMinLines,
-      }),
-      codex: agentId === "codex" && !isDocsUpdate && isReviewRun(payload),
-      prNumber: payload.event.issue_number,
-      octokit,
-      repo: runContext.repo,
+      settings: runContext.repoSettings, agentId, isDocsUpdate, payload, octokit, repo: runContext.repo,
     });
     const modes = isDocsUpdate ? [DOCS_MODE] : [
       ...computeModes(agentId, runContext.repoSettings.signedCommits, reviewSubagents.max),
