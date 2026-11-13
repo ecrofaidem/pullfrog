@@ -6,7 +6,7 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useBlocker } from "@tanstack/react-router";
 import { useMutation } from "convex/react";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
 import { api } from "@server/_generated/api";
 import type { Doc } from "@server/_generated/dataModel";
 import { type ConfigKey } from "@server/configKeys";
@@ -566,6 +566,21 @@ interface RowIds {
   help: string;
 }
 
+/** a dotted key that may wrap after each dot, so long keys stay inside the label column */
+function KeyName({ k }: { k: ConfigKey }) {
+  const parts = k.split(".");
+  return parts.map((part, i) => (
+    <Fragment key={i}>
+      {part}
+      {i < parts.length - 1 && (
+        <>
+          .<wbr />
+        </>
+      )}
+    </Fragment>
+  ));
+}
+
 function Row({
   k,
   help,
@@ -586,10 +601,12 @@ function Row({
     <div className="grid gap-x-6 gap-y-1.5 py-3 sm:grid-cols-[11rem_1fr]">
       {control ? (
         <label htmlFor={ids.control} className="mono pt-1.5 text-sm text-ink-2">
-          {k}
+          <KeyName k={k} />
         </label>
       ) : (
-        <span className="mono pt-1.5 text-sm text-ink-2">{k}</span>
+        <span className="mono pt-1.5 text-sm text-ink-2">
+          <KeyName k={k} />
+        </span>
       )}
       <div>
         {control ? control(ids) : children}
