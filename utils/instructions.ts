@@ -10,6 +10,7 @@ import {
 } from "../external.ts";
 import type { Mode } from "../modes.ts";
 import type { ResolvedPayload } from "./payload.ts";
+import { fileWriteInstructions } from "./fileOperations.ts";
 import type { LearningsHeading } from "./runContext.ts";
 import type { RunContextData } from "./runContextData.ts";
 
@@ -139,10 +140,10 @@ Use the \`${t("shell")}\` MCP tool for all shell command execution.${shell === "
   }
 }
 
-function getFileInstructions(): string {
+function getFileInstructions(ctx: InstructionsContext): string {
   return `### File operations
 
-Use your native file read/write/edit tools for all file operations.`;
+${fileWriteInstructions(ctx.agentId, ctx.payload)}`;
 }
 
 function getStandaloneModeInstructions(
@@ -278,7 +279,7 @@ ${ctx.modes.map((m) => `- "${m.name}": ${m.description}`).join("\n")}
 
 ### Step 2: Execute
 
-Follow the mode guidance to complete the task. Use your native file and shell tools for local operations, and the ${pullfrogMcpName} MCP tools for GitHub/git operations.
+Follow the mode guidance to complete the task. Follow the File operations and Shell commands instructions below for local operations, and use the ${pullfrogMcpName} MCP tools for GitHub/git operations.
 
 ### No-action cases
 
@@ -380,7 +381,7 @@ Call \`${t("find_similar_issues")}\` for #${ctx.payload.event.issue_number} befo
 
 ${getShellInstructions(ctx.payload.shell, t)}
 
-${getFileInstructions()}
+${getFileInstructions(ctx)}
 
 ${getStandaloneModeInstructions(ctx.payload.event.trigger, t, ctx.outputSchema)}
 
@@ -494,7 +495,7 @@ export function buildLearningsSection(ctx: {
   const tocBody =
     ctx.headings.length === 0
       ? "(no headings yet — the file is empty or contains a flat list. read the whole file if it has content. during the post-run reflection turn, structure it with `## ` / `### ` headings so future runs can read targeted ranges.)"
-      : `Read targeted line ranges via your native file tool — do NOT slurp the whole file. Each range starts at the section heading line, so reading the range gives you heading + body together. The ranges below are a run-start snapshot: any edit shifts the line numbers of every later section, so re-read the TOC range you need before relying on it.\n\n${renderLearningsToc(ctx.headings)}`;
+      : `Read targeted line ranges — do NOT slurp the whole file. Each range starts at the section heading line, so reading the range gives you heading + body together. The ranges below are a run-start snapshot: any edit shifts the line numbers of every later section, so re-read the TOC range you need before relying on it.\n\n${renderLearningsToc(ctx.headings)}`;
   return `************* LEARNINGS *************\n\n${intro}\n\n${tocBody}`;
 }
 

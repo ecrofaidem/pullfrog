@@ -132,6 +132,11 @@ the review gets the single-session prompt and `multi_agent_v2 = false`.
   While a review is in progress, `checkout_pr` refuses a different PR and a
   new head of the same PR. A repeat checkout of the reviewed revision keeps
   the diff artifacts byte-identical, so their read coverage survives.
+- **Pushes during review.** The lead publishes against the commit it reviewed
+  and keeps its checkout pinned through completion. If the PR head advances,
+  the review names both revisions and an approving verdict becomes a comment,
+  so it cannot approve the newer commit. Run cleanup dispatches a follow-up for
+  eligible open PRs.
 - **Waiting.** `codex exec` ends when the lead's turn ends, and any subagent
   still working is lost. The lead waits with `wait_agent` until `list_agents`
   shows none running. Each wait returns within 10 minutes and reports its
@@ -189,8 +194,10 @@ Review submission and incremental acknowledgement reject incomplete coverage
 unless the session explicitly declares a limitation. Such reports cannot approve
 and keep the useful summary and inline findings beneath a short incomplete
 status. The checkpoint's `reason` stays internal; `public_summary` names the
-unchecked work and blocker in plain language. Publication also rechecks the
-remote head and base revision. The completion loop resumes unfinished work.
+unchecked work and blocker in plain language. Publication verifies the local
+checkout and captured diff. A newer remote head does not discard completed
+work; the review identifies its older revision. The completion loop resumes
+unfinished work.
 Shell results distinguish output pagination, missing tools, missing
 dependencies, missing paths, and timeouts so the reviewer can choose an
 appropriate recovery. Pagination is progress, not a failed retry. Required
@@ -199,6 +206,15 @@ delivered reads are validated; comprehension and finding correctness still
 require judgment.
 Detailed records stay in the run transcript, with only actionable findings and
 material limitations in the posted review.
+
+On Linux, Codex creates and edits files through the credential-filtered MCP
+`shell` tool. Its native `apply_patch` fails on these runners before opening the
+file ([openai/codex#29908](https://github.com/openai/codex/issues/29908)). Task
+instructions and the reflection turn use the same editing policy. Read-only
+runs are instructed to write only scratch files in the run's temporary
+directory; docs tasks can prepare local edits with push disabled. The native
+shell, sandbox settings, and credential isolation stay unchanged. The prompt's
+scratch-only restriction does not itself enforce filesystem permissions.
 
 Implementation: `utils/reviewLenses.ts`, `utils/reviewCoverage.ts`,
 `utils/reviewResume.ts`, `mcp/readFile.ts`, `mcp/reviewCheckpoint.ts`, and their
