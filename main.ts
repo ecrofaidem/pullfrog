@@ -1074,7 +1074,7 @@ export async function main(): Promise<MainResult> {
 
     if (docsUpdate) {
       if (!result.success) throw new Error(result.error ?? "Docs agent failed");
-      const docsResult = await finishDocsUpdate(docsUpdate, toolState.output, octokit);
+      const docsResult = await finishDocsUpdate(docsUpdate, toolState.output, octokit, oidcCredentials);
       toolState.output = JSON.stringify(docsResult);
       await patchWorkflowRunFields(toolContext, { docsOutcome: docsResult.outcome,
         ...(docsResult.outcome === "published" ? { docsPullRequestUrl: docsResult.url } : {}) });
