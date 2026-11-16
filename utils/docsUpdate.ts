@@ -3,8 +3,10 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { PayloadEvent } from "../external.ts";
 import type { Mode } from "../modes.ts";
-import type { OctokitWithPlugins } from "./github.ts";
+import { acquireNewToken, createOctokit, type OctokitWithPlugins, type OidcCredentials } from "./github.ts";
 import { $git, verifyGitBinary } from "./gitAuth.ts";
+import { maskSecret } from "./secretCommands.ts";
+import { revokeGitHubInstallationToken } from "./token.ts";
 
 export const DOCS_OUTPUT_SCHEMA = {
   type: "object", additionalProperties: false,
@@ -126,7 +128,19 @@ export async function prepareDocsUpdate(args: {
   };
 }
 
-export async function finishDocsUpdate(state: DocsUpdateState, raw: string | undefined, octokit: OctokitWithPlugins) {
+// GitHub protects every path under .github/workflows/, including README.md.
+// Keep its write credential out of the agent's MCP client and git environment.
+async function workflowPublicationToken(oidc: OidcCredentials | null | undefined) {
+  const external = process.env.GH_TOKEN;
+  const token = external || await acquireNewToken({ permissions: { contents: "write", workflows: "write" }, oidc: oidc ?? undefined });
+  maskSecret(token);
+  return {
+    token,
+    async [Symbol.asyncDispose]() { if (!external) await revokeGitHubInstallationToken(token); },
+  };
+}
+
+export async function finishDocsUpdate(state: DocsUpdateState, raw: string | undefined, octokit: OctokitWithPlugins, oidc?: OidcCredentials | null) {
   const result = parseDocsResult(raw);
   if (result.outcome === "blocked") throw new Error(`DOC BLOCKER: ${result.reason}`);
   const { cwd, owner, repo, number, baseline, branch, base, mergeSha } = state;
@@ -162,6 +176,9 @@ export async function finishDocsUpdate(state: DocsUpdateState, raw: string | und
   validateDocsPaths(rows, state.gate, reviewed);
   const body = regularText(join(cwd, ".doc-pr-body.md")).trim();
   if (!body) throw new Error("Docs PR body is empty");
+  await using workflowToken = rows.some(({ path }) => path.startsWith(".github/workflows/"))
+    ? await workflowPublicationToken(oidc) : undefined;
+  const publicationGit = workflowToken ? createOctokit(workflowToken.token).git : octokit.git;
   const marker = `<!-- prfrog-docs source=${number} merge=${mergeSha} -->`;
   const message = `docs: follow-up for #${number}\n\n${marker}`;
   // Publish through the API: agent-controlled git config and credential helpers
@@ -170,12 +187,12 @@ export async function finishDocsUpdate(state: DocsUpdateState, raw: string | und
   for (const row of rows) {
     if (row.mode === "000000") { tree.push({ path: row.path, mode: "100644", type: "blob", sha: null }); continue; }
     const content = gitBytes(cwd, "cat-file", "blob", row.sha);
-    const { data: blob } = await octokit.git.createBlob({ owner, repo, content: content.toString("base64"), encoding: "base64" });
+    const { data: blob } = await publicationGit.createBlob({ owner, repo, content: content.toString("base64"), encoding: "base64" });
     if (blob.sha !== row.sha) throw new Error(`Documentation blob changed during publication: ${row.path}`);
     tree.push({ path: row.path, mode: "100644", type: "blob", sha: blob.sha });
   }
   const { data: baseCommit } = await octokit.git.getCommit({ owner, repo, commit_sha: baseline });
-  const { data: newTree } = await octokit.git.createTree({ owner, repo, base_tree: baseCommit.tree.sha, tree });
+  const { data: newTree } = await publicationGit.createTree({ owner, repo, base_tree: baseCommit.tree.sha, tree });
   let remoteSha: string | undefined;
   try { remoteSha = (await octokit.git.getRef({ owner, repo, ref: `heads/${branch}` })).data.object.sha; }
   catch (error) { if (!missing(error)) throw error; }
@@ -183,9 +200,9 @@ export async function finishDocsUpdate(state: DocsUpdateState, raw: string | und
     const { data: existing } = await octokit.git.getCommit({ owner, repo, commit_sha: remoteSha });
     if (existing.tree.sha !== newTree.sha || !existing.message.includes(marker)) throw new Error("Existing docs branch differs; refusing to overwrite it");
   } else {
-    const { data: commit } = await octokit.git.createCommit({ owner, repo, message, tree: newTree.sha, parents: [baseline] });
+    const { data: commit } = await publicationGit.createCommit({ owner, repo, message, tree: newTree.sha, parents: [baseline] });
     remoteSha = commit.sha;
-    await octokit.git.createRef({ owner, repo, ref: `refs/heads/${branch}`, sha: remoteSha });
+    await publicationGit.createRef({ owner, repo, ref: `refs/heads/${branch}`, sha: remoteSha });
   }
   const { data: existingPrs } = await octokit.pulls.list({ owner, repo, head: `${owner}:${branch}`, base, state: "all", per_page: 100 });
   let pr: { number: number; state: string; user: { login: string } | null } | undefined = existingPrs.find((candidate) => candidate.body?.includes(marker));

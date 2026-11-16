@@ -2,12 +2,17 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { finishDocsUpdate, parseDocsResult, prepareDocsUpdate, validateDocsPaths } from "./docsUpdate.ts";
-import type { OctokitWithPlugins } from "./github.ts";
+import { acquireNewToken, createOctokit, type OctokitWithPlugins } from "./github.ts";
+import { revokeGitHubInstallationToken } from "./token.ts";
 import { createFileReader } from "../mcp/readFile.ts";
 
 vi.mock("./gitAuth.ts", () => ({ verifyGitBinary: () => "/usr/bin/git", $git: vi.fn(async () => ({})) }));
+vi.mock("./github.ts", async (original) => ({
+  ...await original<typeof import("./github.ts")>(), acquireNewToken: vi.fn(), createOctokit: vi.fn(),
+}));
+vi.mock("./token.ts", () => ({ revokeGitHubInstallationToken: vi.fn() }));
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -22,6 +27,8 @@ function fixture() {
   git("init", "-b", "main");
   git("config", "user.email", "fixture@example.test"); git("config", "user.name", "Fixture");
   mkdirSync(join(cwd, "docs")); writeFileSync(join(cwd, "docs", "skill.md"), "Update the relevant docs.");
+  mkdirSync(join(cwd, ".github/workflows"), { recursive: true });
+  writeFileSync(join(cwd, ".github/workflows/README.md"), "Workflow catalog\n");
   writeFileSync(join(cwd, "README.md"), "Initial docs\n"); git("add", "."); git("commit", "-m", "initial");
   git("checkout", "-b", "feature"); writeFileSync(join(cwd, "code.ts"), "export const value = 1;\n");
   git("add", "."); git("commit", "-m", "feature"); git("checkout", "main"); git("merge", "--no-ff", "feature", "-m", "merge feature");
@@ -174,5 +181,67 @@ describe("publication policy", () => {
   });
   it.each(["120000", "160000", "100755"])("rejects symlinks, submodules and executable files (%s)", (mode) => {
     expect(() => validateDocsPaths([{ path: "README.md", mode }], "off", true)).toThrow("mode");
+  });
+});
+
+describe("workflow-directory documentation", () => {
+  const oidc = { requestUrl: "https://oidc.example.test", requestToken: "fixture-oidc" };
+  beforeEach(() => {
+    vi.stubEnv("GH_TOKEN", "");
+    vi.mocked(acquireNewToken).mockReset().mockResolvedValue("workflow-publication-token");
+    vi.mocked(createOctokit).mockReset();
+    vi.mocked(revokeGitHubInstallationToken).mockReset().mockResolvedValue();
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it.each([false, true])("publishes the workflow README with a runtime-only token (external: %s)", async (external) => {
+    const f = fixture(); const state = await f.prepare(); f.change(".github/workflows/README.md");
+    if (external) vi.stubEnv("GH_TOKEN", "external-token");
+    let workflowsWrite = false;
+    vi.mocked(createOctokit).mockImplementation(() => { workflowsWrite = true; return f.octokit; });
+    f.api.git.createTree.mockImplementation(async () => {
+      if (!workflowsWrite) throw Object.assign(new Error("Resource not accessible by integration"), { status: 403 });
+      return { data: { sha: "tree" } };
+    });
+    const marker = `<!-- prfrog-docs source=42 merge=${f.sha} -->`;
+    f.api.pulls.get.mockResolvedValueOnce({ data: { ...f.source, state: "open", head: { sha: "published" }, body: marker, html_url: "https://github.com/owner/repo/pull/43" } } as never);
+    f.api.git.getRef.mockRejectedValueOnce(Object.assign(new Error("missing"), { status: 404 }))
+      .mockResolvedValueOnce({ data: { object: { sha: "published" } } });
+
+    expect(await finishDocsUpdate(state, JSON.stringify({ outcome: "prepared", reason: "Update workflow catalog" }), f.octokit, oidc))
+      .toMatchObject({ outcome: "published", url: "https://github.com/owner/repo/pull/43" });
+    expect(f.api.git.createTree).toHaveBeenCalledWith(expect.objectContaining({ tree: [expect.objectContaining({ path: ".github/workflows/README.md" })] }));
+    expect(createOctokit).toHaveBeenCalledWith(external ? "external-token" : "workflow-publication-token");
+    if (external) {
+      expect(acquireNewToken).not.toHaveBeenCalled();
+      expect(revokeGitHubInstallationToken).not.toHaveBeenCalled();
+    } else {
+      expect(acquireNewToken).toHaveBeenCalledWith({ permissions: { contents: "write", workflows: "write" }, oidc });
+      expect(revokeGitHubInstallationToken).toHaveBeenCalledWith("workflow-publication-token");
+    }
+  });
+
+  it("revokes the runtime token when publication fails", async () => {
+    const f = fixture(); const state = await f.prepare(); f.change(".github/workflows/README.md");
+    vi.mocked(createOctokit).mockReturnValue(f.octokit);
+    f.api.git.createTree.mockRejectedValueOnce(new Error("GitHub unavailable"));
+    await expect(finishDocsUpdate(state, JSON.stringify({ outcome: "prepared", reason: "Update catalog" }), f.octokit, oidc))
+      .rejects.toThrow("GitHub unavailable");
+    expect(revokeGitHubInstallationToken).toHaveBeenCalledWith("workflow-publication-token");
+  });
+
+  it.each(["README.md", ".github/workflows/ci.yml"])("does not mint workflow permissions for %s", async (path) => {
+    const f = fixture(); const state = await f.prepare(); f.change(path);
+    if (path.endsWith(".yml")) {
+      await expect(finishDocsUpdate(state, JSON.stringify({ outcome: "prepared", reason: "update" }), f.octokit, oidc))
+        .rejects.toThrow("human publication");
+      expect(f.api.git.createBlob).not.toHaveBeenCalled();
+    } else {
+      f.api.git.createTree.mockRejectedValueOnce(new Error("stop before publication"));
+      await expect(finishDocsUpdate(state, JSON.stringify({ outcome: "prepared", reason: "update" }), f.octokit, oidc))
+        .rejects.toThrow("stop before publication");
+    }
+    expect(acquireNewToken).not.toHaveBeenCalled();
+    expect(createOctokit).not.toHaveBeenCalled();
   });
 });
