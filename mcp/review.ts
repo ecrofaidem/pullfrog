@@ -561,7 +561,6 @@ export function CreatePullRequestReviewTool(ctx: ToolContext) {
           );
         }
         if (body) body = fixDoubleEscapedString(body);
-        body = await reviewPublicationBody(ctx, body, pull_number, approved === true);
 
         // a review posts permanently and cannot be retracted by any tool we
         // expose, so a placeholder probe is unrecoverable. see
@@ -576,9 +575,24 @@ export function CreatePullRequestReviewTool(ctx: ToolContext) {
           );
         }
 
+        // fetch the PR once up front: its author drives the self-approve
+        // downgrade below (GitHub blocks approving your own PR) and its head sha
+        // anchors the review — reused so a self-authored PR needs no second get.
+        const prSnapshot = (
+          await ctx.octokit.rest.pulls.get({
+            owner: ctx.repo.owner,
+            repo: ctx.repo.name,
+            pull_number,
+          })
+        ).data;
+        body = await reviewPublicationBody(ctx, body, pull_number, approved === true, prSnapshot.head.sha);
+
         // set issue context (PRs are issues)
         const primary = primaryRepoState(ctx.toolState);
         primary.issueNumber = pull_number;
+        if (isCodexReview(ctx) && commit_id && commit_id !== primary.checkoutSha) {
+          throw new Error("commit_id must match the checked-out commit verified by review_checkpoint.");
+        }
 
         // guard against duplicate review submissions in the same session.
         // see duplicateReviewDecision for the rationale — short version: the
@@ -623,17 +637,11 @@ export function CreatePullRequestReviewTool(ctx: ToolContext) {
             );
           }
         }
-        // fetch the PR once up front: its author drives the self-approve
-        // downgrade below (GitHub blocks approving your own PR) and its head sha
-        // anchors the review — reused so a self-authored PR needs no second get.
-        const prSnapshot = (
-          await ctx.octokit.rest.pulls.get({
-            owner: ctx.repo.owner,
-            repo: ctx.repo.name,
-            pull_number,
-          })
-        ).data;
         const selfAuthored = isPullfrog(prSnapshot.user?.login);
+        const headMoved = !!primary.checkoutSha && prSnapshot.head.sha !== primary.checkoutSha;
+        if (approved && headMoved && !body.trim()) {
+          body = `> [!NOTE]\n> This review covers \`${primary.checkoutSha!.slice(0, 7)}\`. Current HEAD \`${prSnapshot.head.sha.slice(0, 7)}\` is not covered.`;
+        }
 
         // gate above guarantees approved ⇒ no outstanding Pullfrog threads, so
         // "would approve" is exactly the agent's intent. recorded here (not at
@@ -702,17 +710,19 @@ export function CreatePullRequestReviewTool(ctx: ToolContext) {
           }
         }
 
+        // An approval of an older commit can still satisfy GitHub branch protection.
+        // Publish its findings without granting a binding approval to the new head.
+        if (event === "APPROVE" && headMoved) event = "COMMENT";
         const params: RestEndpointMethodTypes["pulls"]["createReview"]["parameters"] = {
           owner: ctx.repo.owner,
           repo: ctx.repo.name,
           pull_number,
           event,
         };
-        let latestHeadSha: string | undefined;
+        const latestHeadSha = prSnapshot.head.sha;
         if (commit_id) {
           params.commit_id = commit_id;
         } else {
-          latestHeadSha = prSnapshot.head.sha;
           // anchor to checkout sha so line numbers match the diff the agent analyzed
           params.commit_id = primary.checkoutSha ?? latestHeadSha;
           if (primary.checkoutSha && latestHeadSha !== primary.checkoutSha) {
@@ -904,15 +914,13 @@ export function CreatePullRequestReviewTool(ctx: ToolContext) {
           log.debug(`progress comment cleanup after review failed: ${err}`);
         });
 
-        // detect commits pushed since checkout and guide the agent to review them
-        // inline instead of dispatching a separate workflow run
         if (primary.checkoutSha && latestHeadSha && latestHeadSha !== primary.checkoutSha) {
           const fromSha = primary.checkoutSha;
           const toSha = latestHeadSha;
-          // store old checkoutSha as beforeSha so the next checkout_pr computes an incremental diff
-          primary.beforeSha = fromSha;
-          // advance checkoutSha so the next review submission tracks correctly (just in case, checkout_pr will overwrite it again)
-          primary.checkoutSha = toSha;
+          if (!isCodexReview(ctx)) {
+            primary.beforeSha = fromSha;
+            primary.checkoutSha = toSha;
+          }
 
           log.info(
             `new commits detected during review: ${fromSha.slice(0, 7)}..${toSha.slice(0, 7)}`
@@ -929,8 +937,9 @@ export function CreatePullRequestReviewTool(ctx: ToolContext) {
             newCommits: {
               from: fromSha,
               to: toSha,
-              instructions:
-                `new commits were pushed while you were reviewing. ` +
+              instructions: isCodexReview(ctx)
+                ? `The review was published for ${fromSha.slice(0, 7)}. Finish this run; cleanup requests a separate review of ${toSha.slice(0, 7)} if the PR remains eligible. Keep the checked-out revision unchanged.`
+                : `new commits were pushed while you were reviewing. ` +
                 `call \`${formatMcpToolRef(ctx.agentId, "checkout_pr")}\` again to fetch the latest version — it will compute the incremental diff automatically. ` +
                 `submit another review covering only the new changes. do not repeat feedback from your previous review.`,
             },

@@ -68,6 +68,7 @@ import { primeCodexUsage, setCodexUsageReader } from "../utils/codexUsage.ts";
 import { CODEX_SUBAGENT_RULES, reviewSubagentLimits } from "../utils/reviewLenses.ts";
 import type { TodoTracker } from "../utils/todoTracking.ts";
 import { getDevDependencyVersion } from "../utils/version.ts";
+import { codexSandboxMode, fileWriteInstructions } from "../utils/fileOperations.ts";
 import { buildReflectionPrompt, runPostRunRetryLoop } from "./postRun.ts";
 import {
   type AgentResult,
@@ -518,7 +519,7 @@ function writeCodexConfig(params: {
   gatewayUrl: string | undefined;
 }): void {
   const shellEnabled = params.ctx.payload.shell === "enabled";
-  const sandboxMode = codexSandboxMode(params.ctx);
+  const sandboxMode = codexSandboxMode(params.ctx.payload);
   const repoDir = process.cwd();
   const speed = codexSpeedConfig(params.speed);
   const subagents = subagentSettings(params.ctx, params.model);
@@ -598,13 +599,6 @@ function writeCodexConfig(params: {
 
   writeFileSync(join(params.codexHome, "config.toml"), config, { mode: 0o600 });
   log.info(`» codex config: sandbox=${sandboxMode}, nativeShell=${shellEnabled}, serviceTier=${speed.serviceTier ?? "default"}`);
-}
-
-function codexSandboxMode(ctx: AgentRunContext): "read-only" | "workspace-write" {
-  // Docs tasks edit and commit locally; only the runtime may publish them.
-  // Keep push disabled so their Git credential remains read-only.
-  return ctx.payload.event.trigger === "pull_request_merged" || ctx.payload.push !== "disabled"
-    ? "workspace-write" : "read-only";
 }
 
 // ── runner ─────────────────────────────────────────────────────────────────────
@@ -1156,7 +1150,7 @@ export const codex = agent({
     const securityFlags = securityOverrideFlags({
       ctx,
       speed,
-      sandboxMode: codexSandboxMode(ctx),
+      sandboxMode: codexSandboxMode(ctx.payload),
       repoDir: process.cwd(),
       mcpServerUrl: ctx.mcpServerUrl,
       model: resolveCodexModel(ctx),
@@ -1183,7 +1177,7 @@ export const codex = agent({
       ctx,
       initialResult: initial,
       initialUsage: initial.usage,
-      reflectionPrompt: buildReflectionPrompt(ctx.toolState),
+      reflectionPrompt: buildReflectionPrompt(ctx.toolState, fileWriteInstructions("codex", ctx.payload)),
       // a resume needs the thread codex recorded. without one there is nothing
       // to continue, and `resume --last` could pick another run's session off CI,
       // where CODEX_HOME is the shared ~/.local/share/codex (in CI it is per run).

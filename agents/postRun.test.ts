@@ -67,6 +67,12 @@ describe("getUnsubmittedReview", () => {
 });
 
 describe("buildReflectionPrompt", () => {
+  it("uses the supplied editing path for repository and cross-repository learnings", () => {
+    const prompt = buildReflectionPrompt(makeToolState({ selectedMode: "Review", learningsFilePath: "/tmp/learnings.md", xrepoLearningsFilePath: "/tmp/xrepo.md" }), "Edit files through the MCP shell.");
+    expect(prompt).toContain("Edit files through the MCP shell.");
+    expect(prompt).not.toContain("native file tools");
+    expect(prompt).toContain("/tmp/xrepo.md");
+  });
   it("keeps the reflection turn with the lead, after a review that delegated", () => {
     const prompt = buildReflectionPrompt(makeToolState({ selectedMode: "Review", learningsFilePath: "/tmp/learnings.md" }));
     expect(prompt?.startsWith("Do this turn's work yourself: do not spawn, message or wait for subagents.")).toBe(true);

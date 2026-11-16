@@ -9,7 +9,7 @@ import { currentCodexUsage } from "../utils/codexUsage.ts";
 import { renderRunStats } from "../utils/runStats.ts";
 import type { AgentRunContext } from "./shared.ts";
 
-const mocks = vi.hoisted(() => ({ spawn: vi.fn(), codexHome: vi.fn(), usage: vi.fn(), resumed: undefined as unknown }));
+const mocks = vi.hoisted(() => ({ spawn: vi.fn(), codexHome: vi.fn(), usage: vi.fn(), reflection: vi.fn(), resumed: undefined as unknown }));
 // the weekly limit the run's login reports; most tests run with plenty left
 vi.mock("../utils/codexUsage.ts", async (original) => ({ ...await original<typeof import("../utils/codexUsage.ts")>(), primeCodexUsage: mocks.usage }));
 vi.mock("../utils/install.ts", () => ({ installFromNpmTarball: async () => "/fixture/codex" }));
@@ -18,7 +18,7 @@ vi.mock("../utils/codexPool.ts", () => ({ registerCodexPoolAuth: () => false, ma
 vi.mock("../utils/skills.ts", () => ({ installBundledSkills: () => {} }));
 vi.mock("../utils/subprocess.ts", async (original) => ({ ...await original<typeof import("../utils/subprocess.ts")>(), spawn: mocks.spawn }));
 vi.mock("./postRun.ts", () => ({
-  buildReflectionPrompt: () => "Check local changes",
+  buildReflectionPrompt: mocks.reflection,
   runPostRunRetryLoop: async ({ initialResult, resume }: { initialResult: unknown; resume: (args: unknown) => Promise<unknown> }) => {
     mocks.resumed = await resume({ previousResult: { threadId: "fixture-thread" }, prompt: "Finish the local commit" });
     return initialResult;
@@ -27,13 +27,14 @@ vi.mock("./postRun.ts", () => ({
 
 const dirs: string[] = [];
 beforeEach(() => { mocks.usage.mockResolvedValue({ plan: "pro", usedPercent: 50, windowSeconds: 604_800, resetAt: 0 }); });
-afterEach(() => { vi.resetAllMocks(); vi.unstubAllEnvs(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { vi.restoreAllMocks(); vi.resetAllMocks(); vi.unstubAllEnvs(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
 it.each([
   ["pull_request_merged", "disabled", "workspace-write"],
   ["pull_request", "disabled", "read-only"],
   ["pull_request", "enabled", "workspace-write"],
 ])("configures %s with push=%s as %s for initial and resumed turns", async (trigger, push, sandbox) => {
+  vi.spyOn(process, "platform", "get").mockReturnValue("linux");
   const dir = mkdtempSync(join(tmpdir(), "codex-config-test-")); dirs.push(dir);
   mocks.spawn.mockResolvedValue({ exitCode: 0 });
   const ctx = {
@@ -51,6 +52,8 @@ it.each([
     expect(args).toContain("features.shell_tool=false");
   }
   expect(ctx.payload.push).toBe(push);
+  expect(mocks.reflection).toHaveBeenCalledWith(ctx.toolState, expect.stringContaining("MCP tool"));
+  expect(mocks.reflection.mock.calls[0]![1].includes("Do not modify the checkout")).toBe(sandbox === "read-only");
 });
 
 const catalog = (tiers: string[]) => JSON.stringify({ models: [{ slug: "gpt-6.1-sol", additional_speed_tiers: tiers }] });

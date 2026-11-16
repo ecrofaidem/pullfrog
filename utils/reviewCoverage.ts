@@ -264,16 +264,16 @@ export async function incompleteReviewIssue(toolState: ToolContext["toolState"])
 
 
 /** Recheck GitHub as well as local artifacts before any completion is published. */
-export async function reviewPublicationBody(ctx: Pick<ToolContext, "agentId" | "toolState" | "octokit" | "repo">, body: string, pullNumber: number | undefined, approved = false): Promise<string> {
+export async function reviewPublicationBody(ctx: Pick<ToolContext, "agentId" | "toolState" | "octokit" | "repo">, body: string, pullNumber: number | undefined, approved = false, remoteHeadSha?: string): Promise<string> {
   if (!isCodexReview(ctx)) return body;
   const coverage = await currentReviewCoverage(ctx);
   const repo = primaryRepoState(ctx.toolState);
   if (pullNumber !== coverage.scope.pullNumber || repo.owner !== ctx.repo.owner || repo.name !== ctx.repo.name) {
     throw new Error("Publication target differs from the checked-out PR. Call checkout_pr for this target first.");
   }
-  const { data: pr } = await ctx.octokit.rest.pulls.get({ owner: ctx.repo.owner, repo: ctx.repo.name, pull_number: coverage.scope.pullNumber });
-  if (pr.head.sha !== coverage.scope.headSha || pr.base.sha !== coverage.scope.baseSha) {
-    throw new Error("The remote PR revision changed during review. Repeat checkout_pr and the review plan before publishing.");
-  }
-  return reviewCompletionBody(ctx, body, approved);
+  const headSha = remoteHeadSha ?? (await ctx.octokit.rest.pulls.get({ owner: ctx.repo.owner, repo: ctx.repo.name, pull_number: coverage.scope.pullNumber })).data.head.sha;
+  body = await reviewCompletionBody(ctx, body, approved);
+  if (headSha === coverage.scope.headSha) return body;
+  return `${body}\n\n> [!NOTE]\n> This review covers \`${coverage.scope.headSha.slice(0, 7)}\`. ` +
+    `Current HEAD \`${headSha.slice(0, 7)}\` is not covered.`;
 }

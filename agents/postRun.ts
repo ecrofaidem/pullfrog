@@ -366,7 +366,7 @@ function buildXrepoLearningsReflectionPrompt(filePath: string): string {
 /** a review turn may have authorized delegation; the reflection turn stays with the lead. */
 const REFLECTION_SOLO = "Do this turn's work yourself: do not spawn, message or wait for subagents.";
 
-export function buildReflectionPrompt(toolState: ToolState): string | undefined {
+export function buildReflectionPrompt(toolState: ToolState, fileInstructions = "Use your native file tools to edit the learnings files."): string | undefined {
   if (!shouldRunReflection(toolState.selectedMode)) return undefined;
   const parts: string[] = [];
   if (toolState.learningsFilePath) {
@@ -376,7 +376,7 @@ export function buildReflectionPrompt(toolState: ToolState): string | undefined 
     parts.push(buildXrepoLearningsReflectionPrompt(toolState.xrepoLearningsFilePath));
   }
   if (parts.length === 0) return undefined;
-  return [REFLECTION_SOLO, ...parts].join("\n\n---\n\n");
+  return [REFLECTION_SOLO, fileInstructions, ...parts].join("\n\n---\n\n");
 }
 
 /**
@@ -414,7 +414,7 @@ function buildLearningsReflectionPrompt(filePath: string): string {
   return [
     `REFLECTION — before you finish, think back over this task: did you discover anything about this repo's setup, test commands, conventions, or patterns that is high-confidence and would reliably help future runs?`,
     "",
-    `the rolling learnings file is at \`${filePath}\`. read it first if you haven't already, then edit it in place using your native file tools. the server reads this file at end-of-run and persists any changes — there is no tool to call.`,
+    `the rolling learnings file is at \`${filePath}\`. read it first if you haven't already, then edit it in place using the file operations instructions above. the server reads this file at end-of-run and persists any changes — there is no tool to call.`,
     "",
     `structure:`,
     `- markdown hierarchy: \`## \` for top-level themes, \`### \` and deeper for sub-themes when a section grows. there is no fixed taxonomy — choose headings that fit THIS repo (e.g. for one repo \`## Migrations\` / \`## Local dev\` may make sense; for another, \`## API quirks\` / \`## Failure modes\`).`,

@@ -8,6 +8,8 @@ import { decode } from "@toon-format/toon";
 import { CreateCommentTool, EditCommentTool, ReportProgressTool } from "../mcp/comment.ts";
 import { ReviewCheckpointTool } from "../mcp/reviewCheckpoint.ts";
 import { ReadFileTool } from "../mcp/readFile.ts";
+import { CreatePullRequestReviewTool } from "../mcp/review.ts";
+import { postReviewCleanup } from "./reviewCleanup.ts";
 import type { ToolContext } from "../mcp/server.ts";
 import { computeModes } from "../modes.ts";
 import { initToolState, primaryRepoState } from "../toolState.ts";
@@ -308,7 +310,7 @@ describe("review publication freshness", () => {
     expect(await incompleteReviewIssue(ctx.toolState)).toBeUndefined();
   });
 
-  it.each(["head", "base"])("rejects an advanced remote %s with unchanged local artifacts", async changed => {
+  it.each(["head", "base"])("publishes the pinned revision after the remote %s advances", async changed => {
     const ctx = context();
     planReview(coverage, decisions(), manifest());
     recordReviewPasses(coverage, coverage.plan!.required.map(pass));
@@ -318,7 +320,108 @@ describe("review publication freshness", () => {
     await expect(reviewPublicationBody(publication, "No new issues", 2)).rejects.toThrow("Publication target differs");
     await expect(reviewPublicationBody({ ...publication, repo: { ...publication.repo, name: "other" } }, "No new issues", 1)).rejects.toThrow("Publication target differs");
     get.mockResolvedValue({ data: { head: { sha: changed === "head" ? "new-head" : coverage.scope.headSha }, base: { sha: changed === "base" ? "new-base" : coverage.scope.baseSha } } });
-    await expect(reviewPublicationBody(publication, "No new issues", 1, true)).rejects.toThrow("remote PR revision changed");
+    const body = await reviewPublicationBody(publication, "No new issues", 1, true);
+    if (changed === "head") {
+      expect(body).toContain(coverage.scope.headSha.slice(0, 7));
+      expect(body).toContain("new-hea");
+    } else {
+      expect(body).toBe("No new issues");
+    }
+    coverage.limitation = "Verification unavailable";
+    await expect(reviewPublicationBody(publication, "No new issues", 1, true)).rejects.toThrow("Incomplete coverage");
+  });
+
+  it.each([
+    [undefined, true, true, false, "COMMENT"],
+    ["reviewed", true, true, false, "COMMENT"],
+    [undefined, false, true, false, "APPROVE"],
+    [undefined, true, false, true, "REQUEST_CHANGES"],
+  ] as const)("finishes pinned review (anchor %s, moved %s, approve %s, block %s)", async (anchor, moved, approved, request_changes, event) => {
+    planReview(coverage, decisions(), manifest());
+    recordReviewPasses(coverage, coverage.plan!.required.map(pass));
+    const reviewed = coverage.scope.headSha;
+    const createReview = vi.fn().mockResolvedValue({ data: { id: 8 } });
+    const submitReview = vi.fn().mockResolvedValue({ data: { id: 8, node_id: "review-node", html_url: "https://github.com/test/repo/pull/1#review-8" } });
+    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
+    const ctx = {
+      ...context(), repo: { owner: "test", name: "repo" }, prApproveEnabled: true,
+      payload: { version: "0.1.98", event: { issue_number: 1 } },
+      octokit: {
+        graphql: vi.fn().mockResolvedValue({}),
+        rest: { pulls: {
+          get: vi.fn().mockResolvedValue({ data: { head: { sha: moved ? "new-head" : reviewed, ref: "feature" }, base: { sha: "base", repo: { default_branch: "main" } }, state: "open", user: { login: "author" } } }),
+          createReview, submitReview,
+        }, actions: { createWorkflowDispatch } },
+      },
+    } as unknown as ToolContext;
+    const result = await CreatePullRequestReviewTool(ctx).execute({ pull_number: 1, body: approved ? "> ✅ No new issues found." : "> ⚠️ A verified issue requires changes.", approved, request_changes, ...(anchor ? { commit_id: reviewed } : {}) }, {} as never);
+    expect(result).not.toHaveProperty("isError", true);
+    expect(createReview).toHaveBeenCalledWith(expect.objectContaining({ commit_id: reviewed }));
+    expect(submitReview).toHaveBeenCalledWith(expect.objectContaining({ event }));
+    expect(primaryRepoState(ctx.toolState).checkoutSha).toBe(reviewed);
+    expect(ctx.toolState.approval).toMatchObject({ wouldApprove: approved, sha: reviewed });
+    expect(ctx.toolState.review?.reviewedSha).toBe(reviewed);
+    expect(JSON.stringify(result)).not.toContain("checkout_pr");
+    const progress = await ReportProgressTool(ctx).execute({ body: "Published the reviewed revision." }, {} as never);
+    expect(progress).not.toHaveProperty("isError", true);
+    expect(await incompleteReviewIssue(ctx.toolState)).toBeUndefined();
+    await postReviewCleanup(ctx);
+    expect(createWorkflowDispatch).toHaveBeenCalledTimes(moved ? 1 : 0);
+    if (moved) {
+      const payload = JSON.parse(createWorkflowDispatch.mock.calls[0]![0].inputs.prompt);
+      expect(payload.event).toMatchObject({ trigger: "pull_request_synchronize", before_sha: reviewed });
+    }
+  });
+
+  it("refuses an explicit review anchor outside the verified checkout", async () => {
+    planReview(coverage, decisions(), manifest());
+    recordReviewPasses(coverage, coverage.plan!.required.map(pass));
+    const createReview = vi.fn();
+    const ctx = { ...context(), repo: { owner: "test", name: "repo" }, payload: { event: {} }, octokit: { rest: { pulls: {
+      get: vi.fn().mockResolvedValue({ data: { head: { sha: coverage.scope.headSha }, base: { sha: "base" }, user: { login: "author" } } }), createReview,
+    } } } } as unknown as ToolContext;
+    const result = await CreatePullRequestReviewTool(ctx).execute({ pull_number: 1, body: "> ✅ No new issues found.", commit_id: "unreviewed" }, {} as never);
+    expect(result).toHaveProperty("isError", true);
+    expect(JSON.stringify(result)).toContain("commit_id must match");
+    expect(createReview).not.toHaveBeenCalled();
+  });
+
+  it.each(["codex", "opencode"] as const)("preserves a bare stale approval and its follow-up for %s", async agentId => {
+    planReview(coverage, decisions(), manifest());
+    recordReviewPasses(coverage, coverage.plan!.required.map(pass));
+    const reviewed = coverage.scope.headSha;
+    const get = vi.fn().mockResolvedValue({ data: { head: { sha: "new-head", ref: "feature" }, base: { sha: "base", repo: { default_branch: "main" } }, state: "open", user: { login: "author" } } });
+    const submitReview = vi.fn().mockResolvedValue({ data: { id: 9, node_id: "review-node" } });
+    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
+    const ctx = { ...context(), agentId, repo: { owner: "test", name: "repo" }, prApproveEnabled: true,
+      payload: { version: "0.1.98", event: { issue_number: 1 } },
+      octokit: { graphql: vi.fn().mockResolvedValue({}), rest: {
+        pulls: { get, createReview: vi.fn().mockResolvedValue({ data: { id: 9 } }), submitReview },
+        actions: { createWorkflowDispatch },
+      } },
+    } as unknown as ToolContext;
+    ctx.toolState.agent = agentId;
+    const result = await CreatePullRequestReviewTool(ctx).execute({ pull_number: 1, body: "", approved: true }, {} as never);
+    expect(result).not.toHaveProperty("isError", true);
+    expect(get).toHaveBeenCalledOnce();
+    expect(submitReview).toHaveBeenCalledWith(expect.objectContaining({ event: "COMMENT", body: expect.stringContaining(reviewed.slice(0, 7)) }));
+    expect(submitReview.mock.calls[0]![0].body).toContain("new-hea");
+    expect(ctx.toolState.review?.reviewedSha).toBe(reviewed);
+    await postReviewCleanup(ctx);
+    expect(createWorkflowDispatch).toHaveBeenCalledOnce();
+  });
+
+  it("still rejects placeholder bodies when the head moved", async () => {
+    planReview(coverage, decisions(), manifest());
+    recordReviewPasses(coverage, coverage.plan!.required.map(pass));
+    const createReview = vi.fn();
+    const ctx = { ...context(), repo: { owner: "test", name: "repo" }, payload: { event: {} }, octokit: { rest: { pulls: {
+      get: vi.fn().mockResolvedValue({ data: { head: { sha: "new-head" }, base: { sha: "base" }, user: { login: "author" } } }), createReview,
+    } } } } as unknown as ToolContext;
+    const result = await CreatePullRequestReviewTool(ctx).execute({ pull_number: 1, body: "test" }, {} as never);
+    expect(result).toHaveProperty("isError", true);
+    expect(JSON.stringify(result)).toContain("placeholder");
+    expect(createReview).not.toHaveBeenCalled();
   });
 });
 
