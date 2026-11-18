@@ -33,23 +33,26 @@ it.each([
   ["pull_request_merged", "disabled", "workspace-write"],
   ["pull_request", "disabled", "read-only"],
   ["pull_request", "enabled", "workspace-write"],
-])("configures %s with push=%s as %s for initial and resumed turns", async (trigger, push, sandbox) => {
+  ["pull_request", "disabled", "read-only", "openai/gpt-6.2-sol"],
+])("configures %s with push=%s as %s for initial and resumed turns (model %s)", async (trigger, push, sandbox, model?: string) => {
   vi.spyOn(process, "platform", "get").mockReturnValue("linux");
   const dir = mkdtempSync(join(tmpdir(), "codex-config-test-")); dirs.push(dir);
   mocks.spawn.mockResolvedValue({ exitCode: 0 });
   const ctx = {
     payload: { event: { trigger }, push, shell: "restricted" },
     tmpdir: dir, mcpServerUrl: "http://localhost:9999/mcp", instructions: { full: "Update documentation" },
-    toolState: {}, apiToken: "", subagentDeniedTools: [],
+    toolState: {}, apiToken: "", subagentDeniedTools: [], resolvedModel: model,
   } as unknown as AgentRunContext;
   await codex.run(ctx);
   const config = readFileSync(join(dir, ".codex", "config.toml"), "utf8");
   expect(config).toContain(`sandbox_mode = "${sandbox}"`);
   expect(config).toContain('approval_policy = "never"');
+  if (model) expect(config).toContain('model = "gpt-6.2-sol"');
   expect(mocks.spawn).toHaveBeenCalledTimes(2);
   for (const [{ args }] of mocks.spawn.mock.calls) {
     expect(args).toContain(`sandbox_mode="${sandbox}"`);
     expect(args).toContain("features.shell_tool=false");
+    if (model) expect(args).toContain('model="gpt-6.2-sol"');
   }
   expect(ctx.payload.push).toBe(push);
   expect(mocks.reflection).toHaveBeenCalledWith(ctx.toolState, expect.stringContaining("MCP tool"));
