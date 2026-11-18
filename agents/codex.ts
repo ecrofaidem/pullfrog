@@ -314,7 +314,7 @@ function securityOverrideFlags(params: {
 
 /**
  * levels `model_reasoning_effort` accepts, verbatim from the pinned CLI's
- * `ModelReasoningEffort` (codex-sdk 0.162.1). rungs come from models.dev, a
+ * `ModelReasoningEffort` (codex-sdk 0.170.0). rungs come from models.dev, a
  * different source, so the two are free to drift — anything outside this set is
  * dropped rather than sent. REVALIDATE ON EVERY codex BUMP. `ultra` and
  * `persistent` are left out: neither is verified against this harness's gates.
