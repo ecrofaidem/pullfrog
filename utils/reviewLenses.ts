@@ -96,7 +96,7 @@ Execute the baseline correctness, conventions, and documentation passes, every s
 
 Use focused verification to resolve a concrete uncertainty: reproduce a suspected failure or run the smallest relevant check. Do not install dependencies or run broad suites just for reassurance. After a check passes, repeat or broaden it only when changed code, a failure, or an unresolved concern warrants it. Required sweeps and coverage still apply.
 
-Finish with the verification pass: challenge every candidate against source, exceptions, concrete impact, and the exact causal delta; discard disproven claims and deduplicate by root cause. Include non-anchored concerns when supported. Severity depends on impact, not the lens. Zero findings needs evidence too. You run this pass yourself: subagents can supply evidence, but you decide each finding.
+Finish with the verification pass: challenge every candidate against source, exceptions, concrete impact, and the exact causal delta; apply the “Before reporting a bug” rule below and deduplicate by root cause. Include non-anchored concerns when supported. Severity depends on impact, not the lens. Record the evidence for completed passes even when there are zero findings. You run this pass yourself: subagents can supply evidence, but you decide each finding.
 
 Recover according to the failure, not a fixed retry count:
 - Cut-off shell output is recoverable pagination: read its saved output file with \`${read}\`, or read the source file directly. More pages are progress, not failed retries.
